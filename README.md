@@ -1,2 +1,123 @@
-# Cover-Screen-OS
-CoverOS is a specialized Android application designed to transform the outer cover display of clamshell foldable smartphones (such as the Samsung Galaxy Z Flip series) into a fully functional, customizable desktop environment.
+# 📱 Cover Screen OS
+
+![Kotlin](https://img.shields.io/badge/Kotlin-1.9-blue?logo=kotlin)
+![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-UI-green?logo=jetpackcompose)
+![Android](https://img.shields.io/badge/Android-Overlay-orange?logo=android)
+![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Build](https://img.shields.io/badge/Build-Passing-brightgreen)
+
+**Cover Screen OS** is a specialized Android application designed to transform the outer cover display of clamshell foldable smartphones (such as the Samsung Galaxy Z Flip series) into a fully functional, customizable desktop environment.
+
+Since Android OEMs (like Samsung) do not natively allow replacing the cover screen's default Home App via standard system settings, Cover Screen OS operates as a **privileged system overlay**. It detects the presence of the secondary hardware display, attaches an interactive Jetpack Compose UI canvas directly to the outer screen's window manager, and acts as a gateway to launch full Android applications, render interactive widgets, and display notifications.
+
+---
+
+## 🏗 System Architecture Blueprint
+
++-----------------------------------------------------------------------+
+|                            COVER Screen OS ENGINE                            |
++-----------------------------------------------------------------------+
+|
++-------------------------+-------------------------+
+|                                                   |
+v                                                   v
++-------------------------+                         +-------------------------+
+| Hardware & State Subsys |                         | Window & Layout Subsys  |
++-------------------------+                         +-------------------------+
+| • DisplayManager        |                         | • WindowManager         |
+|   (Target Cover Display)|                         |   (TYPE_APPLICATION_    |
+| • Jetpack WindowManager |                         |    OVERLAY)             |
+|   (Hinge / Fold State)  |                         | • Jetpack Compose       |
+| • Foreground Service    |                         |   (Cover UI Viewport)   |
++-------------------------+                         +-------------------------+
+|                                                   |
++-------------------------+-------------------------+
+|
++-------------------------+-------------------------+
+|                                                   |
+v                                                   v
++-------------------------+                         +-------------------------+
+| App & Widget Engine     |                         | System Intercept Subsys |
++-------------------------+                         +-------------------------+
+| • ActivityLauncher      |                         | • AccessibilityService  |
+|   (setLaunchDisplayId)  |                         |   (Back / Home Gestures)|
+| • AppWidgetHost         |                         | • NotificationListener  |
+|   (3rd-Party Widgets)   |                         |   (Read / Dismiss / UI) |
++-------------------------+                         +-------------------------+
+
+
+### 🔍 Core Subsystem Breakdown
+1. **Hardware & State Subsystem**
+   - Detects secondary display via `DisplayManager`
+   - Monitors hinge/fold state with Jetpack `WindowManager`
+   - Runs persistent Foreground Service to survive OEM battery optimizations  
+
+2. **Window & Layout Subsystem**
+   - Attaches `ComposeView` overlays to secondary display
+   - Provides adaptive grid layouts optimized for cover screen  
+
+3. **App & Widget Execution Engine**
+   - Routes apps to cover display via `ActivityOptions.setLaunchDisplayId()`
+   - Hosts third-party widgets using `AppWidgetHost`  
+
+4. **System Intercept Subsystem**
+   - Captures navigation gestures with `AccessibilityService`
+   - Displays and manages notifications via `NotificationListenerService`
+
+---
+
+## ⚙️ Technical Stack & Android APIs
+
+| **Layer** | **Technology / API** | **Function** |
+|-----------|-----------------------|--------------|
+| Language | Kotlin | Core application development |
+| UI Framework | Jetpack Compose | Reactive layout rendering |
+| Concurrency | Coroutines & Flow | Async event processing |
+| Display API | `DisplayManager` | Detect secondary hardware display |
+| Window API | `WindowManager` | Overlay views with `TYPE_APPLICATION_OVERLAY` |
+| App Routing | `ActivityOptions` | Force app execution on cover display |
+| Widget Engine | `AppWidgetHost` | Embed third-party widgets |
+| Permissions | System Services | Accessibility, Notification Listener, Overlay |
+
+---
+
+## 🔑 Required Permissions
+
+- `SYSTEM_ALERT_WINDOW` – Draw over other apps  
+- `BIND_ACCESSIBILITY_SERVICE` – Intercept gestures  
+- `BIND_NOTIFICATION_LISTENER_SERVICE` – Read/dismiss notifications  
+- `QUERY_ALL_PACKAGES` – Build custom app drawer  
+- `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` – Prevent background killing  
+
+---
+
+## 🚀 Development Roadmap
+
+**Phase 1:** Display detection & overlay boilerplate  
+**Phase 2:** Multi-display app routing & launcher drawer  
+**Phase 3:** Widget integration & dashboard  
+**Phase 4:** Gesture navigation & notification center  
+**Phase 5:** Input handling & edge case hardening  
+
+---
+
+## ⚡ Technical Challenges & Mitigations
+
+1. **Keyboard Lockout Issue**  
+   - Mitigation: Custom T9 keypad or voice-to-text  
+
+2. **OEM Background Process Killing**  
+   - Mitigation: Persistent Foreground Service + user onboarding  
+
+3. **Window Focus Conflicts**  
+   - Mitigation: Pause overlay interception for secure windows  
+
+---
+
+## 🎓 Skills Demonstrated
+
+- Advanced Android architecture (multi-display, WindowManager, IPC)  
+- Modern UI engineering (Jetpack Compose + AndroidView interop)  
+- System privilege operations (Accessibility, Notification Listener, Intent routing)  
+
+---
