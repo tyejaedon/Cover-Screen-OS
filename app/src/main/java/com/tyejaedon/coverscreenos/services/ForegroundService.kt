@@ -6,11 +6,25 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.hardware.display.DisplayManager
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.Display
 import androidx.core.app.NotificationCompat
+import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
+import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
 
 class ForegroundService : Service() {
     companion object {
+        private const val DISPLAY_CHANGE_DEBOUNCE_MS = 450L
+        private const val COVER_FALLBACK_GRACE_MS = 2_000L
+
+        @Volatile
+        var isOverlayActive: Boolean = false
+            private set
+
         const val CHANNEL_ID = "foreground_service_channel"
         const val NOTIFICATION_ID = 1001
         const val ACTION_START = "com.tyejaedon.coverscreenos.action.START"
@@ -28,6 +42,29 @@ class ForegroundService : Service() {
             return Intent(context, ForegroundService::class.java).apply {
                 action = ACTION_STOP
             }
+        }
+    }
+
+    private lateinit var overlayWindowController: OverlayWindowController
+    private lateinit var coverDisplayHelper: CoverDisplayHelper
+    private lateinit var displayManager: DisplayManager
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var overlayRequested = false
+    private var isDisplayListenerRegistered = false
+    private var pendingDisplayRetarget: Runnable? = null
+    private var pendingFallbackToMain: Runnable? = null
+
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {
+            onDisplayTopologyChanged("added", displayId)
+        }
+
+        override fun onDisplayRemoved(displayId: Int) {
+            onDisplayTopologyChanged("removed", displayId)
+        }
+
+        override fun onDisplayChanged(displayId: Int) {
+            onDisplayTopologyChanged("changed", displayId)
         }
     }
 
@@ -60,12 +97,20 @@ class ForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        overlayWindowController = OverlayWindowController(this)
+        coverDisplayHelper = CoverDisplayHelper(this)
+        displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
     }
 
     // Handles start/stop commands and keeps the service alive after process recreation.
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                overlayRequested = false
+                clearPendingDisplayWork()
+                overlayWindowController.removeOverlay()
+                isOverlayActive = false
+                unregisterDisplayListenerIfNeeded()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
@@ -73,6 +118,16 @@ class ForegroundService : Service() {
 
             ACTION_START, null -> {
                 startForeground(NOTIFICATION_ID, buildNotification())
+                if (AppPermissionHelper.canDrawOverlays(this)) {
+                    overlayRequested = true
+                    registerDisplayListenerIfNeeded()
+                    scheduleRetarget(reason = "service_start", immediate = true)
+                } else {
+                    overlayRequested = false
+                    isOverlayActive = false
+                    clearPendingDisplayWork()
+                    unregisterDisplayListenerIfNeeded()
+                }
             }
         }
 
@@ -86,7 +141,119 @@ class ForegroundService : Service() {
 
     // Cleans up foreground state when the service is destroyed.
     override fun onDestroy() {
+        overlayRequested = false
+        clearPendingDisplayWork()
+        unregisterDisplayListenerIfNeeded()
+        overlayWindowController.removeOverlay()
+        isOverlayActive = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
+    }
+
+    private fun onDisplayTopologyChanged(changeType: String, displayId: Int) {
+        if (!overlayRequested) return
+        if (!AppPermissionHelper.canDrawOverlays(this)) return
+
+        scheduleRetarget(reason = "display_$changeType:$displayId", immediate = false)
+    }
+
+    private fun attachOrRetargetOverlay(reason: String) {
+        val targetDisplay = coverDisplayHelper.getCoverDisplay()
+        if (targetDisplay != null) {
+            cancelPendingFallbackToMain()
+            attachOverlayToTarget(targetDisplay, reason)
+            return
+        }
+
+        val activeId = overlayWindowController.getActiveDisplayId()
+        val currentlyOnCover = overlayWindowController.isOverlayAttached() &&
+            activeId != null &&
+            activeId != Display.DEFAULT_DISPLAY
+
+        if (currentlyOnCover) {
+            scheduleFallbackToMain(reason)
+            Log.d(
+                "CoverForegroundService",
+                "overlay reason=$reason holding_on_cover activeId=$activeId fallbackGraceMs=$COVER_FALLBACK_GRACE_MS displays=${coverDisplayHelper.describeDisplays()}"
+            )
+            return
+        }
+
+        cancelPendingFallbackToMain()
+        attachOverlayToTarget(targetDisplay = null, reason = reason)
+    }
+
+    private fun attachOverlayToTarget(targetDisplay: Display?, reason: String) {
+        val targetId = targetDisplay?.displayId ?: Display.DEFAULT_DISPLAY
+        val activeId = overlayWindowController.getActiveDisplayId()
+        val shouldForceRetarget = overlayWindowController.isOverlayAttached() && activeId != targetId
+
+        val didAttach = overlayWindowController.showOverlay(
+            targetDisplay = targetDisplay,
+            forceReattach = shouldForceRetarget
+        )
+        isOverlayActive = didAttach
+
+        Log.d(
+            "CoverForegroundService",
+            "overlay reason=$reason targetId=$targetId activeId=${overlayWindowController.getActiveDisplayId()} forceRetarget=$shouldForceRetarget attached=$didAttach displays=${coverDisplayHelper.describeDisplays()}"
+        )
+    }
+
+    private fun scheduleRetarget(reason: String, immediate: Boolean) {
+        pendingDisplayRetarget?.let { mainHandler.removeCallbacks(it) }
+
+        val runnable = Runnable {
+            pendingDisplayRetarget = null
+            attachOrRetargetOverlay(reason)
+        }
+        pendingDisplayRetarget = runnable
+
+        if (immediate) {
+            mainHandler.post(runnable)
+        } else {
+            mainHandler.postDelayed(runnable, DISPLAY_CHANGE_DEBOUNCE_MS)
+        }
+    }
+
+    private fun scheduleFallbackToMain(reason: String) {
+        if (pendingFallbackToMain != null) return
+
+        val runnable = Runnable {
+            pendingFallbackToMain = null
+            if (!overlayRequested || !AppPermissionHelper.canDrawOverlays(this)) return@Runnable
+
+            val coverDisplay = coverDisplayHelper.getCoverDisplay()
+            if (coverDisplay != null) {
+                attachOverlayToTarget(coverDisplay, "$reason grace_cancelled_cover_returned")
+            } else {
+                attachOverlayToTarget(targetDisplay = null, reason = "$reason grace_elapsed")
+            }
+        }
+        pendingFallbackToMain = runnable
+        mainHandler.postDelayed(runnable, COVER_FALLBACK_GRACE_MS)
+    }
+
+    private fun cancelPendingFallbackToMain() {
+        pendingFallbackToMain?.let { mainHandler.removeCallbacks(it) }
+        pendingFallbackToMain = null
+    }
+
+    private fun clearPendingDisplayWork() {
+        pendingDisplayRetarget?.let { mainHandler.removeCallbacks(it) }
+        pendingDisplayRetarget = null
+        cancelPendingFallbackToMain()
+    }
+
+    private fun registerDisplayListenerIfNeeded() {
+        if (isDisplayListenerRegistered) return
+        displayManager.registerDisplayListener(displayListener, mainHandler)
+        isDisplayListenerRegistered = true
+    }
+
+    private fun unregisterDisplayListenerIfNeeded() {
+        if (!isDisplayListenerRegistered) return
+        displayManager.unregisterDisplayListener(displayListener)
+        isDisplayListenerRegistered = false
     }
 }
