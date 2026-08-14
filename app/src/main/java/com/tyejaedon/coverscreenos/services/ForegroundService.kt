@@ -19,7 +19,7 @@ import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
 class ForegroundService : Service() {
     companion object {
         private const val DISPLAY_CHANGE_DEBOUNCE_MS = 450L
-        private const val COVER_FALLBACK_GRACE_MS = 2_000L
+        private const val COVER_DETACH_GRACE_MS = 2_000L
 
         @Volatile
         var isOverlayActive: Boolean = false
@@ -52,7 +52,7 @@ class ForegroundService : Service() {
     private var overlayRequested = false
     private var isDisplayListenerRegistered = false
     private var pendingDisplayRetarget: Runnable? = null
-    private var pendingFallbackToMain: Runnable? = null
+    private var pendingCoverDetach: Runnable? = null
 
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {
@@ -160,7 +160,7 @@ class ForegroundService : Service() {
     private fun attachOrRetargetOverlay(reason: String) {
         val targetDisplay = coverDisplayHelper.getCoverDisplay()
         if (targetDisplay != null) {
-            cancelPendingFallbackToMain()
+            cancelPendingCoverDetach()
             attachOverlayToTarget(targetDisplay, reason)
             return
         }
@@ -171,20 +171,27 @@ class ForegroundService : Service() {
             activeId != Display.DEFAULT_DISPLAY
 
         if (currentlyOnCover) {
-            scheduleFallbackToMain(reason)
+            scheduleCoverDetach(reason)
             Log.d(
                 "CoverForegroundService",
-                "overlay reason=$reason holding_on_cover activeId=$activeId fallbackGraceMs=$COVER_FALLBACK_GRACE_MS displays=${coverDisplayHelper.describeDisplays()}"
+                "overlay reason=$reason holding_on_cover activeId=$activeId detachGraceMs=$COVER_DETACH_GRACE_MS displays=${coverDisplayHelper.describeDisplays()}"
             )
             return
         }
 
-        cancelPendingFallbackToMain()
-        attachOverlayToTarget(targetDisplay = null, reason = reason)
+        cancelPendingCoverDetach()
+        if (overlayWindowController.isOverlayAttached()) {
+            overlayWindowController.removeOverlay()
+        }
+        isOverlayActive = false
+        Log.d(
+            "CoverForegroundService",
+            "overlay reason=$reason no_cover_available attached=false displays=${coverDisplayHelper.describeDisplays()}"
+        )
     }
 
-    private fun attachOverlayToTarget(targetDisplay: Display?, reason: String) {
-        val targetId = targetDisplay?.displayId ?: Display.DEFAULT_DISPLAY
+    private fun attachOverlayToTarget(targetDisplay: Display, reason: String) {
+        val targetId = targetDisplay.displayId
         val activeId = overlayWindowController.getActiveDisplayId()
         val shouldForceRetarget = overlayWindowController.isOverlayAttached() && activeId != targetId
 
@@ -216,33 +223,38 @@ class ForegroundService : Service() {
         }
     }
 
-    private fun scheduleFallbackToMain(reason: String) {
-        if (pendingFallbackToMain != null) return
+    private fun scheduleCoverDetach(reason: String) {
+        if (pendingCoverDetach != null) return
 
         val runnable = Runnable {
-            pendingFallbackToMain = null
+            pendingCoverDetach = null
             if (!overlayRequested || !AppPermissionHelper.canDrawOverlays(this)) return@Runnable
 
             val coverDisplay = coverDisplayHelper.getCoverDisplay()
             if (coverDisplay != null) {
                 attachOverlayToTarget(coverDisplay, "$reason grace_cancelled_cover_returned")
             } else {
-                attachOverlayToTarget(targetDisplay = null, reason = "$reason grace_elapsed")
+                overlayWindowController.removeOverlay()
+                isOverlayActive = false
+                Log.d(
+                    "CoverForegroundService",
+                    "overlay reason=$reason grace_elapsed detached=true displays=${coverDisplayHelper.describeDisplays()}"
+                )
             }
         }
-        pendingFallbackToMain = runnable
-        mainHandler.postDelayed(runnable, COVER_FALLBACK_GRACE_MS)
+        pendingCoverDetach = runnable
+        mainHandler.postDelayed(runnable, COVER_DETACH_GRACE_MS)
     }
 
-    private fun cancelPendingFallbackToMain() {
-        pendingFallbackToMain?.let { mainHandler.removeCallbacks(it) }
-        pendingFallbackToMain = null
+    private fun cancelPendingCoverDetach() {
+        pendingCoverDetach?.let { mainHandler.removeCallbacks(it) }
+        pendingCoverDetach = null
     }
 
     private fun clearPendingDisplayWork() {
         pendingDisplayRetarget?.let { mainHandler.removeCallbacks(it) }
         pendingDisplayRetarget = null
-        cancelPendingFallbackToMain()
+        cancelPendingCoverDetach()
     }
 
     private fun registerDisplayListenerIfNeeded() {
