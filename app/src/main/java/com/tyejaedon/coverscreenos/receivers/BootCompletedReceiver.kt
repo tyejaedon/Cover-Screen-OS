@@ -1,12 +1,9 @@
 package com.tyejaedon.coverscreenos.receivers
 
-import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import androidx.core.content.ContextCompat
-import com.tyejaedon.coverscreenos.services.ForegroundService
+import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
 
 class BootCompletedReceiver : BroadcastReceiver() {
 
@@ -19,14 +16,9 @@ class BootCompletedReceiver : BroadcastReceiver() {
 
         if (!shouldStart) return
 
-        val hasNotificationPermission = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.POST_NOTIFICATIONS
-        ) == PackageManager.PERMISSION_GRANTED
+        if (!ForegroundServiceHelper.hasRequiredOverlayPermissions(context)) return
 
-        if (!hasNotificationPermission) return
-
-        ContextCompat.startForegroundService(context, ForegroundService.createStartIntent(context))
+        ForegroundServiceHelper.startForegroundService(context)
     }
 }
 

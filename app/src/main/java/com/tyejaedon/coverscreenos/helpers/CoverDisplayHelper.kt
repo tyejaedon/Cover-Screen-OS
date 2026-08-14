@@ -32,4 +32,10 @@ class CoverDisplayHelper(private val context: Context) {
     private fun Display.isUsableCoverDisplay(): Boolean {
         return displayId != Display.DEFAULT_DISPLAY && isValid && state != Display.STATE_OFF
     }
+
+    fun describeDisplays(): String {
+        return displayManager.displays.joinToString(prefix = "[", postfix = "]") { display ->
+            "id=${display.displayId},state=${display.state},valid=${display.isValid}"
+        }
+    }
 }

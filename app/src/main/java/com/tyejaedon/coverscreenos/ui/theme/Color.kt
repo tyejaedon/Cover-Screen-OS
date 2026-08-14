@@ -2,10 +2,11 @@ package com.tyejaedon.coverscreenos.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+val BrandBlue = Color(0xFF4C67FF)
+val BrandBlueDark = Color(0xFF98A6FF)
+val AccentMint = Color(0xFF51D4AF)
 
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
+val LightBackground = Color(0xFFF5F7FF)
+val LightSurface = Color(0xFFE8ECFF)
+val DarkBackground = Color(0xFF11131C)
+val DarkSurface = Color(0xFF1C2130)
