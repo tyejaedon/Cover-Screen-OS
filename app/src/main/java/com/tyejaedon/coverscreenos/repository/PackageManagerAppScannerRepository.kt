@@ -3,6 +3,7 @@ package com.tyejaedon.coverscreenos.repository
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import com.tyejaedon.coverscreenos.models.AppModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -13,12 +14,28 @@ class PackageManagerAppScannerRepository(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
 
+    private companion object {
+        private const val APP_SCAN_CACHE_TTL_MS = 60_000L
+    }
+
+    private val cacheLock = Any()
+    private var cachedApps: List<AppModel>? = null
+    private var cachedAtElapsedMs: Long = 0L
+
     suspend fun scanInstalledApplications(): List<AppModel> = withContext(ioDispatcher) {
+        val now = SystemClock.elapsedRealtime()
+        synchronized(cacheLock) {
+            val apps = cachedApps
+            if (apps != null && (now - cachedAtElapsedMs) <= APP_SCAN_CACHE_TTL_MS) {
+                return@withContext apps
+            }
+        }
+
         val packageManager = context.packageManager
         @Suppress("DEPRECATION")
         val installedApps = packageManager.getInstalledApplications(0)
 
-        installedApps
+        val scannedApps = installedApps
             .asSequence()
             .filter { appInfo -> shouldIncludeApplication(packageManager, appInfo) }
             .map { appInfo ->
@@ -30,6 +47,13 @@ class PackageManagerAppScannerRepository(
             }
             .sortedBy { it.name.lowercase() }
             .toList()
+
+        synchronized(cacheLock) {
+            cachedApps = scannedApps
+            cachedAtElapsedMs = SystemClock.elapsedRealtime()
+        }
+
+        scannedApps
     }
 
     private fun shouldIncludeApplication(
