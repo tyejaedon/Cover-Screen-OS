@@ -108,6 +108,7 @@ class ForegroundService : Service() {
             ACTION_STOP -> {
                 overlayRequested = false
                 clearPendingDisplayWork()
+                coverDisplayHelper.stopLockStatusMonitoring()
                 overlayWindowController.removeOverlay()
                 isOverlayActive = false
                 unregisterDisplayListenerIfNeeded()
@@ -120,12 +121,14 @@ class ForegroundService : Service() {
                 startForeground(NOTIFICATION_ID, buildNotification())
                 if (AppPermissionHelper.canDrawOverlays(this)) {
                     overlayRequested = true
+                    coverDisplayHelper.startLockStatusMonitoring()
                     registerDisplayListenerIfNeeded()
                     scheduleRetarget(reason = "service_start", immediate = true)
                 } else {
                     overlayRequested = false
                     isOverlayActive = false
                     clearPendingDisplayWork()
+                    coverDisplayHelper.stopLockStatusMonitoring()
                     unregisterDisplayListenerIfNeeded()
                 }
             }
@@ -143,6 +146,7 @@ class ForegroundService : Service() {
     override fun onDestroy() {
         overlayRequested = false
         clearPendingDisplayWork()
+        coverDisplayHelper.stopLockStatusMonitoring()
         unregisterDisplayListenerIfNeeded()
         overlayWindowController.removeOverlay()
         isOverlayActive = false
@@ -196,8 +200,9 @@ class ForegroundService : Service() {
         val shouldForceRetarget = overlayWindowController.isOverlayAttached() && activeId != targetId
 
         val didAttach = overlayWindowController.showOverlay(
-            targetDisplay = targetDisplay,
-            forceReattach = shouldForceRetarget
+            targetDisplay,
+            shouldForceRetarget,
+            coverDisplayHelper.isDeviceLocked
         )
         isOverlayActive = didAttach
 
