@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.tyejaedon.coverscreenos.services.CoverAccessibilityService
@@ -65,6 +66,17 @@ object AppPermissionHelper {
             Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
             Uri.fromParts("package", context.packageName, null)
         )
+    }
+
+    fun isBatteryOptimizationDisabled(context: Context): Boolean {
+        val powerManager = context.getSystemService(PowerManager::class.java) ?: return false
+        return powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    fun createBatteryOptimizationSettingsIntent(context: Context): Intent {
+        return Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = "package:${context.packageName}".toUri()
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 package com.tyejaedon.coverscreenos.ui.controllers
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,11 +10,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,13 +39,14 @@ import kotlin.time.Duration.Companion.milliseconds
 @Composable
 fun ForegroundServiceController(
     modifier: Modifier = Modifier,
-    refreshIntervalMs: Long = 3_000L
+    refreshIntervalMs: Long = 6_000L
 ) {
     val context = LocalContext.current
     var isServiceRunning by remember {
         mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning(context))
     }
     var lastCheckedAt by remember { mutableStateOf(currentStatusTimestamp()) }
+    var lastActionFeedback by remember { mutableStateOf<String?>(null) }
 
     fun refreshServiceState() {
         isServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning(context)
@@ -66,6 +70,11 @@ fun ForegroundServiceController(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text("Service Controls", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Start or stop the launcher runtime. Status updates every ${refreshIntervalMs / 1000}s.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -80,34 +89,76 @@ fun ForegroundServiceController(
                             else MaterialTheme.colorScheme.error
                         )
                 )
-                Text(if (isServiceRunning) "Foreground service is running" else "Foreground service is stopped")
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (isServiceRunning) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                    } else {
+                        MaterialTheme.colorScheme.error.copy(alpha = 0.16f)
+                    },
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isServiceRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text(
+                        text = if (isServiceRunning) "Running" else "Stopped",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isServiceRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
+                }
+                Text(
+                    text = if (isServiceRunning) "Launcher runtime is active" else "Launcher runtime is inactive",
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
 
             Text("Last checked: $lastCheckedAt")
-            Text("Auto-refresh: every ${refreshIntervalMs / 1000}s")
+
+            lastActionFeedback?.let { feedback ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = feedback,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
-                    enabled = !isServiceRunning,
                     onClick = {
-                        ForegroundServiceHelper.startForegroundService(context)
+                        if (isServiceRunning) {
+                            ForegroundServiceHelper.stopForegroundService(context)
+                            lastActionFeedback = "Stopped service. Result: overlay runtime is now inactive."
+                        } else {
+                            val started = ForegroundServiceHelper.startForegroundService(context)
+                            lastActionFeedback = if (started) {
+                                "Started service. Result: overlay runtime should become active shortly."
+                            } else {
+                                "Start blocked. Grant notification, overlay, and accessibility permissions first."
+                            }
+                        }
                         refreshServiceState()
                     }
                 ) {
-                    Text("Start")
+                    Text(if (isServiceRunning) "Stop launcher" else "Start launcher")
                 }
 
                 OutlinedButton(
-                    enabled = isServiceRunning,
                     onClick = {
-                        ForegroundServiceHelper.stopForegroundService(context)
                         refreshServiceState()
+                        lastActionFeedback = "Status refreshed."
                     }
                 ) {
-                    Text("Stop")
-                }
-
-                OutlinedButton(onClick = { refreshServiceState() }) {
                     Text("Refresh")
                 }
             }

@@ -12,6 +12,20 @@ class CoverAccessibilityService : AccessibilityService() {
     companion object {
         private const val GESTURE_DEBOUNCE_MS = 550L
         private const val ACTION_THROTTLE_MS = 300L
+
+        @Volatile
+        private var latestForegroundPackage: String? = null
+
+        @Volatile
+        private var latestForegroundEventElapsedMs: Long = 0L
+
+        fun currentForegroundPackage(): String? = latestForegroundPackage
+
+        fun currentForegroundPackageEventAgeMs(nowElapsedMs: Long = SystemClock.elapsedRealtime()): Long {
+            val eventElapsedMs = latestForegroundEventElapsedMs
+            if (eventElapsedMs <= 0L) return Long.MAX_VALUE
+            return (nowElapsedMs - eventElapsedMs).coerceAtLeast(0L)
+        }
     }
 
     private var lastWindowPackage: CharSequence? = null
@@ -30,6 +44,8 @@ class CoverAccessibilityService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         ) {
+            latestForegroundPackage = event.packageName?.toString()
+            latestForegroundEventElapsedMs = SystemClock.elapsedRealtime()
             if (event.packageName != lastWindowPackage) {
                 lastWindowPackage = event.packageName
                 Log.d("CoverAccessibility", "Window changed: ${event.packageName}")
