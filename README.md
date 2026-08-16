@@ -91,6 +91,27 @@ v                                                   v
 
 ---
 
+## Launcher Customization Hub
+
+The in-app home surface now includes a launcher customization hub focused on cover-display ergonomics.
+
+- **Dock management:**
+  - Long-press + drag to reorder four dock slots.
+  - Haptic feedback and lift/shadow animation while dragging for tactile precision.
+  - Neighboring slots softly "snap" aside during drag to clarify insertion target.
+  - Choose and clear apps per slot.
+  - Dock slot choices persist across restarts.
+- **Wallpaper controls:**
+  - Pick any local image URI as cover wallpaper.
+  - Choose wallpaper scale mode: `Crop` or `Fit`.
+  - Tune readability with dim overlay and blur sliders.
+  - One-tap reset restores dock + wallpaper style defaults, with an Undo snackbar.
+  - Settings persist and are applied live to the overlay launcher.
+
+Settings are persisted with AndroidX DataStore in `LauncherSettingsStore`.
+
+---
+
 ## 🚀 Development Roadmap
 
 **Phase 1:** Display detection & overlay boilerplate  

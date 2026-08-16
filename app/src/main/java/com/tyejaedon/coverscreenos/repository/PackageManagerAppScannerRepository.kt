@@ -11,19 +11,22 @@ import kotlinx.coroutines.withContext
 
 class PackageManagerAppScannerRepository(
     private val context: Context,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val elapsedRealtimeProvider: () -> Long = {
+        runCatching { SystemClock.elapsedRealtime() }
+            .getOrElse { System.nanoTime() / 1_000_000L }
+    }
 ) {
 
     private companion object {
         private const val APP_SCAN_CACHE_TTL_MS = 60_000L
+        private val cacheLock = Any()
+        private var cachedApps: List<AppModel>? = null
+        private var cachedAtElapsedMs: Long = 0L
     }
 
-    private val cacheLock = Any()
-    private var cachedApps: List<AppModel>? = null
-    private var cachedAtElapsedMs: Long = 0L
-
     suspend fun scanInstalledApplications(): List<AppModel> = withContext(ioDispatcher) {
-        val now = SystemClock.elapsedRealtime()
+        val now = elapsedRealtimeProvider()
         synchronized(cacheLock) {
             val apps = cachedApps
             if (apps != null && (now - cachedAtElapsedMs) <= APP_SCAN_CACHE_TTL_MS) {
@@ -45,12 +48,15 @@ class PackageManagerAppScannerRepository(
                     iconDrawable = packageManager.getApplicationIcon(appInfo)
                 )
             }
-            .sortedBy { it.name.lowercase() }
+            .sortedWith(
+                compareBy<AppModel, String>(String.CASE_INSENSITIVE_ORDER) { it.name }
+                    .thenBy { it.name }
+            )
             .toList()
 
         synchronized(cacheLock) {
             cachedApps = scannedApps
-            cachedAtElapsedMs = SystemClock.elapsedRealtime()
+            cachedAtElapsedMs = elapsedRealtimeProvider()
         }
 
         scannedApps
@@ -60,9 +66,14 @@ class PackageManagerAppScannerRepository(
         packageManager: PackageManager,
         appInfo: ApplicationInfo
     ): Boolean {
-        val hasLauncherActivity = packageManager.getLaunchIntentForPackage(appInfo.packageName) != null
         val isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
             (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+        if (!isSystemApp) {
+            // Keep third-party apps without extra PackageManager intent queries.
+            return true
+        }
+
+        val hasLauncherActivity = packageManager.getLaunchIntentForPackage(appInfo.packageName) != null
 
         // Keep launchable apps and filter non-launchable background system components.
         return hasLauncherActivity || !isSystemApp

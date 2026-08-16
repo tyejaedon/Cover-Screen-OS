@@ -1,7 +1,5 @@
 package com.tyejaedon.coverscreenos.services
 
-import android.app.ActivityOptions
-import android.content.Intent
 import android.content.Context
 import android.hardware.display.DisplayManager
 import android.graphics.PixelFormat
@@ -13,6 +11,7 @@ import android.view.Display
 import android.view.WindowManager
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -24,28 +23,29 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import com.tyejaedon.coverscreenos.models.AppModel
+import com.tyejaedon.coverscreenos.datastore.LauncherSettings
+import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.ui.CoverAppGridOverlay
-import com.tyejaedon.coverscreenos.ui.theme.CoverScreenOSTheme
+import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
+import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import kotlinx.coroutines.flow.StateFlow
 
 class OverlayWindowController(private val context: Context) {
 
     private val appRepository = PackageManagerAppScannerRepository(context.applicationContext)
+    private val launcherSettingsStore = LauncherSettingsStore(context.applicationContext)
     private var overlayView: View? = null
     private var overlayWindowManager: WindowManager? = null
     private var overlayWindowContext: Context? = null
     private var activeDisplayId: Int? = null
     private var overlayLifecycleOwner: OverlayViewLifecycleOwner? = null
-    private var lockStatusFlow: StateFlow<Boolean>? = null
 
     fun showOverlay(
         targetDisplay: Display? = null,
         forceReattach: Boolean = false,
         deviceLockState: StateFlow<Boolean>? = null
     ): Boolean {
-        lockStatusFlow = deviceLockState
         val desiredDisplayId = targetDisplay?.displayId ?: Display.DEFAULT_DISPLAY
         if (overlayView != null && !forceReattach && activeDisplayId == desiredDisplayId) {
             return true
@@ -64,12 +64,36 @@ class OverlayWindowController(private val context: Context) {
                 setViewTreeLifecycleOwner(lifecycleOwner)
                 setViewTreeSavedStateRegistryOwner(lifecycleOwner)
                 setContent {
+                    val context = LocalContext.current
                     val isDeviceLocked = deviceLockState?.collectAsState()?.value ?: false
-                    CoverScreenOSTheme {
+                    val launcherSettings = launcherSettingsStore.settings
+                        .collectAsState(initial = LauncherSettings())
+                        .value
+                    CoverOSTheme(themePreference = launcherSettings.themePreference) {
                         CoverAppGridOverlay(
                             repository = appRepository,
-                            onAppSelected = { app -> launchApp(app) },
-                            isDeviceLocked = isDeviceLocked
+                            onAppSelected = { appModel ->
+                                val launchIntent = ForegroundService.createLaunchAppIntent(
+                                    context = context,
+                                    packageName = appModel.packageName
+                                )
+                                runCatching { context.startService(launchIntent) }
+                                    .onFailure { error ->
+                                        Log.w(
+                                            "OverlayWindowController",
+                                            "Service launch routing failed for ${appModel.packageName}: ${error.message}"
+                                        )
+                                        // Fallback keeps launch functional even if service command delivery fails.
+                                        CoverAppLauncher.launchAppOnCoverScreen(context, appModel)
+                                    }
+                            },
+                            isDeviceLocked = isDeviceLocked,
+                            dockPackageSlots = launcherSettings.dockPackages,
+                            isDockVisible = launcherSettings.isDockVisible,
+                            wallpaperUri = launcherSettings.wallpaperUri,
+                            wallpaperScaleMode = launcherSettings.wallpaperScaleMode,
+                            wallpaperDimAmount = launcherSettings.wallpaperDimAmount,
+                            wallpaperBlurRadiusDp = launcherSettings.wallpaperBlurRadiusDp
                         )
                     }
                 }
@@ -88,8 +112,7 @@ class OverlayWindowController(private val context: Context) {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -119,25 +142,6 @@ class OverlayWindowController(private val context: Context) {
         return added
     }
 
-    private fun launchApp(app: AppModel) {
-        if (lockStatusFlow?.value == true) {
-            Log.d("OverlayWindowController", "Launch blocked while locked for ${app.packageName}")
-            return
-        }
-
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(app.packageName) ?: return
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-        val options = activeDisplayId?.let { displayId ->
-            ActivityOptions.makeBasic().apply {
-                setLaunchDisplayId(displayId)
-            }.toBundle()
-        }
-
-        runCatching { context.startActivity(launchIntent, options) }
-            .onFailure { error -> Log.w("OverlayWindowController", "Launch failed for ${app.packageName}: ${error.message}") }
-    }
-
     fun removeOverlay() {
         val view = overlayView ?: return
         runCatching { overlayWindowManager?.removeView(view) }
@@ -147,7 +151,6 @@ class OverlayWindowController(private val context: Context) {
         overlayWindowContext = null
         overlayLifecycleOwner = null
         activeDisplayId = null
-        lockStatusFlow = null
     }
 
     fun getActiveDisplayId(): Int? {

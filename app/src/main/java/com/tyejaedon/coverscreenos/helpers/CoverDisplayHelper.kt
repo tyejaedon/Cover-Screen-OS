@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class CoverDisplayHelper(private val context: Context) {
 
     private companion object {
-        private const val LOCK_STATUS_POLL_INTERVAL_MS = 1_000L
+        private const val LOCK_STATUS_POLL_INTERVAL_MS = 5_000L
     }
 
     private val displayManager: DisplayManager by lazy {
@@ -22,7 +22,9 @@ class CoverDisplayHelper(private val context: Context) {
     }
     private var lockStatusReceiver: LockStatusReceiver? = null
     private var isLockStatusReceiverRegistered = false
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val mainHandler: Handler by lazy(LazyThreadSafetyMode.NONE) {
+        Handler(Looper.getMainLooper())
+    }
     private var lockStatusPoller: Runnable? = null
     private val _isDeviceLocked = MutableStateFlow(true)
     val isDeviceLocked: StateFlow<Boolean> = _isDeviceLocked.asStateFlow()
@@ -100,6 +102,7 @@ class CoverDisplayHelper(private val context: Context) {
     private fun startLockStatusPolling() {
         if (lockStatusPoller != null) return
 
+        // Receiver updates remain primary; this low-frequency poll is a fallback for OEM edge cases.
         val poller = object : Runnable {
             override fun run() {
                 _isDeviceLocked.value = LockStatusReceiver.currentLockStatus(context)

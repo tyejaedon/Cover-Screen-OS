@@ -5,32 +5,44 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatterySaver
+import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
+import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
+import com.tyejaedon.coverscreenos.ui.theme.coverTopLevelSafeInsets
+import com.tyejaedon.coverscreenos.ui.theme.navbarPadding
+
+private data class PermissionRequirementUiModel(
+    val title: String,
+    val details: String,
+    val granted: Boolean,
+    val actionLabel: String,
+    val icon: ImageVector,
+    val onAction: () -> Unit
+)
 
 @Composable
 fun PermissionScreen(
@@ -46,12 +58,20 @@ fun PermissionScreen(
     var hasAccessibilityPermission by remember {
         mutableStateOf(AppPermissionHelper.isAccessibilityServiceEnabled(context))
     }
+    var hasBatteryOptimizationExemption by remember {
+        mutableStateOf(AppPermissionHelper.isBatteryOptimizationDisabled(context))
+    }
+    var isForegroundServiceRunning by remember {
+        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning(context))
+    }
     var hasTriggeredGrantedCallback by remember { mutableStateOf(false) }
 
     fun refreshPermissionState() {
         hasNotificationPermission = AppPermissionHelper.hasNotificationPermission(context)
         hasOverlayPermission = AppPermissionHelper.canDrawOverlays(context)
         hasAccessibilityPermission = AppPermissionHelper.isAccessibilityServiceEnabled(context)
+        hasBatteryOptimizationExemption = AppPermissionHelper.isBatteryOptimizationDisabled(context)
+        isForegroundServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning(context)
     }
 
     val requestNotificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -78,6 +98,12 @@ fun PermissionScreen(
         refreshPermissionState()
     }
 
+    val openBatteryOptimizationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        refreshPermissionState()
+    }
+
     val allPermissionsGranted = hasNotificationPermission && hasOverlayPermission && hasAccessibilityPermission
 
     LaunchedEffect(allPermissionsGranted) {
@@ -92,117 +118,106 @@ fun PermissionScreen(
         return
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("Before overlay launch", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "Enable each permission so Cover Screen OS can stay on top and react to navigation changes.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        PermissionRequirementCard(
-            title = "1) Notification permission",
+    val permissionRequirements = listOf(
+        PermissionRequirementUiModel(
+            title = "Notification permission",
             details = "Required for the persistent foreground notification.",
             granted = hasNotificationPermission,
             actionLabel = "Grant notification permission",
+            icon = Icons.Filled.Notifications,
             onAction = {
                 requestNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
-        )
-
-        PermissionRequirementCard(
-            title = "2) Appear on top",
+        ),
+        PermissionRequirementUiModel(
+            title = "Appear on top",
             details = "Allows TYPE_APPLICATION_OVERLAY windows to draw over other apps.",
             granted = hasOverlayPermission,
             actionLabel = "Open overlay settings",
+            icon = Icons.Filled.Layers,
             onAction = {
                 openOverlaySettingsLauncher.launch(AppPermissionHelper.createOverlaySettingsIntent(context))
             }
-        )
-
-        PermissionRequirementCard(
-            title = "3) Accessibility service",
+        ),
+        PermissionRequirementUiModel(
+            title = "Accessibility service",
             details = "Lets the app react to window and navigation events needed for cover control.",
             granted = hasAccessibilityPermission,
             actionLabel = "Open accessibility settings",
+            icon = Icons.Filled.Accessibility,
             onAction = {
                 openAccessibilitySettingsLauncher.launch(AppPermissionHelper.createAccessibilitySettingsIntent())
             }
         )
+    )
+    val grantedCount = permissionRequirements.count { it.granted }
+    val totalCount = permissionRequirements.size
+    val nextMissingRequirement = permissionRequirements.firstOrNull { !it.granted }
 
-        OutlinedButton(onClick = {
-            openAppSettingsLauncher.launch(AppPermissionHelper.createAppDetailsSettingsIntent(context))
-        }) {
-            Text("Open app settings")
-        }
-
-        OutlinedButton(onClick = {
-            refreshPermissionState()
-        }) {
-            Text("Refresh permission status")
-        }
-
-        if (ForegroundServiceHelper.isForegroundServiceRunning(context)) {
-            Text(
-                "Foreground service currently running.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .navbarPadding()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.surface,
+                        MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
             )
-        }
-    }
-}
-
-@Composable
-private fun PermissionRequirementCard(
-    title: String,
-    details: String,
-    granted: Boolean,
-    actionLabel: String,
-    onAction: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (granted) {
-                MaterialTheme.colorScheme.secondaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            }
-        )
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .coverScreenPadding(horizontal = 14.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    text = if (granted) "Granted" else "Missing",
-                    color = if (granted) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.error
-                    },
-                    style = MaterialTheme.typography.labelLarge
+            PermissionHeaderCard(grantedCount = grantedCount, totalCount = totalCount)
+
+            nextMissingRequirement?.let { requirement ->
+                PermissionPriorityActionCard(
+                    requirementTitle = requirement.title,
+                    actionLabel = requirement.actionLabel,
+                    onAction = requirement.onAction
                 )
             }
-            Text(details, style = MaterialTheme.typography.bodyMedium)
-            if (!granted) {
-                Button(onClick = onAction) {
-                    Text(actionLabel)
+
+            permissionRequirements.forEachIndexed { index, requirement ->
+                PermissionRequirementCard(
+                    title = "${index + 1}) ${requirement.title}",
+                    details = requirement.details,
+                    granted = requirement.granted,
+                    actionLabel = requirement.actionLabel,
+                    icon = requirement.icon,
+                    onAction = requirement.onAction
+                )
+            }
+
+            PermissionRequirementCard(
+                title = "Battery optimization",
+                details = "Recommended: disabling optimization helps keep the launcher service alive reliably.",
+                granted = hasBatteryOptimizationExemption,
+                actionLabel = "Disable battery optimization",
+                icon = Icons.Filled.BatterySaver,
+                onAction = {
+                    openBatteryOptimizationLauncher.launch(
+                        AppPermissionHelper.createBatteryOptimizationSettingsIntent(context)
+                    )
                 }
+            )
+
+            PermissionSupportActions(
+                onOpenAppSettings = {
+                    openAppSettingsLauncher.launch(AppPermissionHelper.createAppDetailsSettingsIntent(context))
+                },
+                onRefresh = { refreshPermissionState() }
+            )
+
+            if (isForegroundServiceRunning) {
+                PermissionInfoBanner(message = "Foreground service currently running.")
             }
         }
     }
