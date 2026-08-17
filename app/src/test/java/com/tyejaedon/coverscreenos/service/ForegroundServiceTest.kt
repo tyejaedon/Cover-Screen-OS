@@ -12,10 +12,10 @@ class ForegroundServiceTest {
 	fun `service actions are unique and stable`() {
 		assertEquals("com.tyejaedon.coverscreenos.action.START", ForegroundService.ACTION_START)
 		assertEquals("com.tyejaedon.coverscreenos.action.STOP", ForegroundService.ACTION_STOP)
-		assertEquals("com.tyejaedon.coverscreenos.action.LAUNCH_APP", ForegroundService.ACTION_LAUNCH_APP)
+		assertEquals("com.tyejaedon.coverscreenos.action.HIDE_OVERLAY", ForegroundService.ACTION_HIDE_OVERLAY)
 		assertNotEquals(ForegroundService.ACTION_START, ForegroundService.ACTION_STOP)
-		assertNotEquals(ForegroundService.ACTION_START, ForegroundService.ACTION_LAUNCH_APP)
-		assertNotEquals(ForegroundService.ACTION_STOP, ForegroundService.ACTION_LAUNCH_APP)
+		assertNotEquals(ForegroundService.ACTION_START, ForegroundService.ACTION_HIDE_OVERLAY)
+		assertNotEquals(ForegroundService.ACTION_STOP, ForegroundService.ACTION_HIDE_OVERLAY)
 	}
 
 	@Test

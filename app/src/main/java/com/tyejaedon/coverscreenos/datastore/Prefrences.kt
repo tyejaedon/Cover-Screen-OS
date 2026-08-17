@@ -2,7 +2,9 @@ package com.tyejaedon.coverscreenos.datastore
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -27,6 +29,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.UUID
+import kotlin.math.max
 
 const val COVER_DOCK_SLOT_COUNT = 4
 const val MIN_WALLPAPER_DIM_AMOUNT = 0f
@@ -77,6 +80,7 @@ private const val MANAGED_WALLPAPER_DIR = "cover_wallpaper"
 private const val MANAGED_WALLPAPER_FILE_PREFIX = "selected_wallpaper_"
 private const val MANAGED_WALLPAPER_FILE_LEGACY = "selected_wallpaper"
 private const val MANAGED_WALLPAPER_FALLBACK_EXTENSION = ".img"
+private const val WALLPAPER_VALIDATION_TARGET_SIZE_PX = 512
 
 class LauncherSettingsStore(
 	context: Context,
@@ -168,7 +172,9 @@ class LauncherSettingsStore(
 	suspend fun setLauncherLayout(settings: LauncherSettings) {
 		withContext(ioDispatcher) {
 			val normalizedDockPackages = normalizeDockPackages(settings.dockPackages)
-			val normalizedWallpaperUri = settings.wallpaperUri?.trim().takeUnless { it.isNullOrEmpty() }
+			val normalizedWallpaperUri = resolveWallpaperUriForPersistedLayout(
+				settings.wallpaperUri?.trim().takeUnless { it.isNullOrEmpty() }
+			)
 			val normalizedWallpaperDim = settings.wallpaperDimAmount
 				.coerceIn(MIN_WALLPAPER_DIM_AMOUNT, MAX_WALLPAPER_DIM_AMOUNT)
 			val normalizedWallpaperBlur = settings.wallpaperBlurRadiusDp
@@ -189,6 +195,45 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.dockVisible] = settings.isDockVisible
 				preferences[LauncherPreferencesKeys.themePreference] = settings.themePreference.name
 			}
+		}
+	}
+
+	private fun resolveWallpaperUriForPersistedLayout(rawWallpaperUri: String?): String? {
+		if (rawWallpaperUri.isNullOrBlank()) return null
+
+		val parsedUri = runCatching { rawWallpaperUri.toUri() }.getOrNull() ?: return null
+		val migratedWallpaperUri = migrateLegacyManagedWallpaperUriIfNeeded(parsedUri) ?: rawWallpaperUri
+		val migratedParsedUri = runCatching { migratedWallpaperUri.toUri() }.getOrNull() ?: return null
+
+		if (isManagedWallpaperUri(migratedParsedUri)) {
+			if (isManagedWallpaperFileReadableAndDecodable(migratedParsedUri)) {
+				return migratedWallpaperUri
+			}
+
+			val recoveredWallpaperUri = resolveLatestManagedWallpaperUri()
+			if (recoveredWallpaperUri != null) {
+				Log.w(
+					SETTINGS_STORE_LOG_TAG,
+					"Launcher layout restore replaced stale wallpaper URI with latest managed wallpaper."
+				)
+				return recoveredWallpaperUri
+			}
+
+			Log.w(
+				SETTINGS_STORE_LOG_TAG,
+				"Launcher layout restore dropped stale managed wallpaper URI=$migratedWallpaperUri"
+			)
+			return null
+		}
+
+		return if (isWallpaperUriReadableAndDecodable(migratedParsedUri)) {
+			migratedWallpaperUri
+		} else {
+			Log.w(
+				SETTINGS_STORE_LOG_TAG,
+				"Launcher layout restore dropped unreadable wallpaper URI=$migratedWallpaperUri"
+			)
+			null
 		}
 	}
 
@@ -248,13 +293,17 @@ class LauncherSettingsStore(
 			val normalizedUri = uri?.trim().takeUnless { it.isNullOrEmpty() }
 			if (normalizedUri != null) {
 				val parsedUri = normalizedUri.toUri()
-				val uriReadable = if (isManagedWallpaperUri(parsedUri)) {
-					true
+				val uriReadableAndDecodable = if (isManagedWallpaperUri(parsedUri)) {
+					isManagedWallpaperFileReadableAndDecodable(parsedUri)
 				} else {
-					isWallpaperUriReadable(parsedUri)
+					isWallpaperUriReadableAndDecodable(parsedUri)
 				}
-				if (!uriReadable) {
-					Log.w(SETTINGS_STORE_LOG_TAG, "Wallpaper URI is not readable and was not saved: $normalizedUri")
+				if (!uriReadableAndDecodable) {
+					logWallpaperDiagnostics(stage = "set_wallpaper_uri_rejected", uri = parsedUri)
+					Log.w(
+						SETTINGS_STORE_LOG_TAG,
+						"Wallpaper URI is not readable/decodable and was not saved: $normalizedUri"
+					)
 					return@withContext false
 				}
 			}
@@ -275,20 +324,27 @@ class LauncherSettingsStore(
 		return withContext(ioDispatcher) {
 			takeSourceUriReadPermission(sourceUri)
 
-			val isDecodableImage = runCatching {
-				openUriInputStream(sourceUri)?.use { stream ->
-					val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-					BitmapFactory.decodeStream(stream, null, options)
-					options.outWidth > 0 && options.outHeight > 0
-				}
-			}.getOrNull() == true
+			val sourceBounds = probeBitmapBounds {
+				openUriInputStream(sourceUri)
+			}
+			val isDecodableImage = sourceBounds?.isDecodable == true
 			if (!isDecodableImage) {
+				logWallpaperDiagnostics(
+					stage = "source_not_decodable",
+					uri = sourceUri,
+					boundsProbe = sourceBounds
+				)
 				Log.w(SETTINGS_STORE_LOG_TAG, "Wallpaper import failed: source is not a decodable image URI $sourceUri")
 				return@withContext false
 			}
 
 			val sourceStream = openUriInputStream(sourceUri)
 			if (sourceStream == null) {
+				logWallpaperDiagnostics(
+					stage = "source_stream_unavailable",
+					uri = sourceUri,
+					boundsProbe = sourceBounds
+				)
 				Log.w(SETTINGS_STORE_LOG_TAG, "Wallpaper import failed: unable to open source URI $sourceUri")
 				return@withContext false
 			}
@@ -325,6 +381,22 @@ class LauncherSettingsStore(
 					wallpaperFile.delete()
 					return@runCatching false
 				}
+
+				if (!isManagedWallpaperFileReadableAndDecodable(wallpaperFile)) {
+					logWallpaperDiagnostics(
+						stage = "destination_not_decodable",
+						uri = Uri.fromFile(wallpaperFile),
+						boundsProbe = probeBitmapBounds {
+							runCatching { wallpaperFile.inputStream() }.getOrNull()
+						}
+					)
+					Log.w(
+						SETTINGS_STORE_LOG_TAG,
+						"Wallpaper import failed: destination file is not decodable ${wallpaperFile.absolutePath}"
+					)
+					wallpaperFile.delete()
+					return@runCatching false
+				}
 				true
 			}.getOrElse { error ->
 				Log.w(SETTINGS_STORE_LOG_TAG, "Wallpaper import failed while copying bytes: ${error.message}")
@@ -350,6 +422,58 @@ class LauncherSettingsStore(
 			)
 			true
 		}
+	}
+
+	private data class BitmapBoundsProbe(
+		val width: Int,
+		val height: Int
+	) {
+		val isDecodable: Boolean
+			get() = width > 0 && height > 0
+	}
+
+	private fun logWallpaperDiagnostics(
+		stage: String,
+		uri: Uri,
+		boundsProbe: BitmapBoundsProbe? = null
+	) {
+		val boundsSummary = boundsProbe?.let { probe ->
+			"bounds=${probe.width}x${probe.height} decodable=${probe.isDecodable}"
+		} ?: "bounds=<unavailable>"
+		Log.w(
+			SETTINGS_STORE_LOG_TAG,
+			"Wallpaper diagnostics stage=$stage ${wallpaperUriDiagnostics(uri)} $boundsSummary"
+		)
+	}
+
+	private fun wallpaperUriDiagnostics(uri: Uri): String {
+		val scheme = uri.scheme ?: "<none>"
+		if (scheme != "file") {
+			return "uri=$uri scheme=$scheme"
+		}
+
+		val path = uri.path
+		if (path.isNullOrBlank()) {
+			return "uri=$uri scheme=file path=<empty>"
+		}
+
+		val file = File(path)
+		return "uri=$uri scheme=file exists=${file.exists()} isFile=${file.isFile} canRead=${file.canRead()} length=${file.length()}"
+	}
+
+	private fun probeBitmapBounds(openInputStream: () -> InputStream?): BitmapBoundsProbe? {
+		return runCatching {
+			openInputStream()?.use { stream ->
+				val options = BitmapFactory.Options().apply {
+					inJustDecodeBounds = true
+				}
+				BitmapFactory.decodeStream(stream, null, options)
+				BitmapBoundsProbe(
+					width = options.outWidth,
+					height = options.outHeight
+				)
+			}
+		}.getOrNull()
 	}
 
 	suspend fun setWallpaperScaleMode(scaleMode: WallpaperScaleMode) {
@@ -437,19 +561,34 @@ class LauncherSettingsStore(
 		if (storedUri.isNullOrBlank()) return null
 
 		val parsedUri = runCatching { storedUri.toUri() }.getOrNull() ?: return null
+		val migratedUri = migrateLegacyManagedWallpaperUriIfNeeded(parsedUri)
+		if (migratedUri != null) {
+			return migratedUri
+		}
+
+		val effectiveUri = migratedUri ?: storedUri
+		val effectiveParsedUri = runCatching { effectiveUri.toUri() }.getOrNull() ?: return null
 		if (parsedUri.scheme != "file") return storedUri
 
-		val path = parsedUri.path ?: return storedUri
+		val path = effectiveParsedUri.path ?: return effectiveUri
 		val file = File(path)
-		if (file.exists() && file.isFile) return storedUri
+		if (file.exists() && file.isFile && file.length() > 0L) return effectiveUri
 
-		val recoveredWallpaperUri = resolveLatestManagedWallpaperUri()
-		if (recoveredWallpaperUri != null) {
+		if (isManagedWallpaperUri(effectiveParsedUri)) {
+			val recoveredWallpaperUri = resolveLatestManagedWallpaperUri()
+			if (recoveredWallpaperUri != null) {
+				Log.w(
+					SETTINGS_STORE_LOG_TAG,
+					"Stored wallpaper URI is missing, recovered latest managed wallpaper file."
+				)
+				return recoveredWallpaperUri
+			}
+
 			Log.w(
 				SETTINGS_STORE_LOG_TAG,
-				"Stored wallpaper URI is missing, recovered latest managed wallpaper file."
+				"Managed wallpaper URI points to missing data and was cleared."
 			)
-			return recoveredWallpaperUri
+			return null
 		}
 
 		Log.w(SETTINGS_STORE_LOG_TAG, "Stored wallpaper URI points to a missing file and was cleared.")
@@ -532,11 +671,80 @@ class LauncherSettingsStore(
 
 		val latestManagedFile = wallpaperDirectory.listFiles()
 			?.asSequence()
-			?.filter { file -> file.isFile && isManagedWallpaperFile(file) }
+			?.filter { file -> file.isFile && file.length() > 0L && isManagedWallpaperFile(file) }
 			?.maxByOrNull { file -> file.lastModified() }
 			?: return null
 
 		return Uri.fromFile(latestManagedFile).toString()
+	}
+
+	private fun migrateLegacyManagedWallpaperUriIfNeeded(uri: Uri): String? {
+		if (uri.scheme != "file") return null
+		if (isManagedWallpaperUri(uri)) return null
+
+		val path = uri.path ?: return null
+		val legacyFile = File(path)
+		if (!legacyFile.exists() || !legacyFile.isFile || !legacyFile.canRead() || legacyFile.length() <= 0L) {
+			return null
+		}
+
+		if (!isManagedWallpaperFile(legacyFile)) {
+			return null
+		}
+
+		val appFilesDir = appContext.filesDir
+		if (legacyFile.parentFile?.absolutePath != appFilesDir.absolutePath) {
+			return null
+		}
+
+		val wallpaperDirectory = File(appFilesDir, MANAGED_WALLPAPER_DIR)
+		if (!wallpaperDirectory.exists() && !wallpaperDirectory.mkdirs()) {
+			Log.w(SETTINGS_STORE_LOG_TAG, "Unable to create managed wallpaper directory for legacy migration.")
+			return null
+		}
+
+		val migratedFile = buildVersionedManagedWallpaperFile(wallpaperDirectory, uri)
+		val migrated = runCatching {
+			legacyFile.copyTo(migratedFile, overwrite = true)
+			if (!isManagedWallpaperFileReadableAndDecodable(migratedFile)) {
+				migratedFile.delete()
+				return@runCatching null
+			}
+			legacyFile.delete()
+			Uri.fromFile(migratedFile).toString()
+		}.getOrElse { error ->
+			Log.w(
+				SETTINGS_STORE_LOG_TAG,
+				"Legacy wallpaper migration failed from ${legacyFile.absolutePath}: ${error.message}"
+			)
+			null
+		}
+
+		if (migrated != null) {
+			Log.d(
+				SETTINGS_STORE_LOG_TAG,
+				"Migrated legacy wallpaper URI to managed directory: $migrated"
+			)
+		}
+
+		return migrated
+	}
+
+	private fun isManagedWallpaperFileReadableAndDecodable(uri: Uri): Boolean {
+		if (!isManagedWallpaperUri(uri)) return false
+		val path = uri.path ?: return false
+		return isManagedWallpaperFileReadableAndDecodable(File(path))
+	}
+
+	private fun isManagedWallpaperFileReadableAndDecodable(file: File): Boolean {
+		if (!file.exists() || !file.isFile || !file.canRead() || file.length() <= 0L) {
+			return false
+		}
+
+		val fileUri = Uri.fromFile(file)
+		return isBitmapDecodable {
+			runCatching { file.inputStream() }.getOrNull()
+		} && canDecodeBitmapPixels(fileUri)
 	}
 
 	private fun takeSourceUriReadPermission(sourceUri: Uri) {
@@ -552,11 +760,101 @@ class LauncherSettingsStore(
 		}
 	}
 
-	private fun isWallpaperUriReadable(uri: Uri): Boolean {
-		return runCatching {
+	private fun isWallpaperUriReadableAndDecodable(uri: Uri): Boolean {
+		return isBitmapDecodable {
+			openUriInputStream(uri)
+		} && canDecodeBitmapPixels(uri)
+	}
+
+	private fun canDecodeBitmapPixels(uri: Uri): Boolean {
+		val bounds = probeBitmapBounds {
+			openUriInputStream(uri)
+		} ?: return false
+		if (!bounds.isDecodable) return false
+
+		val sampleSize = calculateValidationInSampleSize(
+			outWidth = bounds.width,
+			outHeight = bounds.height,
+			requestedWidthPx = WALLPAPER_VALIDATION_TARGET_SIZE_PX,
+			requestedHeightPx = WALLPAPER_VALIDATION_TARGET_SIZE_PX
+		)
+
+		val bitmapFactoryDecoded = runCatching {
 			openUriInputStream(uri)?.use { stream ->
-				stream.read()
-				true
+				val decodeOptions = BitmapFactory.Options().apply {
+					inSampleSize = sampleSize
+					inPreferredConfig = Bitmap.Config.ARGB_8888
+				}
+				BitmapFactory.decodeStream(stream, null, decodeOptions) != null
+			} ?: false
+		}.getOrDefault(false)
+
+		if (bitmapFactoryDecoded) {
+			return true
+		}
+
+		val imageDecoderDecoded = decodeBitmapWithImageDecoder(uri)
+		if (!imageDecoderDecoded) {
+			Log.w(
+				SETTINGS_STORE_LOG_TAG,
+				"Wallpaper pixel decode validation failed uri=${wallpaperUriDiagnostics(uri)} bounds=${bounds.width}x${bounds.height} sampleSize=$sampleSize"
+			)
+		}
+		return imageDecoderDecoded
+	}
+
+	private fun decodeBitmapWithImageDecoder(uri: Uri): Boolean {
+		val source = when (uri.scheme) {
+			"file" -> {
+				val path = uri.path ?: return false
+				val file = File(path)
+				if (!file.exists() || !file.isFile || !file.canRead()) {
+					return false
+				}
+				ImageDecoder.createSource(file)
+			}
+
+			else -> ImageDecoder.createSource(appContext.contentResolver, uri)
+		}
+
+		return runCatching {
+			ImageDecoder.decodeBitmap(source) { decoder, imageInfo, _ ->
+				decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+				val sampleSize = calculateValidationInSampleSize(
+					outWidth = imageInfo.size.width,
+					outHeight = imageInfo.size.height,
+					requestedWidthPx = WALLPAPER_VALIDATION_TARGET_SIZE_PX,
+					requestedHeightPx = WALLPAPER_VALIDATION_TARGET_SIZE_PX
+				)
+				if (sampleSize > 1) {
+					decoder.setTargetSampleSize(sampleSize)
+				}
+			}
+			true
+		}.getOrDefault(false)
+	}
+
+	private fun calculateValidationInSampleSize(
+		outWidth: Int,
+		outHeight: Int,
+		requestedWidthPx: Int,
+		requestedHeightPx: Int
+	): Int {
+		if (outWidth <= 0 || outHeight <= 0) return 1
+
+		val widthRatio = outWidth.toFloat() / requestedWidthPx.coerceAtLeast(1)
+		val heightRatio = outHeight.toFloat() / requestedHeightPx.coerceAtLeast(1)
+		return max(widthRatio, heightRatio).toInt().coerceAtLeast(1)
+	}
+
+	private fun isBitmapDecodable(openInputStream: () -> InputStream?): Boolean {
+		return runCatching {
+			openInputStream()?.use { stream ->
+				val options = BitmapFactory.Options().apply {
+					inJustDecodeBounds = true
+				}
+				BitmapFactory.decodeStream(stream, null, options)
+				options.outWidth > 0 && options.outHeight > 0
 			} ?: false
 		}.getOrDefault(false)
 	}

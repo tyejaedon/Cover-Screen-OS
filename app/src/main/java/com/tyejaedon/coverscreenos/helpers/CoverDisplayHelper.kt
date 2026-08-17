@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class CoverDisplayHelper(private val context: Context) {
 
     private companion object {
-        private const val LOCK_STATUS_POLL_INTERVAL_MS = 5_000L
+        private const val LOCK_STATUS_POLL_INTERVAL_MS = 10_000L
     }
 
     private val displayManager: DisplayManager by lazy {

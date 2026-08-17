@@ -110,6 +110,21 @@ The in-app home surface now includes a launcher customization hub focused on cov
 
 Settings are persisted with AndroidX DataStore in `LauncherSettingsStore`.
 
+## Cover Launch Validation Checklist (Real Device)
+
+Validate multi-display launch routing on target foldable hardware after each launcher-routing change:
+
+- **Overlay hide/recover timing:**
+  - Tap app from grid, dock, and search.
+  - Confirm launcher overlay hides immediately before app focus transfer.
+  - Confirm overlay resumes only when lock/system foreground signals indicate safe restoration.
+- **Window focus transfer:**
+  - Confirm launched app receives input focus instantly on the cover panel.
+  - Verify back/home gestures return cleanly without stuck overlay suppression.
+- **Cover viewport + density mapping:**
+  - Confirm app windows open with correct bounds, scale, and density on the outer display.
+  - Verify inner-display tasks remain untouched (no task migration from inner to cover).
+
 ---
 
 ## 🚀 Development Roadmap

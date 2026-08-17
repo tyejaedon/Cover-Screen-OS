@@ -1,5 +1,6 @@
 package com.tyejaedon.coverscreenos.ui
 
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -61,6 +62,8 @@ private enum class LauncherSettingsPanel {
     APPEARANCE
 }
 
+private const val SETTINGS_HUB_LOG_TAG = "LauncherSettingsHub"
+
 @Composable
 fun LauncherSettingsHub(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -120,7 +123,7 @@ fun LauncherSettingsHub(modifier: Modifier = Modifier) {
     val snackbarHostState = remember { SnackbarHostState() }
 
     val wallpaperPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
+        contract = ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         if (isWallpaperImportInProgress) return@rememberLauncherForActivityResult
@@ -137,6 +140,21 @@ fun LauncherSettingsHub(modifier: Modifier = Modifier) {
                 }
             } finally {
                 isWallpaperImportInProgress = false
+            }
+        }
+    }
+
+    fun launchWallpaperPicker() {
+        if (isWallpaperImportInProgress) return
+
+        runCatching {
+            wallpaperPickerLauncher.launch("image/*")
+        }.onFailure { error ->
+            Log.w(SETTINGS_HUB_LOG_TAG, "Unable to launch wallpaper picker: ${error.message}")
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    message = "Unable to open image picker on this device."
+                )
             }
         }
     }
@@ -245,7 +263,7 @@ fun LauncherSettingsHub(modifier: Modifier = Modifier) {
                 isWallpaperImportInProgress = isWallpaperImportInProgress,
                 onChooseWallpaper = {
                     if (!isWallpaperImportInProgress) {
-                        wallpaperPickerLauncher.launch(arrayOf("image/*"))
+                        launchWallpaperPicker()
                     }
                 },
                 onClearWallpaper = {
