@@ -125,7 +125,8 @@ fun PermissionScreen(
     val allPermissionsGranted = hasNotificationPermission &&
         hasOverlayPermission &&
         hasAccessibilityPermission &&
-        hasNotificationListenerPermission
+        hasNotificationListenerPermission &&
+        hasBatteryOptimizationExemption
 
     LaunchedEffect(allPermissionsGranted) {
         if (allPermissionsGranted && !hasTriggeredGrantedCallback) {
@@ -179,6 +180,18 @@ fun PermissionScreen(
             onAction = {
                 openNotificationListenerSettingsLauncher.launch(
                     AppPermissionHelper.createNotificationListenerSettingsIntent()
+                )
+            }
+        ),
+        PermissionRequirementUiModel(
+            title = "Battery optimization",
+            details = "Required: disable optimization so OEM power management does not reclaim launcher runtime.",
+            granted = hasBatteryOptimizationExemption,
+            actionLabel = "Disable battery optimization",
+            icon = Icons.Filled.BatterySaver,
+            onAction = {
+                openBatteryOptimizationLauncher.launch(
+                    AppPermissionHelper.createBatteryOptimizationSettingsIntent(context)
                 )
             }
         )
@@ -242,18 +255,6 @@ fun PermissionScreen(
                 }
             )
 
-            PermissionRequirementCard(
-                title = "Battery optimization",
-                details = "Recommended: disabling optimization helps keep the launcher service alive reliably.",
-                granted = hasBatteryOptimizationExemption,
-                actionLabel = "Disable battery optimization",
-                icon = Icons.Filled.BatterySaver,
-                onAction = {
-                    openBatteryOptimizationLauncher.launch(
-                        AppPermissionHelper.createBatteryOptimizationSettingsIntent(context)
-                    )
-                }
-            )
 
             PermissionSupportActions(
                 onOpenAppSettings = {

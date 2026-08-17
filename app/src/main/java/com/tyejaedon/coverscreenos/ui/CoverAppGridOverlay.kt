@@ -2,29 +2,55 @@
 
 package com.tyejaedon.coverscreenos.ui
 
+import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ImageDecoder
+import android.graphics.RectF
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
-import android.widget.ImageView
+import android.os.Build
+import android.os.BatteryManager
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.util.LruCache
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,71 +63,98 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_DIM_AMOUNT
-import com.tyejaedon.coverscreenos.datastore.MAX_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.MAX_WALLPAPER_DIM_AMOUNT
-import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
 import com.tyejaedon.coverscreenos.models.AppModel
+import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
+import com.tyejaedon.coverscreenos.services.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusLarge
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusMedium
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusSmall
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTextStyles
 import com.tyejaedon.coverscreenos.ui.theme.coverGlassSurface
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
+import java.io.File
+import java.io.InputStream
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import java.io.File
-import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -109,7 +162,6 @@ import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
-import androidx.core.net.toUri
 
 private const val GRID_COLUMNS = 4
 private const val GRID_ROWS = 3
@@ -117,31 +169,61 @@ private const val APPS_PER_GRID_PAGE = GRID_COLUMNS * GRID_ROWS
 private const val DOCK_SLOT_COUNT = 4
 private const val INDICATOR_SCRUB_SENSITIVITY = 1.45f
 private const val INDICATOR_SCRUB_INTERVAL_MS = 42L
-private const val INDICATOR_SCRUB_METRIC_LOG_INTERVAL_MS = 1_000L
 private const val PAGER_HAPTIC_INTERVAL_MS = 150L
-private const val SCRUB_METRIC_LOG_TAG = "CoverPageScrub"
+private const val COMPACT_CARD_MIN_ART_EDGE_PX = 180
+
+private val PREFERRED_MEDIA_PACKAGES = listOf(
+    "com.spotify.music",
+    "com.apple.android.music",
+    "com.google.android.apps.youtube.music",
+    "com.pandora.android",
+    "com.soundcloud.android",
+    "com.amazon.mp3",
+    "com.samsung.android.app.music"
+)
+
 private const val WALLPAPER_LOG_TAG = "CoverWallpaper"
 private const val OVERLAY_PERF_LOG_TAG = "CoverOverlayPerf"
-private const val APP_SCAN_DEFER_AFTER_FIRST_FRAME_MS = 180L
+private const val APP_SCAN_DEFER_AFTER_FIRST_FRAME_MS = 120L
 private const val ICON_CACHE_MAX_ENTRIES = 256
 private const val ICON_PREWARM_COUNT = APPS_PER_GRID_PAGE * 2
-private const val ICON_PREWARM_BATCH_SIZE = 4
-private const val ICON_PREWARM_BATCH_DELAY_MS = 48L
-private const val OVERLAY_CHEAP_MODE_MS = 900L
-private const val GRID_HYDRATE_DELAY_MS = 180L
-private const val WALLPAPER_RETRY_BACKOFF_MS = 5_000L
+private const val ICON_PREWARM_BATCH_SIZE = 6
+private const val ICON_PREWARM_BATCH_DELAY_MS = 32L
+private const val NOTIFICATION_PANEL_PAGE_INDEX = 0
+private const val LOCK_PAGER_PAGE_INDEX = 1
+private const val FIRST_APP_GRID_PAGE_INDEX = 2
+private const val NOTIFICATION_PANEL_BLUR_CACHE_MAX_KB = 20 * 1024
+private const val NOTIFICATION_PANEL_BLUR_DOWNSAMPLE = 6
+private const val WALLPAPER_RETRY_BACKOFF_MS = 4_000L
+private const val WALLPAPER_OVERLAY_RETRY_DELAY_MS = 600L
+private const val WALLPAPER_OVERLAY_RETRY_MAX_ATTEMPTS = 6
 
-// One UI leans on a near-monochrome glass surface with a single accent for
-// interactive/selected states, rather than a busy set of tinted Material
-// containers. These alphas are tuned so cards read as "frosted glass" over
-// the blurred wallpaper instead of opaque Material cards.
-private const val ICON_DISABLED_TINT_ALPHA = 1f
-private val GRID_TILE_GAP = 5.dp
+private val GRID_TILE_GAP = 6.dp
 private val GRID_CONTENT_PADDING = coverScreenContentPadding(horizontal = 6.dp, vertical = 2.dp)
 
 private data class CoverDisplayPolishSpec(
     val statusChipMinHeight: Dp,
     val dockVerticalOffset: Dp
+)
+
+private data class BatteryStatusSnapshot(
+    val levelPercent: Int,
+    val isCharging: Boolean
+)
+
+private data class ExpandedPlayerLayoutSpec(
+    val panelWidthFraction: Float,
+    val panelHeightFraction: Float,
+    val horizontalPadding: Dp,
+    val verticalPadding: Dp,
+    val contentSpacing: Dp,
+    val showArtwork: Boolean,
+    val artworkWidthFraction: Float,
+    val artworkBottomPadding: Dp,
+    val sideControlSize: Dp,
+    val primaryControlSize: Dp,
+    val actionButtonTopSpacer: Dp,
+    val actionButtonVerticalPadding: Dp
 )
 
 @Composable
@@ -150,7 +232,6 @@ private fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
     val containerHeightPx = LocalWindowInfo.current.containerSize.height
     val containerHeightDp = with(density) { containerHeightPx.toDp() }
     return remember(containerHeightPx) {
-        // Keep the lock/search/dock cluster balanced across compact and taller covers.
         when {
             containerHeightDp <= 680.dp -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 28.dp,
@@ -168,19 +249,75 @@ private fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
     }
 }
 
-private object OverlayIconCache {
-    private val cache = LruCache<String, Drawable.ConstantState>(ICON_CACHE_MAX_ENTRIES)
+@Composable
+private fun rememberBatteryStatus(): BatteryStatusSnapshot? {
+    val context = LocalContext.current
+    var status by remember(context) { mutableStateOf(readBatteryStatus(context)) }
 
-    fun get(context: android.content.Context, packageName: String): Drawable? {
-        val constantState = synchronized(cache) { cache.get(packageName) } ?: return null
-        return runCatching { constantState.newDrawable(context.resources) }.getOrNull()
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                status = resolveBatteryStatusSnapshot(intent)
+            }
+        }
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val stickyIntent = context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        if (stickyIntent != null) {
+            status = resolveBatteryStatusSnapshot(stickyIntent)
+        }
+
+        onDispose {
+            runCatching { context.unregisterReceiver(receiver) }
+        }
+    }
+    return status
+}
+
+private fun readBatteryStatus(context: Context): BatteryStatusSnapshot? {
+    val stickyIntent = context.registerReceiver(
+        null,
+        IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+        Context.RECEIVER_NOT_EXPORTED
+    )
+    return resolveBatteryStatusSnapshot(stickyIntent)
+}
+
+private fun resolveBatteryStatusSnapshot(intent: Intent?): BatteryStatusSnapshot? {
+    intent ?: return null
+    val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+    val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+    if (level < 0 || scale <= 0) return null
+
+    val levelPercent = ((level.toFloat() / scale.toFloat()) * 100f).roundToInt().coerceIn(0, 100)
+    val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
+    val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+
+    return BatteryStatusSnapshot(levelPercent = levelPercent, isCharging = isCharging)
+}
+
+// Global LRU Bitmap Cache for hardware-accelerated Compose Image rendering
+private object OverlayBitmapIconCache {
+    private val cache = LruCache<String, ImageBitmap>(ICON_CACHE_MAX_ENTRIES)
+
+    fun get(packageName: String): ImageBitmap? {
+        return synchronized(cache) { cache.get(packageName) }
     }
 
-    fun put(packageName: String, drawable: Drawable) {
-        val constantState = drawable.constantState ?: return
-        synchronized(cache) { cache.put(packageName, constantState) }
+    fun put(packageName: String, bitmap: ImageBitmap) {
+        synchronized(cache) { cache.put(packageName, bitmap) }
     }
 }
+
+private object NotificationPanelBlurBitmapCache {
+    private val cache = object : LruCache<String, Bitmap>(NOTIFICATION_PANEL_BLUR_CACHE_MAX_KB) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
+    }
+
+    fun get(cacheKey: String): Bitmap? = synchronized(cache) { cache.get(cacheKey) }
+    fun put(cacheKey: String, bitmap: Bitmap) { synchronized(cache) { cache.put(cacheKey, bitmap) } }
+}
+
+
 
 private object WallpaperDecodeBackoff {
     private val failedAtElapsedMsByKey = mutableMapOf<String, Long>()
@@ -191,44 +328,98 @@ private object WallpaperDecodeBackoff {
     }
 
     fun markFailure(cacheKey: String, nowElapsedMs: Long) {
-        synchronized(failedAtElapsedMsByKey) {
-            failedAtElapsedMsByKey[cacheKey] = nowElapsedMs
-        }
+        synchronized(failedAtElapsedMsByKey) { failedAtElapsedMsByKey[cacheKey] = nowElapsedMs }
     }
 
     fun clearFailure(cacheKey: String) {
-        synchronized(failedAtElapsedMsByKey) {
-            failedAtElapsedMsByKey.remove(cacheKey)
-        }
+        synchronized(failedAtElapsedMsByKey) { failedAtElapsedMsByKey.remove(cacheKey) }
     }
 }
 
+private fun drawableToImageBitmap(drawable: Drawable, sizePx: Int = 128): ImageBitmap? {
+    if (drawable is BitmapDrawable && drawable.bitmap != null) {
+        return drawable.bitmap.asImageBitmap()
+    }
+    val bitmap = Bitmap.createBitmap(
+        if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else sizePx,
+        if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else sizePx,
+        Bitmap.Config.ARGB_8888
+    )
+    val canvas = Canvas(bitmap)
+    drawable.setBounds(0, 0, canvas.width, canvas.height)
+    drawable.draw(canvas)
+    return bitmap.asImageBitmap()
+}
+
+private suspend fun resolvePackageIconBitmap(
+    context: Context,
+    packageManager: PackageManager,
+    packageName: String
+): ImageBitmap? {
+    OverlayBitmapIconCache.get(packageName)?.let { return it }
+
+    val resolved = withContext(Dispatchers.IO) {
+        val versionToken = resolvePackageIconVersionToken(packageManager, packageName)
+        OverlayIconThumbnailDiskCache.get(
+            context = context,
+            packageName = packageName,
+            versionToken = versionToken
+        )?.let { diskCachedDrawable ->
+            return@withContext drawableToImageBitmap(diskCachedDrawable)
+        }
+
+        runCatching {
+            val drawable = packageManager.getApplicationIcon(packageName)
+            OverlayIconThumbnailDiskCache.put(
+                context = context,
+                packageName = packageName,
+                versionToken = versionToken,
+                drawable = drawable
+            )
+            drawableToImageBitmap(drawable)
+        }.getOrNull()
+    } ?: return null
+
+    OverlayBitmapIconCache.put(packageName, resolved)
+    return resolved
+}
+
 @Composable
-private fun rememberAppIconDrawable(app: AppModel): Drawable {
+private fun rememberPackageIconBitmap(packageName: String): ImageBitmap? {
     val context = LocalContext.current
     val packageManager = remember(context) { context.packageManager }
 
-    val iconState = produceState(
-        initialValue = OverlayIconCache.get(context, app.packageName) ?: app.iconDrawable,
-        key1 = app.packageName
+    val iconState = produceState<ImageBitmap?>(
+        initialValue = OverlayBitmapIconCache.get(packageName),
+        key1 = packageName
     ) {
-        val cached = OverlayIconCache.get(context, app.packageName)
-        if (cached != null) {
-            value = cached
-            return@produceState
-        }
-
-        val resolved = withContext(Dispatchers.IO) {
-            runCatching { packageManager.getApplicationIcon(app.packageName) }.getOrNull()
-        }
-        if (resolved != null) {
-            OverlayIconCache.put(app.packageName, resolved)
-            value = resolved
+        if (value == null) {
+            val resolved = resolvePackageIconBitmap(context, packageManager, packageName)
+            if (resolved != null) value = resolved
         }
     }
-
-
     return iconState.value
+}
+
+@Composable
+private fun rememberPackageLabel(packageName: String): String {
+    val context = LocalContext.current
+    val packageManager = remember(context) { context.packageManager }
+
+    val labelState = produceState(
+        initialValue = packageName.substringAfterLast('.'),
+        key1 = packageName
+    ) {
+        val resolvedLabel = withContext(Dispatchers.IO) {
+            runCatching {
+                packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
+            }.getOrNull()
+        }
+        if (!resolvedLabel.isNullOrBlank()) {
+            value = resolvedLabel
+        }
+    }
+    return labelState.value
 }
 
 @Composable
@@ -248,52 +439,28 @@ fun CoverAppGridOverlay(
     val packageManager = remember(context) { context.packageManager }
     val overlayComposeStartMs = remember { SystemClock.uptimeMillis() }
 
-    var isCheapMode by remember { mutableStateOf(true) }
     var isGridHydrated by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        withFrameNanos { }
-        Log.d(
-            OVERLAY_PERF_LOG_TAG,
-            "firstFrameCommittedMs=${SystemClock.uptimeMillis() - overlayComposeStartMs}"
-        )
-    }
-
-    LaunchedEffect(Unit) {
-        withFrameNanos { }
-        delay(GRID_HYDRATE_DELAY_MS.milliseconds)
-        isGridHydrated = true
-    }
-
-    LaunchedEffect(Unit) {
-        withFrameNanos { }
-        delay(OVERLAY_CHEAP_MODE_MS.milliseconds)
-        isCheapMode = false
-    }
-
     var shouldLoadApps by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
-        // Let initial draw commit before doing expensive package work.
         withFrameNanos { }
         delay(APP_SCAN_DEFER_AFTER_FIRST_FRAME_MS.milliseconds)
         shouldLoadApps = true
+        isGridHydrated = true
+        Log.d(OVERLAY_PERF_LOG_TAG, "firstFrameCommittedMs=${SystemClock.uptimeMillis() - overlayComposeStartMs}")
     }
 
-    // Scan installed applications off the main thread and expose a UI-safe list.
     val appsState = produceState(
         initialValue = emptyList<AppModel>(),
         key1 = repository,
         key2 = shouldLoadApps
     ) {
-        if (!shouldLoadApps) {
-            value = emptyList()
-            return@produceState
-        }
+        if (!shouldLoadApps) return@produceState
         value = withContext(Dispatchers.Default) {
             runCatching { repository.scanInstalledApplications() }.getOrDefault(emptyList())
         }
     }
-    // Refresh time/date labels on lightweight intervals for lock-style header fidelity.
+
     val timeLabel by produceState(initialValue = currentCoverTime()) {
         while (true) {
             value = currentCoverTime()
@@ -306,71 +473,43 @@ fun CoverAppGridOverlay(
             delay(60_000L.milliseconds)
         }
     }
+    val batteryStatus = rememberBatteryStatus()
 
     val apps = appsState.value
+    val notifications by CoverNotificationListenerService.activeNotificationsFlow().collectAsState()
+
+    // Prewarm icon bitmaps into LRU
     LaunchedEffect(apps) {
         if (apps.isEmpty()) return@LaunchedEffect
-
-        val prewarmTargets = apps
-            .asSequence()
-            .take(ICON_PREWARM_COUNT)
-            .filter { app -> OverlayIconCache.get(context, app.packageName) == null }
-            .toList()
-
-        if (prewarmTargets.isEmpty()) return@LaunchedEffect
+        val targets = apps.take(ICON_PREWARM_COUNT).filter { OverlayBitmapIconCache.get(it.packageName) == null }
+        if (targets.isEmpty()) return@LaunchedEffect
 
         withContext(Dispatchers.IO) {
-            val prewarmBatches = prewarmTargets.chunked(ICON_PREWARM_BATCH_SIZE)
-            prewarmBatches.forEachIndexed { index, batch ->
-                batch.forEach { app ->
-                    runCatching { packageManager.getApplicationIcon(app.packageName) }
-                        .getOrNull()
-                        ?.let { drawable -> OverlayIconCache.put(app.packageName, drawable) }
-                }
-
-                if (index < prewarmBatches.lastIndex) {
-                    delay(ICON_PREWARM_BATCH_DELAY_MS.milliseconds)
-                }
+            targets.chunked(ICON_PREWARM_BATCH_SIZE).forEachIndexed { index, batch ->
+                batch.forEach { resolvePackageIconBitmap(context, packageManager, it.packageName) }
+                if (index < batch.size - 1) delay(ICON_PREWARM_BATCH_DELAY_MS.milliseconds)
             }
         }
     }
 
-    // Page 0 is lock+dock; remaining pages are fixed-size app grid tiles.
     val dockApps = remember(apps, dockPackageSlots) {
         resolveDockSlots(apps = apps, dockPackageSlots = dockPackageSlots)
     }
-    val constrainedWallpaperDim = wallpaperDimAmount.coerceIn(
-        MIN_WALLPAPER_DIM_AMOUNT,
-        MAX_WALLPAPER_DIM_AMOUNT
-    )
+    val constrainedWallpaperDim = wallpaperDimAmount.coerceIn(MIN_WALLPAPER_DIM_AMOUNT, MAX_WALLPAPER_DIM_AMOUNT)
     val appPages = remember(apps) { apps.chunked(APPS_PER_GRID_PAGE) }
-    val totalPageCount = 1 + appPages.size
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { totalPageCount })
+    val totalPageCount = FIRST_APP_GRID_PAGE_INDEX + appPages.size
+    val pagerState = rememberPagerState(
+        initialPage = LOCK_PAGER_PAGE_INDEX,
+        pageCount = { totalPageCount }
+    )
 
-    LaunchedEffect(pagerState.isScrollInProgress) {
-        if (pagerState.isScrollInProgress) {
-            isCheapMode = false
-            isGridHydrated = true
-        }
-    }
-
-    val isAppGridPage = pagerState.currentPage >= 1
-    val effectiveWallpaperBlur = 0f
-
-    LaunchedEffect(isGridHydrated, isCheapMode) {
-        if (!isGridHydrated || isCheapMode) return@LaunchedEffect
-        Log.d(
-            OVERLAY_PERF_LOG_TAG,
-            "overlayHydratedMs=${SystemClock.uptimeMillis() - overlayComposeStartMs}"
-        )
-    }
-
+    val isAppGridPage = pagerState.currentPage >= FIRST_APP_GRID_PAGE_INDEX
     val displayPolishSpec = rememberCoverDisplayPolishSpec()
 
-    // Emit subtle haptic feedback when pager settles onto a new page.
     val hapticFeedback = LocalHapticFeedback.current
     var hasInitializedPager by remember { mutableStateOf(false) }
     var lastPagerHapticTimestampMs by remember { mutableStateOf(0L) }
+
     LaunchedEffect(pagerState.currentPage) {
         if (!hasInitializedPager) {
             hasInitializedPager = true
@@ -390,7 +529,6 @@ fun CoverAppGridOverlay(
             CoverWallpaperLayer(
                 wallpaperUri = wallpaperUri,
                 wallpaperScaleMode = wallpaperScaleMode,
-                blurRadiusDp = effectiveWallpaperBlur,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -398,13 +536,13 @@ fun CoverAppGridOverlay(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = constrainedWallpaperDim * 0.2f))
+                        .background(Color.Black.copy(alpha = constrainedWallpaperDim * 0.25f))
                 )
             }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    // Consume background taps so input does not leak to underlying system UI.
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -413,6 +551,9 @@ fun CoverAppGridOverlay(
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     InteractiveSection(
+                        notifications = notifications,
+                        wallpaperUri = wallpaperUri,
+                        wallpaperScaleMode = wallpaperScaleMode,
                         appPages = appPages,
                         deferGridHydration = !isGridHydrated,
                         dockApps = dockApps,
@@ -423,10 +564,11 @@ fun CoverAppGridOverlay(
                         timeLabel = timeLabel,
                         dateLabel = dateLabel,
                         totalPageCount = totalPageCount,
+                        batteryStatus = batteryStatus,
                         pagerState = pagerState,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(0.67f)
+                            .weight(1f)
                             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
                     )
                 }
@@ -436,8 +578,10 @@ fun CoverAppGridOverlay(
 }
 
 @Composable
-@Suppress("FrequentlyChangingValue")
 private fun InteractiveSection(
+    notifications: List<CoverNotificationModel>,
+    wallpaperUri: String?,
+    wallpaperScaleMode: WallpaperScaleMode,
     appPages: List<List<AppModel>>,
     deferGridHydration: Boolean,
     dockApps: List<AppModel?>,
@@ -448,26 +592,22 @@ private fun InteractiveSection(
     timeLabel: String,
     dateLabel: String,
     totalPageCount: Int,
-    pagerState: androidx.compose.foundation.pager.PagerState,
+    batteryStatus: BatteryStatusSnapshot?,
+    pagerState: PagerState,
     modifier: Modifier = Modifier
 ) {
-    // On the lock page the panel disappears entirely so the clock sits
-    // directly on wallpaper, matching a real cover lock screen. Only the
-    // app-grid pages get a floating glass panel beneath them.
-    val showPanelChrome = pagerState.currentPage > 0
-
+    val context = LocalContext.current
     var showPageLetterTooltip by remember { mutableStateOf(false) }
     val maxPagerPage = (totalPageCount - 1).coerceAtLeast(0)
     var hintedPagerPage by remember { mutableIntStateOf(0) }
     val hintedGridLetter = remember(hintedPagerPage, appPages) {
-        gridPageStartLetterForPagerPage(hintedPagerPage, appPages)
+        gridPageStartLetterForPagerPage(hintedPagerPage, appPages, FIRST_APP_GRID_PAGE_INDEX)
     }
 
     LaunchedEffect(pagerState, maxPagerPage) {
         snapshotFlow {
-            ((pagerState.currentPage + pagerState.currentPageOffsetFraction).roundToInt())
-                .coerceIn(0, maxPagerPage)
-        }.collect { hintedPage: Int ->
+            ((pagerState.currentPage + pagerState.currentPageOffsetFraction).roundToInt()).coerceIn(0, maxPagerPage)
+        }.collect { hintedPage ->
             hintedPagerPage = hintedPage
         }
     }
@@ -476,70 +616,66 @@ private fun InteractiveSection(
         if (pagerState.isScrollInProgress) {
             showPageLetterTooltip = true
         } else {
-            delay(260.milliseconds)
-            if (!pagerState.isScrollInProgress) {
-                showPageLetterTooltip = false
-            }
+            delay(280.milliseconds)
+            if (!pagerState.isScrollInProgress) showPageLetterTooltip = false
         }
     }
 
-    LaunchedEffect(pagerState.currentPage) {
-        if (pagerState.currentPage == 0) return@LaunchedEffect
-        showPageLetterTooltip = true
-        delay(260.milliseconds)
-        if (!pagerState.isScrollInProgress) {
-            showPageLetterTooltip = false
-        }
-    }
-
-    // Bottom interaction zone: horizontally paged tiles with cutout-safe bottom padding.
-    Box(
-        modifier = modifier
-            .then(
-                if (showPanelChrome) {
-                    Modifier
-                } else {
-                    Modifier
-                }
-            )
-    ) {
+    Box(modifier = modifier) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 6.dp)
+                .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 4.dp)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Box(modifier = Modifier.weight(1f)) {
-                androidx.compose.foundation.pager.HorizontalPager(
+                HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    pageSpacing = 12.dp,
+                    pageSpacing = 10.dp,
                     beyondViewportPageCount = 0
                 ) { pageIndex ->
-                    Box(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        // First tile is lock-style surface + dock; rest are app-grid pages.
-                        if (pageIndex == 0) {
-                            LockAndDockTile(
-                                timeLabel = timeLabel,
-                                dateLabel = dateLabel,
-                                displayPolishSpec = displayPolishSpec,
-                                isDeviceLocked = isDeviceLocked,
-                                isDockVisible = isDockVisible,
-                                dockSlots = dockApps,
-                                onAppSelected = onAppSelected,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            AppGridPageTile(
-                                apps = appPages[pageIndex - 1],
-                                deferHydration = deferGridHydration,
-                                isDeviceLocked = isDeviceLocked,
-                                onAppSelected = onAppSelected,
-                                modifier = Modifier.fillMaxSize()
-                            )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        when (pageIndex) {
+                            NOTIFICATION_PANEL_PAGE_INDEX -> {
+                                NotificationsPanelTile(
+                                    notifications = notifications,
+                                    wallpaperUri = wallpaperUri,
+                                    wallpaperScaleMode = wallpaperScaleMode,
+                                    onNotificationOpen = { model ->
+                                        CoverNotificationListenerService.openNotificationFromOverlay(context, model)
+                                    },
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                            LOCK_PAGER_PAGE_INDEX -> {
+                                LockAndDockTile(
+                                    notifications = notifications,
+                                    timeLabel = timeLabel,
+                                    dateLabel = dateLabel,
+                                    batteryStatus = batteryStatus,
+                                    displayPolishSpec = displayPolishSpec,
+                                    isDeviceLocked = isDeviceLocked,
+                                    isDockVisible = isDockVisible,
+                                    dockSlots = dockApps,
+                                    onNotificationOpen = { model ->
+                                        CoverNotificationListenerService.openNotificationFromOverlay(context, model)
+                                    },
+                                    onAppSelected = onAppSelected,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                            else -> {
+                                val gridIndex = pageIndex - FIRST_APP_GRID_PAGE_INDEX
+                                AppGridPageTile(
+                                    apps = appPages.getOrElse(gridIndex) { emptyList() },
+                                    deferHydration = deferGridHydration,
+                                    isDeviceLocked = isDeviceLocked,
+                                    onAppSelected = onAppSelected,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                         }
                     }
                 }
@@ -549,7 +685,7 @@ private fun InteractiveSection(
                     visible = showPageLetterTooltip && hintedGridLetter != null,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 8.dp)
+                        .padding(top = 6.dp)
                 )
             }
 
@@ -564,65 +700,377 @@ private fun InteractiveSection(
 
 @Composable
 private fun LockAndDockTile(
+    notifications: List<CoverNotificationModel>,
     timeLabel: String,
     dateLabel: String,
+    batteryStatus: BatteryStatusSnapshot?,
     displayPolishSpec: CoverDisplayPolishSpec,
     isDeviceLocked: Boolean,
     isDockVisible: Boolean,
     dockSlots: List<AppModel?>,
+    onNotificationOpen: (CoverNotificationModel) -> Unit,
     onAppSelected: (AppModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Keep lock tile as a pure launcher surface for faster interactions.
-    Column(
-        modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .coverScreenPadding(horizontal = 18.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            LockStatusPill(
-                isDeviceLocked = isDeviceLocked,
-                minHeight = displayPolishSpec.statusChipMinHeight
-            )
+    val context = LocalContext.current
+    val mediaNotification = remember(notifications) {
+        notifications.filter { it.isMediaNotification && it.isOngoing }.maxByOrNull { it.postTime }
+    }
+    var showExpandedMedia by remember(mediaNotification?.notificationKey) { mutableStateOf(false) }
 
-            Text(
-                text = timeLabel,
-                style = CoverOSTextStyles.ClockText,
-                color = Color.White
-            )
-            Text(
-                text = dateLabel,
-                style = CoverOSTextStyles.DateText,
-                color = Color.White
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .coverScreenPadding(horizontal = 14.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    if (isDeviceLocked) {
+                        LockStatusPill(
+                            isDeviceLocked = isDeviceLocked,
+                            minHeight = displayPolishSpec.statusChipMinHeight
+                        )
+                    }
+                }
+
+                if (batteryStatus != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        BatteryStatusPill(status = batteryStatus)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(
+                        modifier = Modifier.weight(0.95f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        LockTopNotificationHighlights(
+                            notifications = notifications,
+                            onNotificationOpen = onNotificationOpen,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Text(
+                            text = timeLabel,
+                            style = CoverOSTextStyles.ClockText.copy(fontSize = 28.sp),
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Clip
+                        )
+                        Text(
+                            text = dateLabel,
+                            style = CoverOSTextStyles.DateText,
+                            color = Color.White.copy(alpha = 0.85f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    CompactNowPlayingCard(
+                        mediaNotification = mediaNotification,
+                        onOpenExpanded = { showExpandedMedia = true },
+                        onOpenMediaApp = { openMediaApplicationFromOverlay(context, notifications) },
+                        modifier = Modifier.weight(1.2f)
+                    )
+                }
+            }
+
+            if (isDockVisible) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .coverScreenPadding(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CoverDockRow(
+                            dockSlots = dockSlots,
+                            isDeviceLocked = isDeviceLocked,
+                            onAppSelected = onAppSelected,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .offset(y = displayPolishSpec.dockVerticalOffset)
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                    }
+                }
+            }
+        }
+
+        ExpandedNowPlayingPanel(
+            mediaNotification = mediaNotification,
+            visible = showExpandedMedia,
+            onDismiss = { showExpandedMedia = false },
+            onLaunchSourceApp = { media ->
+                CoverNotificationListenerService.launchNotificationSourceApp(context, media.packageName)
+            },
+            onAction = { media, actionLabel ->
+                CoverNotificationListenerService.performNotificationAction(media.notificationKey, actionLabel)
+            },
+            onOpenNotification = { media ->
+                CoverNotificationListenerService.openNotificationFromOverlay(context, media)
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+@Composable
+private fun BatteryStatusPill(status: BatteryStatusSnapshot, modifier: Modifier = Modifier) {
+    val levelFraction = (status.levelPercent / 100f).coerceIn(0f, 1f)
+    val trackColor = Color.White.copy(alpha = 0.18f)
+    val fillColor = when {
+        status.levelPercent <= 15 -> Color(0xFFD32F2F)
+        status.isCharging -> Color(0xFF4CAF50)
+        else -> Color.White
+    }
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(Color.Black.copy(alpha = 0.45f))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(22.dp)
+                .height(10.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(trackColor)
+                .padding(1.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(levelFraction)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(fillColor)
             )
         }
 
-        if (isDockVisible) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .coverScreenPadding(horizontal = 12.dp, vertical = 0.dp)
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    CoverDockRow(
-                        dockSlots = dockSlots,
-                        isDeviceLocked = isDeviceLocked,
-                        onAppSelected = onAppSelected,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .offset(y = displayPolishSpec.dockVerticalOffset)
-                    )
+        Text(
+            text = if (status.isCharging) "${status.levelPercent}% CHG" else "${status.levelPercent}%",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            maxLines = 1
+        )
+    }
+}
 
-                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(4.dp))
+private fun openMediaApplicationFromOverlay(
+    context: Context,
+    notifications: List<CoverNotificationModel>
+): Boolean {
+    val packageManager = context.packageManager
+    val mediaCandidateFromNotifications = notifications
+        .asSequence()
+        .filter { it.isMediaNotification }
+        .map { it.packageName }
+        .firstOrNull()
+
+    val candidatePackages = buildList {
+        mediaCandidateFromNotifications?.let { add(it) }
+        addAll(PREFERRED_MEDIA_PACKAGES)
+    }.distinct()
+
+    candidatePackages.forEach { packageName ->
+        val canLaunch = runCatching { packageManager.getLaunchIntentForPackage(packageName) != null }.getOrDefault(false)
+        if (canLaunch) {
+            val launched = CoverNotificationListenerService.launchNotificationSourceApp(context, packageName)
+            if (launched) return true
+        }
+    }
+
+    val categoryMusicIntent = Intent(Intent.ACTION_MAIN).apply {
+        addCategory(Intent.CATEGORY_APP_MUSIC)
+    }
+    val fallbackPackage = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.resolveActivity(
+                categoryMusicIntent,
+                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+            )?.activityInfo?.packageName
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.resolveActivity(categoryMusicIntent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+        }
+    }.getOrNull()
+
+    return fallbackPackage?.let { packageName ->
+        CoverNotificationListenerService.launchNotificationSourceApp(context, packageName)
+    } ?: false
+}
+
+@Composable
+private fun CompactNowPlayingCard(
+    mediaNotification: CoverNotificationModel?,
+    onOpenExpanded: () -> Unit,
+    onOpenMediaApp: (() -> Boolean)? = null,
+    modifier: Modifier = Modifier
+) {
+    val containerShape = RoundedCornerShape(16.dp)
+    val hasMedia = mediaNotification != null
+    val isActionEnabled = hasMedia || onOpenMediaApp != null
+
+    Surface(
+        modifier = modifier
+            .heightIn(min = 52.dp)
+            .clip(containerShape)
+            .coverGlassSurface(
+                color = Color.White.copy(alpha = 0.12f),
+                borderColor = Color.White.copy(alpha = 0.22f),
+                shape = containerShape
+            )
+            .clickable(enabled = isActionEnabled) {
+                if (hasMedia) {
+                    onOpenExpanded()
+                } else {
+                    onOpenMediaApp?.invoke()
+                }
+            },
+        color = Color.Transparent,
+        shape = containerShape
+    ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            if (!hasMedia) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color.White.copy(alpha = 0.05f), Color.Black.copy(alpha = 0.15f))
+                            )
+                        )
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.75f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Open a media app",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.82f),
+                            maxLines = 1
+                        )
+                    }
+                }
+            } else {
+                val iconBitmap = rememberPackageIconBitmap(mediaNotification.packageName)
+                val artworkBitmap = mediaNotification.media?.artworkBitmap
+                val displayArtwork = remember(artworkBitmap) {
+                    artworkBitmap?.takeIf { minOf(it.width, it.height) >= COMPACT_CARD_MIN_ART_EDGE_PX }
+                }
+                val titleText = mediaNotification.media?.title ?: mediaNotification.title
+                val subtitleText = mediaNotification.media?.artist ?: mediaNotification.previewText.ifBlank { "Playing" }
+
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    if (displayArtwork != null) {
+                        Image(
+                            bitmap = displayArtwork.asImageBitmap(),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            filterQuality = FilterQuality.Low,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f))
+                                    )
+                                )
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.linearGradient(
+                                        colors = listOf(
+                                            Color(0xFF2C3E50).copy(alpha = 0.8f),
+                                            Color(0xFF000000).copy(alpha = 0.8f)
+                                        )
+                                    )
+                                )
+                        )
+                    }
+
+                    if (iconBitmap != null) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 6.dp, end = 6.dp)
+                                .size(22.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color.Black.copy(alpha = 0.35f))
+                                .padding(2.dp)
+                        ) {
+                            Image(
+                                bitmap = iconBitmap,
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f))
+                                )
+                            )
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = titleText,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = subtitleText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.8f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -630,32 +1078,737 @@ private fun LockAndDockTile(
 }
 
 @Composable
-private fun LockStatusPill(
-    isDeviceLocked: Boolean,
-    minHeight: Dp
+fun ExpandedNowPlayingPanel(
+    mediaNotification: CoverNotificationModel?,
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    onLaunchSourceApp: (CoverNotificationModel) -> Unit,
+    onAction: (CoverNotificationModel, String?) -> Unit,
+    onOpenNotification: (CoverNotificationModel) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Row(
+    AnimatedVisibility(
+        visible = visible && mediaNotification != null,
+        enter = fadeIn(animationSpec = tween(durationMillis = 180)) +
+            slideInVertically(animationSpec = tween(durationMillis = 260), initialOffsetY = { it / 3 }),
+        exit = fadeOut(animationSpec = tween(durationMillis = 150)) +
+            slideOutVertically(animationSpec = tween(durationMillis = 220), targetOffsetY = { it / 3 }),
+        modifier = modifier.fillMaxSize()
+    ) {
+        if (mediaNotification == null) return@AnimatedVisibility
+
+        val actionLabels = remember(mediaNotification.media) {
+            mediaNotification.media?.actionLabels.orEmpty().filter { it.isNotBlank() }.distinct()
+        }
+        val previousAction = remember(actionLabels) {
+            findMediaActionLabel(actionLabels, "previous", "prev", "rewind", "back")
+        }
+        val playPauseAction = remember(mediaNotification.media, actionLabels) {
+            mediaNotification.media?.playPauseActionLabel?.trim()?.takeUnless { it.isEmpty() }
+                ?: findMediaActionLabel(actionLabels, "play", "pause", "resume")
+                ?: actionLabels.firstOrNull()
+        }
+        val nextAction = remember(actionLabels) {
+            findMediaActionLabel(actionLabels, "next", "skip", "forward")
+        }
+        val isPauseAction = remember(playPauseAction) { isPauseLikeActionLabel(playPauseAction) }
+        val artworkBitmap = mediaNotification.media?.artworkBitmap
+
+        val sourceIcon = rememberPackageIconBitmap(mediaNotification.packageName)
+        val titleText = mediaNotification.media?.title ?: mediaNotification.title
+        val subtitleText = mediaNotification.media?.artist ?: mediaNotification.previewText.ifBlank { "Open app" }
+        val density = LocalDensity.current
+        val containerHeightPx = LocalWindowInfo.current.containerSize.height
+        val containerHeightDp = with(density) { containerHeightPx.toDp() }
+        val layoutSpec = remember(containerHeightPx) {
+            if (containerHeightDp <= 340.dp) {
+                ExpandedPlayerLayoutSpec(
+                    panelWidthFraction = 0.97f,
+                    panelHeightFraction = 0.72f,
+                    horizontalPadding = 8.dp,
+                    verticalPadding = 6.dp,
+                    contentSpacing = 5.dp,
+                    showArtwork = false,
+                    artworkWidthFraction = 0.48f,
+                    artworkBottomPadding = 6.dp,
+                    sideControlSize = 42.dp,
+                    primaryControlSize = 52.dp,
+                    actionButtonTopSpacer = 4.dp,
+                    actionButtonVerticalPadding = 6.dp
+                )
+            } else if (containerHeightDp <= 420.dp) {
+                ExpandedPlayerLayoutSpec(
+                    panelWidthFraction = 0.96f,
+                    panelHeightFraction = 0.78f,
+                    horizontalPadding = 10.dp,
+                    verticalPadding = 8.dp,
+                    contentSpacing = 6.dp,
+                    showArtwork = true,
+                    artworkWidthFraction = 0.52f,
+                    artworkBottomPadding = 8.dp,
+                    sideControlSize = 46.dp,
+                    primaryControlSize = 58.dp,
+                    actionButtonTopSpacer = 6.dp,
+                    actionButtonVerticalPadding = 8.dp
+                )
+            } else {
+                ExpandedPlayerLayoutSpec(
+                    panelWidthFraction = 0.94f,
+                    panelHeightFraction = 0.84f,
+                    horizontalPadding = 14.dp,
+                    verticalPadding = 12.dp,
+                    contentSpacing = 8.dp,
+                    showArtwork = true,
+                    artworkWidthFraction = 0.62f,
+                    artworkBottomPadding = 12.dp,
+                    sideControlSize = 54.dp,
+                    primaryControlSize = 70.dp,
+                    actionButtonTopSpacer = 8.dp,
+                    actionButtonVerticalPadding = 10.dp
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                )
+        ) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth(layoutSpec.panelWidthFraction)
+                    .fillMaxHeight(layoutSpec.panelHeightFraction)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    ),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = layoutSpec.horizontalPadding, vertical = layoutSpec.verticalPadding),
+                    verticalArrangement = Arrangement.spacedBy(layoutSpec.contentSpacing)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clickable { onLaunchSourceApp(mediaNotification) }
+                                .padding(horizontal = 2.dp, vertical = 2.dp)
+                        ) {
+                            if (sourceIcon != null) {
+                                Image(
+                                    bitmap = sourceIcon,
+                                    contentDescription = "App Icon",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Text(
+                                text = "Open app",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        IconButton(
+                            onClick = onDismiss
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = "Close",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    if (layoutSpec.showArtwork && artworkBitmap != null) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = layoutSpec.artworkBottomPadding),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                bitmap = artworkBitmap.asImageBitmap(),
+                                contentDescription = "Album Art",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxWidth(layoutSpec.artworkWidthFraction)
+                                    .aspectRatio(1f)
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = titleText,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Text(
+                        text = subtitleText,
+                        style = if (layoutSpec.showArtwork) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        MediaControlIconButton(
+                            icon = Icons.Filled.SkipPrevious,
+                            contentDescription = previousAction ?: "Previous",
+                            enabled = previousAction != null,
+                            onClick = { previousAction?.let { onAction(mediaNotification, it) } },
+                            modifier = Modifier.size(layoutSpec.sideControlSize)
+                        )
+
+                        MediaControlIconButton(
+                            icon = if (isPauseAction) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = playPauseAction ?: "Play/Pause",
+                            enabled = playPauseAction != null,
+                            onClick = { playPauseAction?.let { onAction(mediaNotification, it) } },
+                            modifier = Modifier.size(layoutSpec.primaryControlSize)
+                        )
+
+                        MediaControlIconButton(
+                            icon = Icons.Filled.SkipNext,
+                            contentDescription = nextAction ?: "Next",
+                            enabled = nextAction != null,
+                            onClick = { nextAction?.let { onAction(mediaNotification, it) } },
+                            modifier = Modifier.size(layoutSpec.sideControlSize)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(layoutSpec.actionButtonTopSpacer))
+
+                    Text(
+                        text = "Open full media application",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clickable { onOpenNotification(mediaNotification) }
+                            .padding(vertical = layoutSpec.actionButtonVerticalPadding)
+                            .align(Alignment.CenterHorizontally)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MediaControlIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val hapticFeedback = LocalHapticFeedback.current
+    val scale by animateFloatAsState(
+        targetValue = if (enabled && isPressed) 0.94f else 1f,
+        animationSpec = tween(durationMillis = 110),
+        label = "mediaControlScale"
+    )
+
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null
+            ) {
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+            .padding(4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            modifier = Modifier.size(24.dp)
+        )
+    }
+}
+
+private fun findMediaActionLabel(actionLabels: List<String>, vararg keywords: String): String? {
+    if (actionLabels.isEmpty()) return null
+    val normalizedKeywords = keywords.map { it.lowercase(Locale.getDefault()) }
+    return actionLabels.firstOrNull { label ->
+        val normalizedLabel = label.lowercase(Locale.getDefault())
+        normalizedKeywords.any { keyword -> normalizedLabel.contains(keyword) }
+    }
+}
+
+private fun isPauseLikeActionLabel(actionLabel: String?): Boolean {
+    val normalized = actionLabel?.trim()?.lowercase(Locale.getDefault()).orEmpty()
+    return normalized.contains("pause") || normalized.contains("stop")
+}
+
+@Composable
+private fun LockStatusPill(isDeviceLocked: Boolean, minHeight: Dp) {
+    Box(
         modifier = Modifier
             .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.45f))
             .heightIn(min = minHeight)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = if (isDeviceLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
             contentDescription = if (isDeviceLocked) "Locked" else "Unlocked",
             tint = Color.White,
-            modifier = Modifier.size(13.dp)
-        )
-        Text(
-            text = if (isDeviceLocked) "Locked" else "Swipe left for apps",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White
+            modifier = Modifier.size(12.dp)
         )
     }
 }
 
+@Composable
+private fun LockTopNotificationHighlights(
+    notifications: List<CoverNotificationModel>,
+    onNotificationOpen: (CoverNotificationModel) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val callNotifications = remember(notifications) {
+        notifications.filter { it.isOngoing && isCallNotification(it) }.sortedByDescending { it.postTime }.take(3)
+    }
+    if (callNotifications.isEmpty()) return
+
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        callNotifications.forEach { notification ->
+            val iconBitmap = rememberPackageIconBitmap(notification.packageName)
+            Surface(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .clickable { onNotificationOpen(notification) },
+                color = Color(0xFF1B5E20).copy(alpha = 0.6f),
+                shape = CircleShape
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (iconBitmap != null) {
+                        Image(
+                            bitmap = iconBitmap,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun isCallNotification(notification: CoverNotificationModel): Boolean {
+    val text = "${notification.title} ${notification.previewText} ${notification.packageName}".lowercase(Locale.getDefault())
+    return text.contains("call") || text.contains("dial") || text.contains("phone")
+}
+
+private data class NotificationProviderGroup(
+    val packageName: String,
+    val notifications: List<CoverNotificationModel>
+)
+
+private fun groupNotificationsByProvider(notifications: List<CoverNotificationModel>): List<NotificationProviderGroup> {
+    return notifications
+        .sortedByDescending { it.postTime }
+        .groupBy { it.packageName }
+        .map { (pkg, list) -> NotificationProviderGroup(pkg, list.sortedByDescending { it.postTime }) }
+        .sortedByDescending { it.notifications.firstOrNull()?.postTime ?: 0L }
+}
+
+@Composable
+private fun OngoingCollapseToggle(collapseOngoing: Boolean, ongoingCount: Int, onToggle: () -> Unit) {
+    val label = if (collapseOngoing) "Show ongoing ($ongoingCount)" else "Hide ongoing"
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        contentAlignment = Alignment.CenterEnd
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(Color.White.copy(alpha = 0.12f))
+                .clickable(onClick = onToggle)
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White.copy(alpha = 0.9f)
+            )
+            Icon(
+                imageVector = if (collapseOngoing) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.8f),
+                modifier = Modifier.size(12.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun NotificationsPanelTile(
+    notifications: List<CoverNotificationModel>,
+    wallpaperUri: String?,
+    wallpaperScaleMode: WallpaperScaleMode,
+    onNotificationOpen: (CoverNotificationModel) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var collapseOngoing by remember { mutableStateOf(false) }
+
+    val ongoingNotifications = remember(notifications) {
+        notifications.filter { it.isOngoing || !it.isClearable }
+    }
+    val importantNotifications = remember(notifications) {
+        notifications.filterNot { it.isOngoing || !it.isClearable }
+    }
+    val ongoingGroupedNotifications = remember(ongoingNotifications) {
+        groupNotificationsByProvider(ongoingNotifications)
+    }
+    val importantGroupedNotifications = remember(importantNotifications) {
+        groupNotificationsByProvider(importantNotifications)
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        if (notifications.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.08f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.NotificationsNone,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.45f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Text(
+                        text = "No new notifications",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.65f)
+                    )
+                }
+            }
+            return
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = coverScreenContentPadding(horizontal = 4.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (ongoingNotifications.isNotEmpty()) {
+                item(key = "ongoing_toggle") {
+                    OngoingCollapseToggle(
+                        collapseOngoing = collapseOngoing,
+                        ongoingCount = ongoingNotifications.size,
+                        onToggle = { collapseOngoing = !collapseOngoing }
+                    )
+                }
+
+                if (!collapseOngoing) {
+                    items(
+                        items = ongoingGroupedNotifications,
+                        key = { "ongoing_${it.packageName}" }
+                    ) { group ->
+                        NotificationProviderGroupCard(
+                            group = group,
+                            onNotificationOpen = onNotificationOpen
+                        )
+                    }
+                }
+            }
+
+            items(
+                items = importantGroupedNotifications,
+                key = { "important_${it.packageName}" }
+            ) { group ->
+                NotificationProviderGroupCard(
+                    group = group,
+                    onNotificationOpen = onNotificationOpen
+                )
+            }
+
+            item { Spacer(modifier = Modifier.height(16.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun NotificationProviderGroupCard(
+    group: NotificationProviderGroup,
+    onNotificationOpen: (CoverNotificationModel) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val cardShape = RoundedCornerShape(16.dp)
+    val providerIcon = rememberPackageIconBitmap(group.packageName)
+    val providerLabel = rememberPackageLabel(group.packageName)
+    var isExpanded by remember(group.packageName) { mutableStateOf(false) }
+    val providerNotifications = group.notifications
+
+    val visibleNotifications = if (isExpanded || providerNotifications.size <= 2) {
+        providerNotifications
+    } else {
+        providerNotifications.take(2)
+    }
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(cardShape)
+            .coverGlassSurface(
+                color = Color.White.copy(alpha = 0.08f),
+                borderColor = Color.White.copy(alpha = 0.16f),
+                shape = cardShape
+            )
+            .animateContentSize(animationSpec = spring()),
+        color = Color.Transparent,
+        shape = cardShape
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.1f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (providerIcon != null) {
+                        Image(
+                            bitmap = providerIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+
+                Text(
+                    text = providerLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.9f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+
+                if (providerNotifications.size > 1) {
+                    Text(
+                        text = providerNotifications.size.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.White.copy(alpha = 0.16f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                visibleNotifications.forEachIndexed { index, notification ->
+                    NotificationGroupRow(
+                        notification = notification,
+                        onOpen = { onNotificationOpen(notification) },
+                        onDismiss = {
+                            CoverNotificationListenerService.dismissNotificationFromOverlay(
+                                notification.notificationKey
+                            )
+                        }
+                    )
+
+                    if (index < visibleNotifications.lastIndex) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(Color.White.copy(alpha = 0.05f))
+                        )
+                    }
+                }
+            }
+
+            AnimatedVisibility(
+                visible = providerNotifications.size > 2,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                val hiddenCount = (providerNotifications.size - visibleNotifications.size).coerceAtLeast(0)
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isExpanded) "Show less" else "Show $hiddenCount more",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable { isExpanded = !isExpanded }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NotificationGroupRow(
+    notification: CoverNotificationModel,
+    onOpen: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { dismissValue ->
+            if (dismissValue == SwipeToDismissBoxValue.StartToEnd) {
+                onDismiss()
+                true
+            } else {
+                false
+            }
+        }
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromEndToStart = false, // Critical: preserves horizontal pager gesture
+        enableDismissFromStartToEnd = notification.isClearable,
+        backgroundContent = {
+            val color by animateColorAsState(
+                targetValue = when (dismissState.targetValue) {
+                    SwipeToDismissBoxValue.StartToEnd -> Color(0xFFD32F2F).copy(alpha = 0.5f)
+                    else -> Color.Transparent
+                },
+                animationSpec = spring(),
+                label = "dismissColor"
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(color)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (dismissState.targetValue == SwipeToDismissBoxValue.StartToEnd) {
+                    Icon(
+                        imageVector = Icons.Filled.DeleteOutline,
+                        contentDescription = "Dismiss",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        },
+        content = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onOpen)
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = notification.title,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = notification.previewText.ifBlank { "Tap to open" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.75f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (notification.isOngoing || !notification.isClearable) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.White.copy(alpha = 0.1f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "Ongoing",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.85f)
+                        )
+                    }
+                }
+            }
+        }
+    )
+}
 
 @Composable
 private fun AppGridPageTile(
@@ -665,10 +1818,9 @@ private fun AppGridPageTile(
     onAppSelected: (AppModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Each pager tile shows a fixed-size, non-scrollable grid for predictable touch mapping.
     if (deferHydration) {
-        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-            columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(GRID_COLUMNS),
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(GRID_COLUMNS),
             modifier = modifier,
             contentPadding = GRID_CONTENT_PADDING,
             userScrollEnabled = false,
@@ -676,9 +1828,7 @@ private fun AppGridPageTile(
             verticalArrangement = Arrangement.spacedBy(GRID_TILE_GAP)
         ) {
             repeat(APPS_PER_GRID_PAGE) {
-                item {
-                AppGridPlaceholderTile()
-                }
+                item { AppGridPlaceholderTile() }
             }
         }
         return
@@ -689,20 +1839,19 @@ private fun AppGridPageTile(
             Text(
                 text = "No launchable apps",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.White
+                color = Color.White.copy(alpha = 0.7f)
             )
         }
         return
     }
 
-    // Keep a consistent 3x3 matrix across pages so spacing stays visually stable.
     val displaySlots = remember(apps) {
         val placeholderCount = (APPS_PER_GRID_PAGE - apps.size).coerceAtLeast(0)
         apps.map { it as AppModel? } + List(placeholderCount) { null }
     }
 
-    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(GRID_COLUMNS),
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(GRID_COLUMNS),
         modifier = modifier,
         contentPadding = GRID_CONTENT_PADDING,
         userScrollEnabled = false,
@@ -727,16 +1876,11 @@ private fun AppGridPageTile(
 }
 
 @Composable
-private fun GridPageLetterTooltip(
-    letter: String?,
-    visible: Boolean,
-    modifier: Modifier = Modifier
-) {
+private fun GridPageLetterTooltip(letter: String?, visible: Boolean, modifier: Modifier = Modifier) {
     if (!visible || letter == null) return
-
     Box(
         modifier = modifier
-            .size(38.dp)
+            .size(36.dp)
             .clip(CircleShape)
             .background(com.tyejaedon.coverscreenos.ui.theme.CoverOSPrimary),
         contentAlignment = Alignment.Center
@@ -752,29 +1896,20 @@ private fun GridPageLetterTooltip(
 
 private fun gridPageStartLetterForPagerPage(
     pagerPageIndex: Int,
-    appPages: List<List<AppModel>>
+    appPages: List<List<AppModel>>,
+    firstAppGridPageIndex: Int
 ): String? {
-    if (pagerPageIndex <= 0) return null
-
-    val firstAppName = appPages.getOrNull(pagerPageIndex - 1)
-        ?.firstOrNull()
-        ?.name
-        ?.trim()
-        .orEmpty()
+    val appPageIndex = pagerPageIndex - firstAppGridPageIndex
+    if (appPageIndex < 0) return null
+    val firstAppName = appPages.getOrNull(appPageIndex)?.firstOrNull()?.name?.trim().orEmpty()
     if (firstAppName.isEmpty()) return "#"
-
     val firstChar = firstAppName.first()
-    return if (firstChar.isLetter()) {
-        firstChar.uppercaseChar().toString()
-    } else {
-        firstChar.toString()
-    }
+    return if (firstChar.isLetter()) firstChar.uppercaseChar().toString() else firstChar.toString()
 }
 
 @Composable
-@Suppress("FrequentlyChangingValue")
 private fun PageIndicator(
-    pagerState: androidx.compose.foundation.pager.PagerState,
+    pagerState: PagerState,
     pageCount: Int,
     modifier: Modifier = Modifier
 ) {
@@ -788,158 +1923,57 @@ private fun PageIndicator(
     var indicatorWidthPx by remember { mutableStateOf(0) }
     var lastScrubbedPage by remember { mutableStateOf(pagerState.currentPage) }
     var lastScrubTimestampMs by remember { mutableStateOf(0L) }
-    var scrubStepCount by remember { mutableStateOf(0) }
-    var scrubStartTimestampMs by remember { mutableStateOf(0L) }
-    var lastScrubMetricLogTimestampMs by remember { mutableStateOf(0L) }
-    var isScrollRequestInFlight by remember { mutableStateOf(false) }
-    var pendingScrollTargetPage by remember { mutableStateOf<Int?>(null) }
 
-    // Visual dimensions — a minimal floating dot row (no boxed track), the
-    // way One UI's home/lock indicators read, while the hit-box padding
-    // below keeps the same generous scrub/tap target as before.
-    val dotDiameter = 6.dp
-    val dotSpacing = 7.dp
-    val hitAreaHorizontalPadding = 16.dp
-    val hitAreaVerticalPadding = 10.dp
+    val dotDiameter = 5.dp
+    val dotSpacing = 6.dp
+    val hitAreaHorizontalPadding = 14.dp
+    val hitAreaVerticalPadding = 8.dp
 
-    val scrubTargetLookup by produceState(
-        initialValue = IntArray(0),
-        key1 = indicatorWidthPx,
-        key2 = pageCount
-    ) {
-        if (indicatorWidthPx <= 0 || pageCount <= 1) {
-            value = IntArray(0)
-            return@produceState
-        }
-
-        value = withContext(Dispatchers.Default) {
-            val startMs = SystemClock.uptimeMillis()
-            buildScrubTargetLookup(
-                indicatorWidthPx = indicatorWidthPx,
-                pageCount = pageCount
-            ).also {
-                if (Log.isLoggable(SCRUB_METRIC_LOG_TAG, Log.DEBUG)) {
-                    Log.d(
-                        SCRUB_METRIC_LOG_TAG,
-                        "lookupBuildMs=${SystemClock.uptimeMillis() - startMs} widthPx=$indicatorWidthPx pageCount=$pageCount entries=${it.size}"
-                    )
-                }
-            }
+    fun requestPageScroll(targetPage: Int) {
+        if (targetPage != pagerState.currentPage) {
+            scope.launch { pagerState.scrollToPage(targetPage) }
         }
     }
 
-    fun requestPageScroll(targetPage: Int): Boolean {
-        if (targetPage == pagerState.currentPage) {
-            pendingScrollTargetPage = null
-            return false
-        }
-        if (isScrollRequestInFlight) {
-            pendingScrollTargetPage = targetPage
-            return false
-        }
-
-        isScrollRequestInFlight = true
-        scope.launch {
-            try {
-                pagerState.scrollToPage(targetPage)
-            } finally {
-                isScrollRequestInFlight = false
-                val pendingTarget = pendingScrollTargetPage
-                pendingScrollTargetPage = null
-                if (pendingTarget != null && pendingTarget != pagerState.currentPage) {
-                    requestPageScroll(pendingTarget)
-                }
-            }
-        }
-        return true
-    }
-
-    fun dragFractionForX(x: Float): Float {
-        if (indicatorWidthPx <= 0) return 0f
-        val baseFraction = (x / indicatorWidthPx).coerceIn(0f, 1f)
-        val centered = baseFraction - 0.5f
-        return ((centered * INDICATOR_SCRUB_SENSITIVITY) + 0.5f).coerceIn(0f, 1f)
-    }
-
-    fun targetPageForX(x: Float): Int {
-        if (indicatorWidthPx <= 0 || pageCount <= 1) return pagerState.currentPage
-
-        val clampedX = x.coerceIn(0f, indicatorWidthPx.toFloat())
-        val xIndex = clampedX.roundToInt().coerceIn(0, indicatorWidthPx)
-        val lookup = scrubTargetLookup
-        if (lookup.isNotEmpty() && xIndex < lookup.size) {
-            return lookup[xIndex]
-        }
-
-        val fraction = dragFractionForX(clampedX)
-        return (fraction * (pageCount - 1)).roundToInt()
-    }
-
-    fun logScrubStepRate(nowMs: Long, isFinal: Boolean = false) {
-        if (!Log.isLoggable(SCRUB_METRIC_LOG_TAG, Log.DEBUG) || scrubStartTimestampMs == 0L) return
-        val elapsedMs = (nowMs - scrubStartTimestampMs).coerceAtLeast(1L)
-        if (!isFinal && (nowMs - lastScrubMetricLogTimestampMs) < INDICATOR_SCRUB_METRIC_LOG_INTERVAL_MS) return
-
-        val stepsPerSecond = (scrubStepCount * 1000f) / elapsedMs
-        Log.d(
-            SCRUB_METRIC_LOG_TAG,
-            "steps=$scrubStepCount elapsedMs=$elapsedMs stepsPerSecond=$stepsPerSecond intervalMs=$INDICATOR_SCRUB_INTERVAL_MS sensitivity=$INDICATOR_SCRUB_SENSITIVITY"
-        )
-        lastScrubMetricLogTimestampMs = nowMs
-    }
-
-    // Calculate current fractional progress for smooth sliding
-    val currentProgress = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
-        .coerceIn(0f, (pageCount - 1).toFloat())
-
-    // Keep the active marker responsive without bouncy spring animations.
-    val activePillWidth = if (isDragging) 20.dp else 16.dp
-    val activePillScale = if (isDragging) 1.08f else 1f
+    val currentProgress = (pagerState.currentPage + pagerState.currentPageOffsetFraction).coerceIn(0f, (pageCount - 1).toFloat())
+    val activePillWidth = if (isDragging) 18.dp else 14.dp
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
+            .padding(vertical = 1.dp),
         contentAlignment = Alignment.Center
     ) {
-        // Invisible hit-box preserves the original generous tap/scrub target
-        // while the visible dots stay minimal and float freely — no boxed
-        // Material "track" behind them.
         Box(
             modifier = Modifier
                 .wrapContentWidth()
-                .height(24.dp)
-                .onSizeChanged { indicatorWidthPx = (it.width - (hitAreaHorizontalPadding.value * 2 * density.density).roundToInt()).coerceAtLeast(0) }
+                .height(20.dp)
+                .onSizeChanged {
+                    indicatorWidthPx = (it.width - (hitAreaHorizontalPadding.value * 2 * density.density).roundToInt()).coerceAtLeast(0)
+                }
                 .pointerInput(pageCount) {
-                    // Tap to navigate directly to dot/segment
                     detectTapGestures { offset ->
                         if (indicatorWidthPx > 0) {
                             val localX = offset.x - with(density) { hitAreaHorizontalPadding.toPx() }
                             val fraction = (localX / indicatorWidthPx).coerceIn(0f, 1f)
                             val targetPage = (fraction * (pageCount - 1)).roundToInt()
-                            if (requestPageScroll(targetPage)) {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            }
+                            requestPageScroll(targetPage)
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         }
                     }
                 }
                 .pointerInput(pageCount) {
-                    // Continuous drag & scrub across pages
                     detectHorizontalDragGestures(
                         onDragStart = { offset ->
                             isDragging = true
-                            lastScrubTimestampMs = 0L
-                            scrubStepCount = 0
-                            scrubStartTimestampMs = SystemClock.uptimeMillis()
-                            lastScrubMetricLogTimestampMs = scrubStartTimestampMs
                             lastScrubbedPage = pagerState.currentPage
                             if (indicatorWidthPx > 0) {
                                 val localX = offset.x - with(density) { hitAreaHorizontalPadding.toPx() }
-                                val targetPage = targetPageForX(localX)
-                                if (targetPage != lastScrubbedPage && requestPageScroll(targetPage)) {
+                                val fraction = (localX / indicatorWidthPx).coerceIn(0f, 1f)
+                                val targetPage = (fraction * (pageCount - 1)).roundToInt()
+                                if (targetPage != lastScrubbedPage) {
                                     lastScrubbedPage = targetPage
-                                    lastScrubTimestampMs = SystemClock.uptimeMillis()
-                                    scrubStepCount += 1
+                                    requestPageScroll(targetPage)
                                 }
                             }
                         },
@@ -950,31 +1984,25 @@ private fun PageIndicator(
 
                             if (indicatorWidthPx > 0) {
                                 val localX = change.position.x - with(density) { hitAreaHorizontalPadding.toPx() }
-                                val targetPage = targetPageForX(localX)
-                                if (targetPage != lastScrubbedPage && requestPageScroll(targetPage)) {
+                                val baseFraction = (localX / indicatorWidthPx).coerceIn(0f, 1f)
+                                val centered = baseFraction - 0.5f
+                                val adjustedFraction = ((centered * INDICATOR_SCRUB_SENSITIVITY) + 0.5f).coerceIn(0f, 1f)
+                                val targetPage = (adjustedFraction * (pageCount - 1)).roundToInt()
+
+                                if (targetPage != lastScrubbedPage) {
                                     lastScrubbedPage = targetPage
                                     lastScrubTimestampMs = now
-                                    scrubStepCount += 1
-                                    logScrubStepRate(nowMs = now)
+                                    requestPageScroll(targetPage)
                                 }
                             }
                         },
-                        onDragEnd = {
-                            isDragging = false
-                            logScrubStepRate(nowMs = SystemClock.uptimeMillis(), isFinal = true)
-                            scrubStartTimestampMs = 0L
-                        },
-                        onDragCancel = {
-                            isDragging = false
-                            logScrubStepRate(nowMs = SystemClock.uptimeMillis(), isFinal = true)
-                            scrubStartTimestampMs = 0L
-                        }
+                        onDragEnd = { isDragging = false },
+                        onDragCancel = { isDragging = false }
                     )
                 }
                 .padding(horizontal = hitAreaHorizontalPadding, vertical = hitAreaVerticalPadding),
             contentAlignment = Alignment.CenterStart
         ) {
-            // Background inactive dots
             Row(
                 horizontalArrangement = Arrangement.spacedBy(dotSpacing),
                 verticalAlignment = Alignment.CenterVertically
@@ -984,17 +2012,14 @@ private fun PageIndicator(
                         modifier = Modifier
                             .size(dotDiameter)
                             .clip(CircleShape)
-                            .background(Color.White)
+                            .background(Color.White.copy(alpha = 0.35f))
                     )
                 }
             }
 
-            // Smooth sliding active navigator pill
             val stepDistancePx = with(density) { (dotDiameter + dotSpacing).toPx() }
             val activePillWidthPx = with(density) { activePillWidth.toPx() }
             val dotDiameterPx = with(density) { dotDiameter.toPx() }
-
-            // Center the sliding indicator over each dot position
             val pillOffsetPx = (currentProgress * stepDistancePx) - ((activePillWidthPx - dotDiameterPx) / 2f)
 
             Box(
@@ -1002,10 +2027,6 @@ private fun PageIndicator(
                     .offset { IntOffset(x = pillOffsetPx.roundToInt(), y = 0) }
                     .width(activePillWidth)
                     .height(dotDiameter)
-                    .graphicsLayer {
-                        scaleX = activePillScale
-                        scaleY = activePillScale
-                    }
                     .clip(RoundedCornerShape(3.dp))
                     .background(com.tyejaedon.coverscreenos.ui.theme.CoverOSPrimary)
             )
@@ -1020,16 +2041,15 @@ private fun CoverDockRow(
     onAppSelected: (AppModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // A single floating glass pill holds all four slots — icons sit
-    // directly in it with no per-slot card, matching a real One UI dock.
     Row(
-        modifier = modifier.coverScreenPadding(horizontal = 14.dp, vertical = 10.dp),
+        modifier = modifier.coverScreenPadding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
         repeat(DOCK_SLOT_COUNT) { index ->
             val app = dockSlots.getOrNull(index)
             val isSlotEnabled = app != null && !isDeviceLocked
+
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -1039,21 +2059,14 @@ private fun CoverDockRow(
                 contentAlignment = Alignment.Center
             ) {
                 if (app != null) {
-                    val iconDrawable = rememberAppIconDrawable(app)
-                    AndroidView(
-                        factory = { viewContext ->
-                            ImageView(viewContext).apply {
-                                scaleType = ImageView.ScaleType.FIT_CENTER
-                            }
-                        },
-                        update = { imageView ->
-                            if (imageView.tag !== iconDrawable) {
-                                imageView.setImageDrawable(iconDrawable)
-                                imageView.tag = iconDrawable
-                            }
-                        },
-                        modifier = Modifier.size(40.dp)
-                    )
+                    val iconBitmap = rememberPackageIconBitmap(app.packageName)
+                    if (iconBitmap != null) {
+                        Image(
+                            bitmap = iconBitmap,
+                            contentDescription = app.name,
+                            modifier = Modifier.size(40.dp)
+                        )
+                    }
                 }
             }
         }
@@ -1065,17 +2078,15 @@ private fun AppGridPlaceholderTile() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 84.dp),
+            .heightIn(min = 76.dp),
         contentAlignment = Alignment.TopCenter
     ) {
-        // A quiet dashed-feeling dot rather than a boxed placeholder card —
-        // reserves the grid slot without competing for attention.
         Box(
             modifier = Modifier
-                .padding(top = 24.dp)
-                .size(6.dp)
+                .padding(top = 20.dp)
+                .size(5.dp)
                 .clip(CircleShape)
-                .background(Color.White)
+                .background(Color.White.copy(alpha = 0.15f))
         )
     }
 }
@@ -1087,17 +2098,13 @@ private fun AppGridTile(
     onClick: () -> Unit
 ) {
     val hapticFeedback = LocalHapticFeedback.current
-    val iconDrawable = rememberAppIconDrawable(app)
+    val iconBitmap = rememberPackageIconBitmap(app.packageName)
 
-    // Icon + label float directly over the blurred wallpaper with no card
-    // background — the authentic One UI app-drawer treatment — while still
-    // keeping the >=48dp interactive bounds required for cover-screen use.
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 84.dp)
+            .heightIn(min = 76.dp)
             .coverMinimumTouchTarget()
-            .clip(RoundedCornerShape(CoverOSCornerRadiusMedium))
             .clickable(enabled = enabled) {
                 hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
@@ -1106,30 +2113,21 @@ private fun AppGridTile(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .coverScreenPadding(horizontal = 4.dp, vertical = 6.dp),
+                .coverScreenPadding(horizontal = 2.dp, vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Box(
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(16.dp)),
+                modifier = Modifier.size(48.dp),
                 contentAlignment = Alignment.Center
             ) {
-                AndroidView(
-                    factory = { viewContext ->
-                        ImageView(viewContext).apply {
-                            scaleType = ImageView.ScaleType.FIT_CENTER
-                        }
-                    },
-                    update = { imageView ->
-                        if (imageView.tag !== iconDrawable) {
-                            imageView.setImageDrawable(iconDrawable)
-                            imageView.tag = iconDrawable
-                        }
-                    },
-                    modifier = Modifier.size(46.dp)
-                )
+                if (iconBitmap != null) {
+                    Image(
+                        bitmap = iconBitmap,
+                        contentDescription = app.name,
+                        modifier = Modifier.size(44.dp)
+                    )
+                }
             }
 
             Text(
@@ -1145,90 +2143,88 @@ private fun AppGridTile(
     }
 }
 
-
-private fun resolveDockSlots(
-    apps: List<AppModel>,
-    dockPackageSlots: List<String?>
-): List<AppModel?> {
+private fun resolveDockSlots(apps: List<AppModel>, dockPackageSlots: List<String?>): List<AppModel?> {
     val appByPackageName = apps.associateBy { it.packageName }
     val hasCustomSelection = dockPackageSlots.any { !it.isNullOrBlank() }
     if (!hasCustomSelection) {
         val defaults = apps.take(DOCK_SLOT_COUNT)
-        return List(DOCK_SLOT_COUNT) { index -> defaults.getOrNull(index) }
+        return List(DOCK_SLOT_COUNT) { defaults.getOrNull(it) }
     }
 
     return List(DOCK_SLOT_COUNT) { index ->
-        dockPackageSlots.getOrNull(index)
-            ?.trim()
-            .takeUnless { it.isNullOrEmpty() }
-            ?.let { packageName -> appByPackageName[packageName] }
+        dockPackageSlots.getOrNull(index)?.trim()?.takeUnless { it.isEmpty() }?.let { appByPackageName[it] }
     }
 }
-
 
 @Composable
 private fun CoverWallpaperLayer(
     wallpaperUri: String?,
     wallpaperScaleMode: WallpaperScaleMode,
-    blurRadiusDp: Float,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val containerSize = LocalWindowInfo.current.containerSize
+    val normalizedWallpaperUri = wallpaperUri?.trim().takeUnless { it.isNullOrEmpty() }
+    var decodeRetryAttempt by remember(normalizedWallpaperUri) { mutableIntStateOf(0) }
+    var lastGoodWallpaperBitmap by remember(normalizedWallpaperUri) { mutableStateOf<Bitmap?>(null) }
     val requestedWidthPx = remember(containerSize.width) { max(containerSize.width, 1) }
     val requestedHeightPx = remember(containerSize.height) { max(containerSize.height, 1) }
-    val wallpaperCacheVersionToken = remember(wallpaperUri) {
-        wallpaperUri
+    val wallpaperCacheVersionToken = remember(normalizedWallpaperUri, decodeRetryAttempt) {
+        normalizedWallpaperUri
             ?.takeUnless { it.isBlank() }
             ?.let { runCatching { resolveWallpaperCacheVersionToken(it.toUri()) }.getOrNull() }
     }
+
     val wallpaperBitmap by produceState<Bitmap?>(
-        initialValue = null,
-        wallpaperUri,
+        initialValue = lastGoodWallpaperBitmap,
+        normalizedWallpaperUri,
         wallpaperCacheVersionToken,
+        decodeRetryAttempt,
         context,
         requestedWidthPx,
         requestedHeightPx
     ) {
-        value = if (wallpaperUri.isNullOrBlank()) {
-            Log.d(WALLPAPER_LOG_TAG, "Wallpaper skipped: empty URI")
+        value = if (normalizedWallpaperUri.isNullOrBlank()) {
             null
         } else {
             withContext(Dispatchers.IO) {
                 runCatching {
-                    val parsedUri = wallpaperUri.toUri()
                     decodeSampledBitmapFromUri(
                         context = context,
-                        uri = parsedUri,
+                        uri = normalizedWallpaperUri.toUri(),
                         cacheVersionToken = wallpaperCacheVersionToken,
                         requestedWidthPx = requestedWidthPx,
                         requestedHeightPx = requestedHeightPx
                     )
-                }.also { result ->
-                    if (result.getOrNull() == null) {
-                        Log.w(
-                            WALLPAPER_LOG_TAG,
-                            "Wallpaper decode returned null uri=$wallpaperUri size=${requestedWidthPx}x${requestedHeightPx} token=$wallpaperCacheVersionToken"
-                        )
-                    }
                 }.onFailure { error ->
-                    Log.w(WALLPAPER_LOG_TAG, "Wallpaper decode failed for URI=$wallpaperUri: ${error.message}")
+                    Log.w(WALLPAPER_LOG_TAG, "Overlay wallpaper decode failed error=${error.message}")
                 }.getOrNull()
             }
         }
     }
 
-    val bitmap = wallpaperBitmap
-    if (bitmap == null) {
-        if (!wallpaperUri.isNullOrBlank()) {
-            Log.w(
-                WALLPAPER_LOG_TAG,
-                "Wallpaper fallback to gradient uri=$wallpaperUri size=${requestedWidthPx}x${requestedHeightPx}"
-            )
+    LaunchedEffect(normalizedWallpaperUri, wallpaperBitmap) {
+        if (normalizedWallpaperUri.isNullOrBlank()) {
+            lastGoodWallpaperBitmap = null
+            return@LaunchedEffect
         }
-        // No custom wallpaper: fall back to a deep, near-black gradient
-        // rather than a flat theme background, so the cover screen still
-        // feels considered instead of empty.
+        if (wallpaperBitmap != null) {
+            lastGoodWallpaperBitmap = wallpaperBitmap
+            decodeRetryAttempt = 0
+        }
+    }
+
+    LaunchedEffect(normalizedWallpaperUri, wallpaperBitmap, decodeRetryAttempt) {
+        if (normalizedWallpaperUri.isNullOrBlank()) return@LaunchedEffect
+        if (wallpaperBitmap != null) return@LaunchedEffect
+        if (decodeRetryAttempt >= WALLPAPER_OVERLAY_RETRY_MAX_ATTEMPTS) return@LaunchedEffect
+
+        delay(WALLPAPER_OVERLAY_RETRY_DELAY_MS.milliseconds)
+        decodeRetryAttempt += 1
+    }
+
+    val bitmap = wallpaperBitmap ?: lastGoodWallpaperBitmap
+    if (bitmap == null) {
         Box(
             modifier = modifier.background(
                 Brush.verticalGradient(
@@ -1240,26 +2236,17 @@ private fun CoverWallpaperLayer(
             )
         )
     } else {
-        Log.d(
-            WALLPAPER_LOG_TAG,
-            "Wallpaper render success bitmap=${bitmap.width}x${bitmap.height} size=${requestedWidthPx}x${requestedHeightPx}"
-        )
-        val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
         Image(
-            bitmap = imageBitmap,
-            contentDescription = "Custom cover wallpaper",
-            contentScale = if (wallpaperScaleMode == WallpaperScaleMode.CROP) {
-                ContentScale.Crop
-            } else {
-                ContentScale.Fit
-            },
+            bitmap = remember(bitmap) { bitmap.asImageBitmap() },
+            contentDescription = "Cover Wallpaper",
+            contentScale = if (wallpaperScaleMode == WallpaperScaleMode.CROP) ContentScale.Crop else ContentScale.Fit,
             modifier = modifier
         )
     }
 }
 
 private fun decodeSampledBitmapFromUri(
-    context: android.content.Context,
+    context: Context,
     uri: Uri,
     cacheVersionToken: String? = null,
     requestedWidthPx: Int,
@@ -1272,124 +2259,123 @@ private fun decodeSampledBitmapFromUri(
         requestedHeightPx = requestedHeightPx
     )
 
+    WallpaperBitmapCache.get(cacheKey)?.let { return it }
+
     val nowElapsedMs = SystemClock.elapsedRealtime()
-    if (WallpaperDecodeBackoff.shouldSkip(cacheKey, nowElapsedMs)) {
-        Log.w(
-            WALLPAPER_LOG_TAG,
-            "Wallpaper decode skipped by backoff key=$cacheKey uri=$uri"
-        )
-        return null
-    }
+    if (WallpaperDecodeBackoff.shouldSkip(cacheKey, nowElapsedMs)) return null
 
-    WallpaperBitmapCache.get(cacheKey)?.let { cachedBitmap ->
-        Log.d(
-            WALLPAPER_LOG_TAG,
-            "Wallpaper cache hit key=$cacheKey bitmap=${cachedBitmap.width}x${cachedBitmap.height}"
-        )
-        return cachedBitmap
-    }
-
-    val boundsOptions = BitmapFactory.Options().apply {
-        inJustDecodeBounds = true
-    }
+    val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     openWallpaperInputStream(context, uri)?.use { boundsStream ->
         BitmapFactory.decodeStream(boundsStream, null, boundsOptions)
     } ?: run {
-        val fallbackDecoded = if (uri.scheme == "file") {
-            decodeSampledBitmapFromFilePath(
-                uri = uri,
-                requestedWidthPx = requestedWidthPx,
-                requestedHeightPx = requestedHeightPx
-            )
-        } else {
-            null
-        }
-
-        if (fallbackDecoded != null) {
-            WallpaperBitmapCache.put(cacheKey, fallbackDecoded)
-            WallpaperDecodeBackoff.clearFailure(cacheKey)
-            Log.d(
-                WALLPAPER_LOG_TAG,
-                "Wallpaper file fallback decode success uri=$uri bitmap=${fallbackDecoded.width}x${fallbackDecoded.height}"
-            )
-            return fallbackDecoded
-        }
-
-        Log.w(WALLPAPER_LOG_TAG, "Wallpaper stream unavailable for bounds decode uri=$uri")
-        WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
-        return null
+        return decodeWallpaperBitmapWithImageDecoder(
+            context = context,
+            uri = uri,
+            cacheKey = cacheKey,
+            requestedWidthPx = requestedWidthPx,
+            requestedHeightPx = requestedHeightPx,
+            nowElapsedMs = nowElapsedMs
+        )
     }
 
     if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) {
-        Log.w(
-            WALLPAPER_LOG_TAG,
-            "Wallpaper bounds invalid uri=$uri out=${boundsOptions.outWidth}x${boundsOptions.outHeight}"
+        return decodeWallpaperBitmapWithImageDecoder(
+            context = context,
+            uri = uri,
+            cacheKey = cacheKey,
+            requestedWidthPx = requestedWidthPx,
+            requestedHeightPx = requestedHeightPx,
+            nowElapsedMs = nowElapsedMs
         )
-        WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
-        return null
     }
 
     val sampledOptions = BitmapFactory.Options().apply {
-        inSampleSize = calculateInSampleSize(
-            outWidth = boundsOptions.outWidth,
-            outHeight = boundsOptions.outHeight,
-            requestedWidthPx = requestedWidthPx,
-            requestedHeightPx = requestedHeightPx
-        )
+        inSampleSize = calculateInSampleSize(boundsOptions.outWidth, boundsOptions.outHeight, requestedWidthPx, requestedHeightPx)
         inPreferredConfig = Bitmap.Config.RGB_565
     }
 
     val decodedBitmap = openWallpaperInputStream(context, uri)?.use { decodeStream ->
         BitmapFactory.decodeStream(decodeStream, null, sampledOptions)
-    }
-
-    if (decodedBitmap == null) {
-        Log.w(
-            WALLPAPER_LOG_TAG,
-            "Wallpaper bitmap decode null uri=$uri sample=${sampledOptions.inSampleSize} req=${requestedWidthPx}x${requestedHeightPx} bounds=${boundsOptions.outWidth}x${boundsOptions.outHeight}"
-        )
-        WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
-    }
+    } ?: decodeWallpaperBitmapWithImageDecoder(
+        context = context,
+        uri = uri,
+        cacheKey = cacheKey,
+        requestedWidthPx = requestedWidthPx,
+        requestedHeightPx = requestedHeightPx,
+        nowElapsedMs = nowElapsedMs
+    )
 
     if (decodedBitmap != null) {
         WallpaperBitmapCache.put(cacheKey, decodedBitmap)
         WallpaperDecodeBackoff.clearFailure(cacheKey)
-        Log.d(
-            WALLPAPER_LOG_TAG,
-            "Wallpaper cache store key=$cacheKey bitmap=${decodedBitmap.width}x${decodedBitmap.height} sample=${sampledOptions.inSampleSize}"
+    } else {
+        return decodeWallpaperBitmapWithImageDecoder(
+            context = context,
+            uri = uri,
+            cacheKey = cacheKey,
+            requestedWidthPx = requestedWidthPx,
+            requestedHeightPx = requestedHeightPx,
+            nowElapsedMs = nowElapsedMs
         )
     }
 
     return decodedBitmap
 }
 
-private fun decodeSampledBitmapFromFilePath(
+private fun decodeWallpaperBitmapWithImageDecoder(
+    context: Context,
     uri: Uri,
+    cacheKey: String,
     requestedWidthPx: Int,
-    requestedHeightPx: Int
+    requestedHeightPx: Int,
+    nowElapsedMs: Long
 ): Bitmap? {
-    if (uri.scheme != "file") return null
-    val path = uri.path ?: return null
-
-    val boundsOptions = BitmapFactory.Options().apply {
-        inJustDecodeBounds = true
+    val source = when (uri.scheme) {
+        "file" -> {
+            val path = uri.path ?: run {
+                WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
+                return null
+            }
+            val file = File(path)
+            if (!file.exists() || !file.isFile || !file.canRead()) {
+                WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
+                return null
+            }
+            ImageDecoder.createSource(file)
+        }
+        else -> runCatching { ImageDecoder.createSource(context.contentResolver, uri) }
+            .getOrNull()
+            ?: run {
+                WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
+                return null
+            }
     }
-    BitmapFactory.decodeFile(path, boundsOptions)
-    if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) {
-        return null
+
+    val decodedBitmap = runCatching {
+        ImageDecoder.decodeBitmap(source) { decoder, imageInfo, _ ->
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val sampleSize = calculateImageDecoderSampleSize(
+                sourceWidth = imageInfo.size.width,
+                sourceHeight = imageInfo.size.height,
+                requestedWidthPx = requestedWidthPx,
+                requestedHeightPx = requestedHeightPx
+            )
+            if (sampleSize > 1) {
+                decoder.setTargetSampleSize(sampleSize)
+            }
+        }
+    }.onFailure { error ->
+        Log.w(WALLPAPER_LOG_TAG, "ImageDecoder wallpaper decode failed uri=$uri error=${error.message}")
+    }.getOrNull()
+
+    if (decodedBitmap != null) {
+        WallpaperBitmapCache.put(cacheKey, decodedBitmap)
+        WallpaperDecodeBackoff.clearFailure(cacheKey)
+    } else {
+        WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
     }
 
-    val sampledOptions = BitmapFactory.Options().apply {
-        inSampleSize = calculateInSampleSize(
-            outWidth = boundsOptions.outWidth,
-            outHeight = boundsOptions.outHeight,
-            requestedWidthPx = requestedWidthPx,
-            requestedHeightPx = requestedHeightPx
-        )
-        inPreferredConfig = Bitmap.Config.RGB_565
-    }
-
-    return BitmapFactory.decodeFile(path, sampledOptions)
+    return decodedBitmap
 }
 
 private fun resolveWallpaperCacheVersionToken(uri: Uri): String? {
@@ -1400,43 +2386,48 @@ private fun resolveWallpaperCacheVersionToken(uri: Uri): String? {
     return "${file.lastModified()}_${file.length()}"
 }
 
-private fun openWallpaperInputStream(context: android.content.Context, uri: Uri): InputStream? {
+private fun openWallpaperInputStream(context: Context, uri: Uri): InputStream? {
     return when (uri.scheme) {
-        "file" -> {
-            val path = uri.path
-            if (path.isNullOrBlank()) {
-                Log.w(WALLPAPER_LOG_TAG, "File wallpaper URI has blank path uri=$uri")
-                null
-            } else {
-                val wallpaperFile = File(path)
-                runCatching { wallpaperFile.inputStream() }
-                    .onFailure { error ->
-                        Log.w(
-                            WALLPAPER_LOG_TAG,
-                            "File wallpaper stream open failed uri=$uri path=$path exists=${wallpaperFile.exists()} isFile=${wallpaperFile.isFile} canRead=${wallpaperFile.canRead()} length=${wallpaperFile.length()} error=${error.message}"
-                        )
+        "file" -> uri.path?.let { path -> runCatching { File(path).inputStream() }.getOrNull() }
+        else -> runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+            ?: runCatching {
+                context.contentResolver.openFileDescriptor(uri, "r")
+                    ?.let { descriptor ->
+                        ParcelFileDescriptor.AutoCloseInputStream(descriptor)
                     }
-                    .getOrNull()
-                    ?: runCatching { context.contentResolver.openInputStream(uri) }
-                        .onFailure { error ->
-                            Log.w(
-                                WALLPAPER_LOG_TAG,
-                                "ContentResolver fallback failed for file URI uri=$uri error=${error.message}"
-                            )
-                        }
-                        .getOrNull()
-            }
-        }
-
-        else -> runCatching { context.contentResolver.openInputStream(uri) }
-            .onFailure { error ->
-                Log.w(
-                    WALLPAPER_LOG_TAG,
-                    "ContentResolver wallpaper stream open failed uri=$uri scheme=${uri.scheme} error=${error.message}"
-                )
-            }
-            .getOrNull()
+            }.getOrNull()
     }
+}
+
+private fun calculateImageDecoderSampleSize(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    requestedWidthPx: Int,
+    requestedHeightPx: Int
+): Int {
+    if (sourceWidth <= 0 || sourceHeight <= 0) return 1
+    val widthRatio = sourceWidth.toFloat() / requestedWidthPx.coerceAtLeast(1)
+    val heightRatio = sourceHeight.toFloat() / requestedHeightPx.coerceAtLeast(1)
+    return max(widthRatio, heightRatio).toInt().coerceAtLeast(1)
+}
+
+private fun resolvePackageIconVersionToken(packageManager: PackageManager, packageName: String): String? {
+    val packageInfo = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0)
+        }
+    }.getOrNull() ?: return null
+
+    val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        packageInfo.longVersionCode
+    } else {
+        @Suppress("DEPRECATION")
+        packageInfo.versionCode.toLong()
+    }
+    return "$packageName|$versionCode|${packageInfo.lastUpdateTime}"
 }
 
 private fun calculateInSampleSize(
@@ -1446,7 +2437,6 @@ private fun calculateInSampleSize(
     requestedHeightPx: Int
 ): Int {
     if (outWidth <= 0 || outHeight <= 0) return 1
-
     var inSampleSize = 1
     val halfWidth = outWidth / 2
     val halfHeight = outHeight / 2
@@ -1457,28 +2447,6 @@ private fun calculateInSampleSize(
     return inSampleSize.coerceAtLeast(1)
 }
 
-private fun currentCoverTime(): String {
-    val formatter = DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())
-    return LocalTime.now().format(formatter)
-}
+private fun currentCoverTime(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
 
-private fun currentCoverDate(): String {
-    val formatter = DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault())
-    return LocalDate.now().format(formatter)
-}
-
-private fun buildScrubTargetLookup(
-    indicatorWidthPx: Int,
-    pageCount: Int
-): IntArray {
-    if (indicatorWidthPx <= 0 || pageCount <= 1) return IntArray(0)
-
-    val maxPage = pageCount - 1
-    return IntArray(indicatorWidthPx + 1) { xIndex ->
-        val baseFraction = (xIndex.toFloat() / indicatorWidthPx).coerceIn(0f, 1f)
-        val centered = baseFraction - 0.5f
-        val adjustedFraction = ((centered * INDICATOR_SCRUB_SENSITIVITY) + 0.5f).coerceIn(0f, 1f)
-        (adjustedFraction * maxPage).roundToInt()
-    }
-}
-
+private fun currentCoverDate(): String = LocalDate.now().format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()))
