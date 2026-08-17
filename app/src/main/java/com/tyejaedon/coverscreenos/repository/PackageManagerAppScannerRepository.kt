@@ -1,8 +1,9 @@
 package com.tyejaedon.coverscreenos.repository
 
 import android.content.Context
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.os.Build
 import android.os.SystemClock
 import com.tyejaedon.coverscreenos.models.AppModel
 import kotlinx.coroutines.CoroutineDispatcher
@@ -35,22 +36,37 @@ class PackageManagerAppScannerRepository(
         }
 
         val packageManager = context.packageManager
-        @Suppress("DEPRECATION")
-        val installedApps = packageManager.getInstalledApplications(0)
+        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val launcherActivities = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.queryIntentActivities(
+                launcherIntent,
+                PackageManager.ResolveInfoFlags.of(0)
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.queryIntentActivities(launcherIntent, 0)
+        }
 
         val defaultIcon = packageManager.defaultActivityIcon
 
-        val scannedApps = installedApps
+        val scannedApps = launcherActivities
             .asSequence()
-            .filter { appInfo -> shouldIncludeApplication(packageManager, appInfo) }
-            .map { appInfo ->
+            .mapNotNull { resolveInfo ->
+                val appInfo = resolveInfo.activityInfo?.applicationInfo ?: return@mapNotNull null
+                val packageName = appInfo.packageName
+                val resolvedIcon = runCatching {
+                    packageManager.getApplicationIcon(packageName)
+                }.getOrDefault(defaultIcon)
+
                 AppModel(
                     name = packageManager.getApplicationLabel(appInfo).toString(),
-                    packageName = appInfo.packageName,
-                    // Real icons are resolved lazily for visible UI rows to avoid startup jank.
-                    iconDrawable = defaultIcon
+                    packageName = packageName,
+                    iconDrawable = resolvedIcon
                 )
             }
+            .distinctBy { model -> model.packageName }
             .sortedWith(
                 compareBy<AppModel, String>(String.CASE_INSENSITIVE_ORDER) { it.name }
                     .thenBy { it.name }
@@ -65,21 +81,5 @@ class PackageManagerAppScannerRepository(
         scannedApps
     }
 
-    private fun shouldIncludeApplication(
-        packageManager: PackageManager,
-        appInfo: ApplicationInfo
-    ): Boolean {
-        val isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
-            (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
-        if (!isSystemApp) {
-            // Keep third-party apps without extra PackageManager intent queries.
-            return true
-        }
-
-        val hasLauncherActivity = packageManager.getLaunchIntentForPackage(appInfo.packageName) != null
-
-        // Keep launchable apps and filter non-launchable background system components.
-        return hasLauncherActivity
-    }
 }
 

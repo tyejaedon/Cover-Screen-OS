@@ -90,7 +90,7 @@ class CoverDisplayHelper(private val context: Context) {
     }
 
     private fun Display.isUsableCoverDisplay(): Boolean {
-        return displayId != Display.DEFAULT_DISPLAY && isValid && state != Display.STATE_OFF
+        return displayId != Display.DEFAULT_DISPLAY && isValid && state == Display.STATE_ON
     }
 
     fun describeDisplays(): String {
