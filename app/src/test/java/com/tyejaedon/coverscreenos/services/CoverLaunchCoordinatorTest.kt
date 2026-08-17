@@ -1,5 +1,11 @@
 package com.tyejaedon.coverscreenos.services
 
+import android.util.Log
+import io.mockk.every
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
+import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -7,6 +13,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CoverLaunchCoordinatorTest {
+
+    @Before
+    fun setup() {
+        mockkStatic(Log::class)
+        every { Log.w(any<String>(), any<String>()) } returns 0
+    }
+
+    @After
+    fun teardown() {
+        unmockkStatic(Log::class)
+    }
 
     @Test
     fun `beginLaunch executes callback synchronously on main thread`() {
