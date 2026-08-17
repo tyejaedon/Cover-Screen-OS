@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.hardware.display.DisplayManager
 import android.os.IBinder
 import android.os.Handler
@@ -16,16 +17,15 @@ import android.view.Display
 import androidx.core.app.NotificationCompat
 import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
-import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
 
 class ForegroundService : Service() {
     companion object {
         private const val DISPLAY_CHANGE_DEBOUNCE_MS = 450L
         private const val COVER_DETACH_GRACE_MS = 2_000L
-        private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 300L
-        private const val APP_LAUNCH_RESUME_GRACE_MS = 850L
+        private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 250L
+        private const val APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS = 450L
+        private const val APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS = 2_500L
         private const val APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT = 2
-        private const val APP_LAUNCH_EMPTY_PACKAGE_MAX_EVENT_AGE_MS = 1_500L
 
         private val OVERLAY_RESUME_PACKAGE_PREFIXES = arrayOf(
             "com.android.systemui",
@@ -44,8 +44,8 @@ class ForegroundService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_START = "com.tyejaedon.coverscreenos.action.START"
         const val ACTION_STOP = "com.tyejaedon.coverscreenos.action.STOP"
-        const val ACTION_LAUNCH_APP = "com.tyejaedon.coverscreenos.action.LAUNCH_APP"
-        const val EXTRA_TARGET_PACKAGE = "com.tyejaedon.coverscreenos.extra.TARGET_PACKAGE"
+        const val ACTION_HIDE_OVERLAY = "com.tyejaedon.coverscreenos.action.HIDE_OVERLAY"
+        private const val EXTRA_LAUNCH_PACKAGE_NAME = "com.tyejaedon.coverscreenos.extra.LAUNCH_PACKAGE_NAME"
 
         // Creates an explicit intent used to start this foreground service.
         fun createStartIntent(context: Context): Intent {
@@ -61,15 +61,20 @@ class ForegroundService : Service() {
             }
         }
 
-        fun createLaunchAppIntent(context: Context, packageName: String): Intent {
+        // Requests immediate overlay suppression so a launched cover app can receive input focus.
+        fun createHideOverlayIntent(context: Context, packageName: String?): Intent {
             return Intent(context, ForegroundService::class.java).apply {
-                action = ACTION_LAUNCH_APP
-                putExtra(EXTRA_TARGET_PACKAGE, packageName)
+                action = ACTION_HIDE_OVERLAY
+                packageName
+                    ?.trim()
+                    ?.takeUnless { it.isEmpty() }
+                    ?.let { putExtra(EXTRA_LAUNCH_PACKAGE_NAME, it) }
             }
         }
     }
 
     private lateinit var overlayWindowController: OverlayWindowController
+    private lateinit var launchCoordinator: CoverLaunchCoordinator
     private lateinit var coverDisplayHelper: CoverDisplayHelper
     private lateinit var displayManager: DisplayManager
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -77,9 +82,11 @@ class ForegroundService : Service() {
     private var isDisplayListenerRegistered = false
     private var pendingDisplayRetarget: Runnable? = null
     private var pendingCoverDetach: Runnable? = null
+
+    // Tracks if we have temporarily hidden the overlay to let another app run.
     private var isOverlaySuppressedForAppLaunch = false
     private var launchSuppressedPackageName: String? = null
-    private var launchSuppressedUntilElapsedMs: Long = 0L
+    private var launchSuppressedStartedElapsedMs = 0L
     private var suppressionResumePoller: Runnable? = null
     private var resumeSignalStableCount = 0
     private var lastResumeSignalPackage: String? = null
@@ -100,7 +107,6 @@ class ForegroundService : Service() {
 
     // Creates the Android O+ notification channel required for foreground notifications.
     private fun createNotificationChannel() {
-
         val channel = NotificationChannel(
             CHANNEL_ID,
             "Foreground Service Channel",
@@ -127,7 +133,16 @@ class ForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        overlayWindowController = OverlayWindowController(this)
+        launchCoordinator = CoverLaunchCoordinator(
+            onBeginLaunch = ::prepareForOverlayAppLaunch,
+            onLaunchDispatched = ::onAppLaunchDispatchAcknowledged,
+            onLaunchFailed = ::restoreOverlayAfterLaunchFailure,
+            debugThrowOnThreadViolation = isDebuggableBuild()
+        )
+        overlayWindowController = OverlayWindowController(
+            context = this,
+            launchCoordinator = launchCoordinator
+        )
         coverDisplayHelper = CoverDisplayHelper(this)
         displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
     }
@@ -142,17 +157,23 @@ class ForegroundService : Service() {
                 return START_NOT_STICKY
             }
 
-            ACTION_LAUNCH_APP -> {
-                val packageName = intent.getStringExtra(EXTRA_TARGET_PACKAGE)
+            ACTION_HIDE_OVERLAY -> {
+                val launchPackageName = intent
+                    .getStringExtra(EXTRA_LAUNCH_PACKAGE_NAME)
                     ?.trim()
-                    .orEmpty()
-                if (packageName.isEmpty()) {
-                    return START_STICKY
-                }
+                    ?.takeUnless { it.isEmpty() }
+                    ?: "<unspecified>"
 
-                handleAppLaunchRequest(packageName)
+                val suppressionApplied = prepareForOverlayAppLaunch(launchPackageName)
+                if (!suppressionApplied) {
+                    Log.w(
+                        "CoverForegroundService",
+                        "Overlay hide request rejected package=$launchPackageName"
+                    )
+                }
                 return START_STICKY
             }
+
 
             ACTION_START, null -> {
                 val foregroundStarted = runCatching {
@@ -198,7 +219,12 @@ class ForegroundService : Service() {
 
     private fun onDisplayTopologyChanged(changeType: String, displayId: Int) {
         if (!overlayRequested) return
-        if (isOverlaySuppressedForAppLaunch) return
+
+        if (isOverlaySuppressedForAppLaunch) {
+            maybeResumeOverlayAfterAppLaunch(reason = "display_$changeType:$displayId")
+            return
+        }
+
         if (!hasRuntimePrerequisites()) {
             stopServiceForMissingPrerequisites(reason = "display_${changeType}_$displayId")
             return
@@ -224,8 +250,8 @@ class ForegroundService : Service() {
 
         val activeId = overlayWindowController.getActiveDisplayId()
         val currentlyOnCover = overlayWindowController.isOverlayAttached() &&
-            activeId != null &&
-            activeId != Display.DEFAULT_DISPLAY
+                activeId != null &&
+                activeId != Display.DEFAULT_DISPLAY
 
         if (currentlyOnCover) {
             scheduleCoverDetach(reason)
@@ -345,40 +371,42 @@ class ForegroundService : Service() {
         isOverlayActive = false
     }
 
-    private fun handleAppLaunchRequest(packageName: String) {
+    private fun prepareForOverlayAppLaunch(packageName: String): Boolean {
         if (!hasRuntimePrerequisites()) {
             stopServiceForMissingPrerequisites(reason = "launch_app_missing_prerequisites")
-            return
+            return false
         }
 
         overlayRequested = true
         coverDisplayHelper.startLockStatusMonitoring()
         registerDisplayListenerIfNeeded()
-
-        val targetDisplayId = overlayWindowController.getActiveDisplayId()
-            ?: coverDisplayHelper.getCoverDisplayId()
-
         suppressOverlayForAppLaunch(packageName)
+        return true
+    }
 
-        val launched = CoverAppLauncher.launchPackageOnDisplay(
-            context = this,
-            packageName = packageName,
-            displayId = targetDisplayId
+    private fun onAppLaunchDispatchAcknowledged(packageName: String) {
+        Log.d(
+            "CoverForegroundService",
+            "launch dispatch acknowledged package=$packageName"
         )
-        if (!launched) {
-            clearAppLaunchSuppression()
-            scheduleRetarget(reason = "launch_app_failed_restore_overlay", immediate = true)
-        }
+    }
+
+    private fun restoreOverlayAfterLaunchFailure(packageName: String) {
+        clearAppLaunchSuppression()
+        scheduleRetarget(
+            reason = "launch_app_failed_restore_overlay:$packageName",
+            immediate = true
+        )
     }
 
     private fun suppressOverlayForAppLaunch(packageName: String) {
         isOverlaySuppressedForAppLaunch = true
         launchSuppressedPackageName = packageName
-        launchSuppressedUntilElapsedMs = SystemClock.elapsedRealtime() + APP_LAUNCH_RESUME_GRACE_MS
+        launchSuppressedStartedElapsedMs = SystemClock.elapsedRealtime()
         resetResumeSignalStability()
 
         clearPendingDisplayWork()
-        overlayWindowController.removeOverlay()
+        overlayWindowController.suppressOverlayForLaunch()
         isOverlayActive = false
 
         startSuppressionResumePolling()
@@ -389,14 +417,8 @@ class ForegroundService : Service() {
 
         val poller = object : Runnable {
             override fun run() {
-                if (!isOverlaySuppressedForAppLaunch) {
-                    suppressionResumePoller = null
-                    return
-                }
-
-                maybeResumeOverlayAfterAppLaunch()
+                maybeResumeOverlayAfterAppLaunch(reason = "poll")
                 if (isOverlaySuppressedForAppLaunch) {
-                    suppressionResumePoller = this
                     mainHandler.postDelayed(this, APP_LAUNCH_RESUME_POLL_INTERVAL_MS)
                 } else {
                     suppressionResumePoller = null
@@ -405,74 +427,73 @@ class ForegroundService : Service() {
         }
 
         suppressionResumePoller = poller
-        mainHandler.postDelayed(poller, APP_LAUNCH_RESUME_POLL_INTERVAL_MS)
+        mainHandler.post(poller)
     }
 
-    private fun maybeResumeOverlayAfterAppLaunch() {
+    private fun maybeResumeOverlayAfterAppLaunch(reason: String) {
         if (!isOverlaySuppressedForAppLaunch) return
         if (!overlayRequested) {
             clearAppLaunchSuppression()
             return
         }
-        if (!hasRuntimePrerequisites()) {
-            stopServiceForMissingPrerequisites(reason = "resume_after_launch_missing_prerequisites")
+
+        val suppressedForMs = SystemClock.elapsedRealtime() - launchSuppressedStartedElapsedMs
+        if (suppressedForMs < APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS) {
             return
         }
-        val nowElapsedMs = SystemClock.elapsedRealtime()
-        if (nowElapsedMs < launchSuppressedUntilElapsedMs) return
 
         val isLocked = coverDisplayHelper.getDisplayLockStatus()
-        val foregroundPackage = CoverAccessibilityService.currentForegroundPackage()
         if (isLocked) {
             clearAppLaunchSuppression()
-            scheduleRetarget(reason = "resume_after_app_launch_locked", immediate = true)
+            scheduleRetarget(reason = "resume_after_app_launch_locked:$reason", immediate = true)
             return
         }
 
-        val foregroundEventAgeMs = CoverAccessibilityService.currentForegroundPackageEventAgeMs(nowElapsedMs)
-        val shouldResume = shouldResumeOverlayForPackage(
-            foregroundPackage = foregroundPackage,
-            foregroundPackageEventAgeMs = foregroundEventAgeMs
-        )
-        if (!shouldResume) {
-            resetResumeSignalStability()
-            return
-        }
+        val foregroundPackage = resolveForegroundPackageForResume() ?: return
         if (!hasStableResumeSignal(foregroundPackage)) return
 
         clearAppLaunchSuppression()
-        scheduleRetarget(reason = "resume_after_app_launch", immediate = true)
+        scheduleRetarget(reason = "resume_after_app_launch:$foregroundPackage:$reason", immediate = true)
     }
 
-    private fun shouldResumeOverlayForPackage(
-        foregroundPackage: String?,
-        foregroundPackageEventAgeMs: Long
-    ): Boolean {
-        val currentPackage = foregroundPackage?.trim().orEmpty()
-        if (currentPackage.isEmpty()) {
-            return foregroundPackageEventAgeMs <= APP_LAUNCH_EMPTY_PACKAGE_MAX_EVENT_AGE_MS
-        }
-        if (currentPackage == packageName) return true
+    private fun resolveForegroundPackageForResume(): String? {
+        val foregroundPackage = CoverAccessibilityService.currentForegroundPackage()
+            ?.trim()
+            ?.takeUnless { it.isEmpty() }
+            ?: return null
 
+        val foregroundEventAgeMs = CoverAccessibilityService.currentForegroundPackageEventAgeMs()
+        if (foregroundEventAgeMs > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) return null
+        if (!shouldResumeOverlayForPackage(foregroundPackage)) return null
+
+        return foregroundPackage
+    }
+
+    private fun shouldResumeOverlayForPackage(packageName: String): Boolean {
         val launchedPackage = launchSuppressedPackageName
-        if (!launchedPackage.isNullOrEmpty() && currentPackage == launchedPackage) {
+            ?.trim()
+            ?.takeUnless { it.isEmpty() }
+
+        if (launchedPackage != null && packageName == launchedPackage) {
             return false
         }
 
+        if (packageName == this.packageName) {
+            return true
+        }
+
         return OVERLAY_RESUME_PACKAGE_PREFIXES.any { prefix ->
-            currentPackage.startsWith(prefix)
+            packageName.startsWith(prefix)
         }
     }
 
-    private fun hasStableResumeSignal(foregroundPackage: String?): Boolean {
-        val signalPackage = foregroundPackage?.trim().orEmpty().ifEmpty { "<empty>" }
-        if (signalPackage == lastResumeSignalPackage) {
+    private fun hasStableResumeSignal(packageName: String): Boolean {
+        if (packageName == lastResumeSignalPackage) {
             resumeSignalStableCount += 1
         } else {
-            lastResumeSignalPackage = signalPackage
+            lastResumeSignalPackage = packageName
             resumeSignalStableCount = 1
         }
-
         return resumeSignalStableCount >= APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT
     }
 
@@ -482,13 +503,13 @@ class ForegroundService : Service() {
     }
 
     private fun clearAppLaunchSuppression() {
-        isOverlaySuppressedForAppLaunch = false
-        launchSuppressedPackageName = null
-        launchSuppressedUntilElapsedMs = 0L
-        resetResumeSignalStability()
-
         suppressionResumePoller?.let { mainHandler.removeCallbacks(it) }
         suppressionResumePoller = null
+
+        isOverlaySuppressedForAppLaunch = false
+        launchSuppressedPackageName = null
+        launchSuppressedStartedElapsedMs = 0L
+        resetResumeSignalStability()
     }
 
     private fun stopServiceForMissingPrerequisites(reason: String) {
@@ -499,5 +520,9 @@ class ForegroundService : Service() {
         teardownOverlayRuntime()
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf()
+    }
+
+    private fun isDebuggableBuild(): Boolean {
+        return (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     }
 }

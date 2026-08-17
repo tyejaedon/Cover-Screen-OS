@@ -19,7 +19,7 @@ class PackageManagerAppScannerRepository(
 ) {
 
     private companion object {
-        private const val APP_SCAN_CACHE_TTL_MS = 60_000L
+        private const val APP_SCAN_CACHE_TTL_MS = 120_000L
         private val cacheLock = Any()
         private var cachedApps: List<AppModel>? = null
         private var cachedAtElapsedMs: Long = 0L
@@ -38,6 +38,8 @@ class PackageManagerAppScannerRepository(
         @Suppress("DEPRECATION")
         val installedApps = packageManager.getInstalledApplications(0)
 
+        val defaultIcon = packageManager.defaultActivityIcon
+
         val scannedApps = installedApps
             .asSequence()
             .filter { appInfo -> shouldIncludeApplication(packageManager, appInfo) }
@@ -45,7 +47,8 @@ class PackageManagerAppScannerRepository(
                 AppModel(
                     name = packageManager.getApplicationLabel(appInfo).toString(),
                     packageName = appInfo.packageName,
-                    iconDrawable = packageManager.getApplicationIcon(appInfo)
+                    // Real icons are resolved lazily for visible UI rows to avoid startup jank.
+                    iconDrawable = defaultIcon
                 )
             }
             .sortedWith(
@@ -76,7 +79,7 @@ class PackageManagerAppScannerRepository(
         val hasLauncherActivity = packageManager.getLaunchIntentForPackage(appInfo.packageName) != null
 
         // Keep launchable apps and filter non-launchable background system components.
-        return hasLauncherActivity || !isSystemApp
+        return hasLauncherActivity
     }
 }
 

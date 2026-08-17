@@ -12,6 +12,7 @@ class CoverAccessibilityService : AccessibilityService() {
     companion object {
         private const val GESTURE_DEBOUNCE_MS = 550L
         private const val ACTION_THROTTLE_MS = 300L
+        private const val FOREGROUND_EVENT_REFRESH_MIN_INTERVAL_MS = 250L
 
         @Volatile
         private var latestForegroundPackage: String? = null
@@ -28,7 +29,7 @@ class CoverAccessibilityService : AccessibilityService() {
         }
     }
 
-    private var lastWindowPackage: CharSequence? = null
+    private var lastWindowPackage: String? = null
     private var lastGestureId: Int? = null
     private var lastGestureAtMs: Long = 0L
     private var lastActionAtMs: Long = 0L
@@ -41,15 +42,28 @@ class CoverAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
 
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+        val isWindowEvent = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
-        ) {
-            latestForegroundPackage = event.packageName?.toString()
-            latestForegroundEventElapsedMs = SystemClock.elapsedRealtime()
-            if (event.packageName != lastWindowPackage) {
-                lastWindowPackage = event.packageName
-                Log.d("CoverAccessibility", "Window changed: ${event.packageName}")
-            }
+        if (!isWindowEvent) return
+
+        val foregroundPackage = event.packageName
+            ?.toString()
+            ?.trim()
+            .takeUnless { it.isNullOrEmpty() }
+            ?: return
+
+        val nowElapsedMs = SystemClock.elapsedRealtime()
+        val isSameForegroundPackage = latestForegroundPackage == foregroundPackage
+        val shouldRefreshForegroundTimestamp = !isSameForegroundPackage ||
+            (nowElapsedMs - latestForegroundEventElapsedMs) >= FOREGROUND_EVENT_REFRESH_MIN_INTERVAL_MS
+        if (shouldRefreshForegroundTimestamp) {
+            latestForegroundPackage = foregroundPackage
+            latestForegroundEventElapsedMs = nowElapsedMs
+        }
+
+        if (foregroundPackage != lastWindowPackage) {
+            lastWindowPackage = foregroundPackage
+            Log.d("CoverAccessibility", "Window changed: $foregroundPackage")
         }
     }
 

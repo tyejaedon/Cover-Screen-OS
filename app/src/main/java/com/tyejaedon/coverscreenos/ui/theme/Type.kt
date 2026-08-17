@@ -18,7 +18,7 @@ val CoverOSTypography = Typography()
 object CoverOSTextStyles {
 
     val ClockText = TextStyle(
-        fontSize = 56.sp,
+        fontSize = 42.sp,
         fontWeight = FontWeight.Light,
         letterSpacing = (-0.5).sp,
         lineHeight = 58.sp

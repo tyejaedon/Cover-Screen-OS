@@ -18,7 +18,8 @@ object ForegroundServiceHelper {
     fun hasRequiredOverlayPermissions(context: Context): Boolean {
         return hasNotificationPermission(context) &&
             AppPermissionHelper.canDrawOverlays(context) &&
-            AppPermissionHelper.isAccessibilityServiceEnabled(context)
+            AppPermissionHelper.isAccessibilityServiceEnabled(context) &&
+            AppPermissionHelper.isNotificationListenerEnabled(context)
     }
 
     // Starts the foreground service using the canonical start intent.

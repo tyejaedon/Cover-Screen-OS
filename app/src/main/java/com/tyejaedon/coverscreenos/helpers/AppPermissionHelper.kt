@@ -11,9 +11,16 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.tyejaedon.coverscreenos.services.CoverAccessibilityService
+import com.tyejaedon.coverscreenos.services.CoverNotificationListenerService
 import androidx.core.net.toUri
 
 object AppPermissionHelper {
+
+    private const val ENABLED_NOTIFICATION_LISTENERS_KEY = "enabled_notification_listeners"
+
+    private val galleryMediaPermissions = arrayOf(
+        Manifest.permission.READ_MEDIA_IMAGES
+    )
 
     fun hasNotificationPermission(context: Context): Boolean {
         return ContextCompat.checkSelfPermission(
@@ -26,8 +33,28 @@ object AppPermissionHelper {
         return Settings.canDrawOverlays(context)
     }
 
+    fun galleryMediaPermissionsToRequest(): Array<String> {
+        return galleryMediaPermissions
+    }
+
+    fun hasGalleryMediaPermissions(context: Context): Boolean {
+        return galleryMediaPermissionsToRequest().all { permission ->
+            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
     fun isAccessibilityServiceEnabled(context: Context): Boolean {
         return isAccessibilityServiceEnabled(context, CoverAccessibilityService::class.java)
+    }
+
+    fun isNotificationListenerEnabled(context: Context): Boolean {
+        val enabledListeners = Settings.Secure.getString(
+            context.contentResolver,
+            ENABLED_NOTIFICATION_LISTENERS_KEY
+        ) ?: return false
+
+        val targetListener = ComponentName(context, CoverNotificationListenerService::class.java).flattenToString()
+        return enabledListeners.split(':').any { it.equals(targetListener, ignoreCase = true) }
     }
 
     private fun isAccessibilityServiceEnabled(
@@ -59,6 +86,10 @@ object AppPermissionHelper {
 
     fun createAccessibilitySettingsIntent(): Intent {
         return Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+    }
+
+    fun createNotificationListenerSettingsIntent(): Intent {
+        return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
     }
 
     fun createAppDetailsSettingsIntent(context: Context): Intent {

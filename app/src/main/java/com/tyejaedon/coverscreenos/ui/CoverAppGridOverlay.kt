@@ -4,30 +4,17 @@ package com.tyejaedon.coverscreenos.ui
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.widget.ImageView
 import android.os.SystemClock
 import android.util.Log
+import android.util.LruCache
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -50,29 +37,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.wrapContentWidth
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -82,28 +64,21 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.MAX_WALLPAPER_BLUR_RADIUS_DP
@@ -129,16 +104,12 @@ import java.io.File
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.absoluteValue
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 import androidx.core.net.toUri
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 
 private const val GRID_COLUMNS = 4
 private const val GRID_ROWS = 3
@@ -150,25 +121,26 @@ private const val INDICATOR_SCRUB_METRIC_LOG_INTERVAL_MS = 1_000L
 private const val PAGER_HAPTIC_INTERVAL_MS = 150L
 private const val SCRUB_METRIC_LOG_TAG = "CoverPageScrub"
 private const val WALLPAPER_LOG_TAG = "CoverWallpaper"
-private const val LOCK_SEARCH_RESULT_LIMIT = 8
-private const val LOCK_SEARCH_HISTORY_LIMIT = 6
+private const val OVERLAY_PERF_LOG_TAG = "CoverOverlayPerf"
+private const val APP_SCAN_DEFER_AFTER_FIRST_FRAME_MS = 180L
+private const val ICON_CACHE_MAX_ENTRIES = 256
+private const val ICON_PREWARM_COUNT = APPS_PER_GRID_PAGE * 2
+private const val ICON_PREWARM_BATCH_SIZE = 4
+private const val ICON_PREWARM_BATCH_DELAY_MS = 48L
+private const val OVERLAY_CHEAP_MODE_MS = 900L
+private const val GRID_HYDRATE_DELAY_MS = 180L
+private const val WALLPAPER_RETRY_BACKOFF_MS = 5_000L
 
 // One UI leans on a near-monochrome glass surface with a single accent for
 // interactive/selected states, rather than a busy set of tinted Material
 // containers. These alphas are tuned so cards read as "frosted glass" over
 // the blurred wallpaper instead of opaque Material cards.
-private const val GRID_PANEL_FILL_ALPHA = 0.46f
-private const val GRID_PANEL_BORDER_ALPHA = 0.40f
-private const val DOCK_FILL_ALPHA = 0.42f
-private const val DOCK_BORDER_ALPHA = 0.50f
-private const val SEARCH_RESULT_FILL_ALPHA = 0.55f
-private const val ICON_DISABLED_TINT_ALPHA = 0.65f
-private val GRID_TILE_GAP = 10.dp
-private val GRID_CONTENT_PADDING = coverScreenContentPadding(horizontal = 6.dp, vertical = 4.dp)
+private const val ICON_DISABLED_TINT_ALPHA = 1f
+private val GRID_TILE_GAP = 5.dp
+private val GRID_CONTENT_PADDING = coverScreenContentPadding(horizontal = 6.dp, vertical = 2.dp)
 
 private data class CoverDisplayPolishSpec(
     val statusChipMinHeight: Dp,
-    val searchPanelMinHeight: Dp,
     val dockVerticalOffset: Dp
 )
 
@@ -182,21 +154,81 @@ private fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
         when {
             containerHeightDp <= 680.dp -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 28.dp,
-                searchPanelMinHeight = 100.dp,
                 dockVerticalOffset = (-2).dp
             )
             containerHeightDp <= 760.dp -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 30.dp,
-                searchPanelMinHeight = 108.dp,
                 dockVerticalOffset = (-4).dp
             )
             else -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 32.dp,
-                searchPanelMinHeight = 116.dp,
                 dockVerticalOffset = (-6).dp
             )
         }
     }
+}
+
+private object OverlayIconCache {
+    private val cache = LruCache<String, Drawable.ConstantState>(ICON_CACHE_MAX_ENTRIES)
+
+    fun get(context: android.content.Context, packageName: String): Drawable? {
+        val constantState = synchronized(cache) { cache.get(packageName) } ?: return null
+        return runCatching { constantState.newDrawable(context.resources) }.getOrNull()
+    }
+
+    fun put(packageName: String, drawable: Drawable) {
+        val constantState = drawable.constantState ?: return
+        synchronized(cache) { cache.put(packageName, constantState) }
+    }
+}
+
+private object WallpaperDecodeBackoff {
+    private val failedAtElapsedMsByKey = mutableMapOf<String, Long>()
+
+    fun shouldSkip(cacheKey: String, nowElapsedMs: Long): Boolean {
+        val failedAt = synchronized(failedAtElapsedMsByKey) { failedAtElapsedMsByKey[cacheKey] } ?: return false
+        return (nowElapsedMs - failedAt) < WALLPAPER_RETRY_BACKOFF_MS
+    }
+
+    fun markFailure(cacheKey: String, nowElapsedMs: Long) {
+        synchronized(failedAtElapsedMsByKey) {
+            failedAtElapsedMsByKey[cacheKey] = nowElapsedMs
+        }
+    }
+
+    fun clearFailure(cacheKey: String) {
+        synchronized(failedAtElapsedMsByKey) {
+            failedAtElapsedMsByKey.remove(cacheKey)
+        }
+    }
+}
+
+@Composable
+private fun rememberAppIconDrawable(app: AppModel): Drawable {
+    val context = LocalContext.current
+    val packageManager = remember(context) { context.packageManager }
+
+    val iconState = produceState(
+        initialValue = OverlayIconCache.get(context, app.packageName) ?: app.iconDrawable,
+        key1 = app.packageName
+    ) {
+        val cached = OverlayIconCache.get(context, app.packageName)
+        if (cached != null) {
+            value = cached
+            return@produceState
+        }
+
+        val resolved = withContext(Dispatchers.IO) {
+            runCatching { packageManager.getApplicationIcon(app.packageName) }.getOrNull()
+        }
+        if (resolved != null) {
+            OverlayIconCache.put(app.packageName, resolved)
+            value = resolved
+        }
+    }
+
+
+    return iconState.value
 }
 
 @Composable
@@ -212,8 +244,51 @@ fun CoverAppGridOverlay(
     wallpaperDimAmount: Float = DEFAULT_WALLPAPER_DIM_AMOUNT,
     wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP
 ) {
+    val context = LocalContext.current
+    val packageManager = remember(context) { context.packageManager }
+    val overlayComposeStartMs = remember { SystemClock.uptimeMillis() }
+
+    var isCheapMode by remember { mutableStateOf(true) }
+    var isGridHydrated by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        Log.d(
+            OVERLAY_PERF_LOG_TAG,
+            "firstFrameCommittedMs=${SystemClock.uptimeMillis() - overlayComposeStartMs}"
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        delay(GRID_HYDRATE_DELAY_MS.milliseconds)
+        isGridHydrated = true
+    }
+
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        delay(OVERLAY_CHEAP_MODE_MS.milliseconds)
+        isCheapMode = false
+    }
+
+    var shouldLoadApps by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        // Let initial draw commit before doing expensive package work.
+        withFrameNanos { }
+        delay(APP_SCAN_DEFER_AFTER_FIRST_FRAME_MS.milliseconds)
+        shouldLoadApps = true
+    }
+
     // Scan installed applications off the main thread and expose a UI-safe list.
-    val appsState = produceState(initialValue = emptyList<AppModel>(), key1 = repository) {
+    val appsState = produceState(
+        initialValue = emptyList<AppModel>(),
+        key1 = repository,
+        key2 = shouldLoadApps
+    ) {
+        if (!shouldLoadApps) {
+            value = emptyList()
+            return@produceState
+        }
         value = withContext(Dispatchers.Default) {
             runCatching { repository.scanInstalledApplications() }.getOrDefault(emptyList())
         }
@@ -233,6 +308,33 @@ fun CoverAppGridOverlay(
     }
 
     val apps = appsState.value
+    LaunchedEffect(apps) {
+        if (apps.isEmpty()) return@LaunchedEffect
+
+        val prewarmTargets = apps
+            .asSequence()
+            .take(ICON_PREWARM_COUNT)
+            .filter { app -> OverlayIconCache.get(context, app.packageName) == null }
+            .toList()
+
+        if (prewarmTargets.isEmpty()) return@LaunchedEffect
+
+        withContext(Dispatchers.IO) {
+            val prewarmBatches = prewarmTargets.chunked(ICON_PREWARM_BATCH_SIZE)
+            prewarmBatches.forEachIndexed { index, batch ->
+                batch.forEach { app ->
+                    runCatching { packageManager.getApplicationIcon(app.packageName) }
+                        .getOrNull()
+                        ?.let { drawable -> OverlayIconCache.put(app.packageName, drawable) }
+                }
+
+                if (index < prewarmBatches.lastIndex) {
+                    delay(ICON_PREWARM_BATCH_DELAY_MS.milliseconds)
+                }
+            }
+        }
+    }
+
     // Page 0 is lock+dock; remaining pages are fixed-size app grid tiles.
     val dockApps = remember(apps, dockPackageSlots) {
         resolveDockSlots(apps = apps, dockPackageSlots = dockPackageSlots)
@@ -244,16 +346,25 @@ fun CoverAppGridOverlay(
     val appPages = remember(apps) { apps.chunked(APPS_PER_GRID_PAGE) }
     val totalPageCount = 1 + appPages.size
     val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { totalPageCount })
-    val isAppGridPage = pagerState.currentPage >= 1
-    val constrainedWallpaperBlur = wallpaperBlurRadiusDp.coerceIn(
-        MIN_WALLPAPER_BLUR_RADIUS_DP,
-        MAX_WALLPAPER_BLUR_RADIUS_DP
-    )
-    val effectiveWallpaperBlur = if (isAppGridPage && !pagerState.isScrollInProgress) {
-        constrainedWallpaperBlur
-    } else {
-        0f
+
+    LaunchedEffect(pagerState.isScrollInProgress) {
+        if (pagerState.isScrollInProgress) {
+            isCheapMode = false
+            isGridHydrated = true
+        }
     }
+
+    val isAppGridPage = pagerState.currentPage >= 1
+    val effectiveWallpaperBlur = 0f
+
+    LaunchedEffect(isGridHydrated, isCheapMode) {
+        if (!isGridHydrated || isCheapMode) return@LaunchedEffect
+        Log.d(
+            OVERLAY_PERF_LOG_TAG,
+            "overlayHydratedMs=${SystemClock.uptimeMillis() - overlayComposeStartMs}"
+        )
+    }
+
     val displayPolishSpec = rememberCoverDisplayPolishSpec()
 
     // Emit subtle haptic feedback when pager settles onto a new page.
@@ -283,20 +394,13 @@ fun CoverAppGridOverlay(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // One UI darkens toward the bottom edge only enough to guarantee
-            // label/icon legibility — the wallpaper itself stays the hero.
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Black.copy(alpha = if (isAppGridPage) constrainedWallpaperDim * 0.35f else 0f),
-                                Color.Black.copy(alpha = if (isAppGridPage) constrainedWallpaperDim else 0f)
-                            )
-                        )
-                    )
-            )
+            if (isAppGridPage && constrainedWallpaperDim > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = constrainedWallpaperDim * 0.2f))
+                )
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -309,8 +413,8 @@ fun CoverAppGridOverlay(
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     InteractiveSection(
-                        allApps = apps,
                         appPages = appPages,
+                        deferGridHydration = !isGridHydrated,
                         dockApps = dockApps,
                         displayPolishSpec = displayPolishSpec,
                         onAppSelected = onAppSelected,
@@ -334,8 +438,8 @@ fun CoverAppGridOverlay(
 @Composable
 @Suppress("FrequentlyChangingValue")
 private fun InteractiveSection(
-    allApps: List<AppModel>,
     appPages: List<List<AppModel>>,
+    deferGridHydration: Boolean,
     dockApps: List<AppModel?>,
     displayPolishSpec: CoverDisplayPolishSpec,
     onAppSelected: (AppModel) -> Unit,
@@ -350,10 +454,6 @@ private fun InteractiveSection(
     // On the lock page the panel disappears entirely so the clock sits
     // directly on wallpaper, matching a real cover lock screen. Only the
     // app-grid pages get a floating glass panel beneath them.
-    val panelShape = RoundedCornerShape(
-        topStart = CoverOSCornerRadiusLarge,
-        topEnd = CoverOSCornerRadiusLarge
-    )
     val showPanelChrome = pagerState.currentPage > 0
 
     var showPageLetterTooltip by remember { mutableStateOf(false) }
@@ -397,11 +497,7 @@ private fun InteractiveSection(
         modifier = modifier
             .then(
                 if (showPanelChrome) {
-                    Modifier.coverGlassSurface(
-                        fillAlpha = GRID_PANEL_FILL_ALPHA,
-                        borderAlpha = GRID_PANEL_BORDER_ALPHA,
-                        shape = panelShape
-                    )
+                    Modifier
                 } else {
                     Modifier
                 }
@@ -419,29 +515,19 @@ private fun InteractiveSection(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
                     pageSpacing = 12.dp,
-                    beyondViewportPageCount = 1
+                    beyondViewportPageCount = 0
                 ) { pageIndex ->
-                    val scale = 1f
-                    val alpha = 1f
-
                     Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                                this.alpha = alpha
-                            }
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         // First tile is lock-style surface + dock; rest are app-grid pages.
                         if (pageIndex == 0) {
                             LockAndDockTile(
-                                allApps = allApps,
                                 timeLabel = timeLabel,
                                 dateLabel = dateLabel,
                                 displayPolishSpec = displayPolishSpec,
                                 isDeviceLocked = isDeviceLocked,
-                                    isDockVisible = isDockVisible,
+                                isDockVisible = isDockVisible,
                                 dockSlots = dockApps,
                                 onAppSelected = onAppSelected,
                                 modifier = Modifier.fillMaxSize()
@@ -449,8 +535,8 @@ private fun InteractiveSection(
                         } else {
                             AppGridPageTile(
                                 apps = appPages[pageIndex - 1],
+                                deferHydration = deferGridHydration,
                                 isDeviceLocked = isDeviceLocked,
-                                pageVisibility = alpha,
                                 onAppSelected = onAppSelected,
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -478,7 +564,6 @@ private fun InteractiveSection(
 
 @Composable
 private fun LockAndDockTile(
-    allApps: List<AppModel>,
     timeLabel: String,
     dateLabel: String,
     displayPolishSpec: CoverDisplayPolishSpec,
@@ -488,37 +573,7 @@ private fun LockAndDockTile(
     onAppSelected: (AppModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isDockMode by rememberSaveable(isDockVisible) { mutableStateOf(isDockVisible) }
-    if (!isDockVisible && isDockMode) {
-        isDockMode = false
-    }
-    val isSearchMode = !isDockMode
-    var searchQuery by rememberSaveable { mutableStateOf("") }
-    var searchHistory by rememberSaveable { mutableStateOf(emptyList<String>()) }
-    var searchFocusRequestToken by rememberSaveable { mutableIntStateOf(0) }
-    val normalizedQuery = searchQuery.trim()
-    val searchedApps = remember(allApps, normalizedQuery, isDeviceLocked) {
-        if (normalizedQuery.isBlank() || isDeviceLocked) {
-            emptyList()
-        } else {
-            rankSearchResults(
-                allApps = allApps,
-                query = normalizedQuery,
-                limit = LOCK_SEARCH_RESULT_LIMIT
-            )
-        }
-    }
-    val shouldShowSearchPanel = !isDeviceLocked && isSearchMode
-
-    LaunchedEffect(isDockMode, isDeviceLocked) {
-        if (isDockMode || isDeviceLocked) {
-            searchQuery = ""
-        }
-    }
-
-    // Tile 0 reads like a real lock screen: huge glanceable clock sitting
-    // directly on the wallpaper, a lock-state pill, and bottom mode controls
-    // anchored to the thumb-reachable bottom edge.
+    // Keep lock tile as a pure launcher surface for faster interactions.
     Column(
         modifier = modifier.fillMaxSize(),
         verticalArrangement = Arrangement.SpaceBetween
@@ -542,70 +597,21 @@ private fun LockAndDockTile(
             Text(
                 text = dateLabel,
                 style = CoverOSTextStyles.DateText,
-                color = Color.White.copy(alpha = 0.78f)
+                color = Color.White
             )
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .coverScreenPadding(horizontal = 12.dp, vertical = 0.dp)
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+        if (isDockVisible) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .coverScreenPadding(horizontal = 12.dp, vertical = 0.dp)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
             ) {
-                BottomModeSwitch(
-                    isDockMode = isDockMode,
-                    canUseDock = isDockVisible,
-                    onModeSelected = { selectedDockMode ->
-                        isDockMode = selectedDockMode
-                        if (selectedDockMode) {
-                            searchQuery = ""
-                        } else {
-                            searchFocusRequestToken += 1
-                        }
-                    },
-                    modifier = Modifier.wrapContentWidth()
-                )
-
-                AnimatedVisibility(
-                    visible = shouldShowSearchPanel,
-                    enter = fadeIn(animationSpec = tween(durationMillis = 160)) +
-                        expandVertically(animationSpec = tween(durationMillis = 220)),
-                    exit = fadeOut(animationSpec = tween(durationMillis = 120)) +
-                        shrinkVertically(animationSpec = tween(durationMillis = 160))
-                ) {
-                    LockSearchPopupCard(
-                        query = searchQuery,
-                        onQueryChange = { searchQuery = it },
-                        searchedApps = searchedApps,
-                        recentSearches = searchHistory,
-                        focusRequestToken = searchFocusRequestToken,
-                        onRecentSearchSelected = { selectedQuery ->
-                            searchQuery = selectedQuery
-                            searchFocusRequestToken += 1
-                        },
-                        onClearRecentSearches = { searchHistory = emptyList() },
-                        onAppSelected = { selectedApp ->
-                            searchHistory = pushSearchHistory(searchHistory, searchQuery)
-                            onAppSelected(selectedApp)
-                            searchQuery = ""
-                        },
-                        minHeight = displayPolishSpec.searchPanelMinHeight,
-                        enabled = !isDeviceLocked,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                AnimatedVisibility(
-                    visible = isDockMode,
-                    enter = fadeIn(animationSpec = tween(durationMillis = 180)) +
-                        expandVertically(animationSpec = tween(durationMillis = 220)),
-                    exit = fadeOut(animationSpec = tween(durationMillis = 140)) +
-                        shrinkVertically(animationSpec = tween(durationMillis = 180))
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     CoverDockRow(
                         dockSlots = dockSlots,
@@ -615,107 +621,11 @@ private fun LockAndDockTile(
                             .fillMaxWidth()
                             .offset(y = displayPolishSpec.dockVerticalOffset)
                     )
-                }
 
-                androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(4.dp))
+                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(4.dp))
+                }
             }
         }
-    }
-}
-
-@Composable
-private fun BottomModeSwitch(
-    isDockMode: Boolean,
-    canUseDock: Boolean,
-    onModeSelected: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val hapticFeedback = LocalHapticFeedback.current
-
-    Row(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.14f))
-            .border(1.dp, Color.White.copy(alpha = 0.28f), CircleShape)
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        BottomModeOption(
-            selected = isDockMode && canUseDock,
-            icon = Icons.Filled.Layers,
-            label = "Dock",
-            enabled = canUseDock,
-            onClick = {
-                if (!canUseDock || isDockMode) return@BottomModeOption
-                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onModeSelected(true)
-            }
-        )
-
-        BottomModeOption(
-            selected = !isDockMode,
-            icon = Icons.Filled.Search,
-            label = "Search",
-            enabled = true,
-            onClick = {
-                if (!isDockMode) return@BottomModeOption
-                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onModeSelected(false)
-            }
-        )
-    }
-}
-
-@Composable
-private fun BottomModeOption(
-    selected: Boolean,
-    icon: ImageVector,
-    label: String,
-    enabled: Boolean,
-    onClick: () -> Unit
-) {
-    val containerColor by animateColorAsState(
-        targetValue = if (selected) {
-            com.tyejaedon.coverscreenos.ui.theme.CoverOSPrimary.copy(alpha = 0.24f)
-        } else {
-            Color.Transparent
-        },
-        animationSpec = tween(durationMillis = 180),
-        label = "bottomModeOptionContainer$label"
-    )
-    val contentColor by animateColorAsState(
-        targetValue = if (selected) {
-            com.tyejaedon.coverscreenos.ui.theme.CoverOSPrimary
-        } else if (!enabled) {
-            Color.White.copy(alpha = 0.44f)
-        } else {
-            Color.White.copy(alpha = 0.86f)
-        },
-        animationSpec = tween(durationMillis = 180),
-        label = "bottomModeOptionContent$label"
-    )
-
-    Row(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(containerColor)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = contentColor,
-            modifier = Modifier.size(13.dp)
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = contentColor
-        )
     }
 }
 
@@ -727,7 +637,6 @@ private fun LockStatusPill(
     Row(
         modifier = Modifier
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.16f))
             .heightIn(min = minHeight)
             .padding(horizontal = 10.dp, vertical = 5.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -747,285 +656,40 @@ private fun LockStatusPill(
     }
 }
 
-@Composable
-private fun CoverSearchField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    enabled: Boolean,
-    focusRequestToken: Int,
-    onSearchAction: () -> Unit,
-    onClearQuery: () -> Unit
-) {
-    val focusRequester = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
-
-    LaunchedEffect(focusRequestToken, enabled) {
-        if (enabled && focusRequestToken > 0) {
-            focusRequester.requestFocus()
-        }
-    }
-
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        singleLine = true,
-        enabled = enabled,
-        placeholder = {
-            Text(
-                text = "Search apps",
-                color = Color.White.copy(alpha = 0.55f)
-            )
-        },
-        leadingIcon = {
-            Icon(
-                imageVector = Icons.Filled.Search,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.7f),
-                modifier = Modifier.size(18.dp)
-            )
-        },
-        trailingIcon = if (value.isNotBlank()) {
-            {
-                IconButton(onClick = onClearQuery, enabled = enabled) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Clear search",
-                        tint = Color.White.copy(alpha = 0.72f),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-        } else {
-            null
-        },
-        keyboardOptions = KeyboardOptions(
-            capitalization = KeyboardCapitalization.Words,
-            imeAction = ImeAction.Search
-        ),
-        keyboardActions = KeyboardActions(onSearch = {
-            onSearchAction()
-            focusManager.clearFocus()
-        }),
-        shape = CircleShape,
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = Color.White,
-            unfocusedTextColor = Color.White,
-            disabledTextColor = Color.White.copy(alpha = 0.4f),
-            focusedContainerColor = Color.White.copy(alpha = 0.14f),
-            unfocusedContainerColor = Color.White.copy(alpha = 0.10f),
-            disabledContainerColor = Color.White.copy(alpha = 0.06f),
-            focusedBorderColor = com.tyejaedon.coverscreenos.ui.theme.CoverOSPrimary,
-            unfocusedBorderColor = Color.White.copy(alpha = 0.18f),
-            disabledBorderColor = Color.White.copy(alpha = 0.08f),
-            cursorColor = com.tyejaedon.coverscreenos.ui.theme.CoverOSPrimary
-        ),
-        modifier = Modifier
-            .fillMaxWidth()
-            .focusRequester(focusRequester)
-    )
-}
-
-@Composable
-private fun LockSearchPopupCard(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    searchedApps: List<AppModel>,
-    recentSearches: List<String>,
-    focusRequestToken: Int,
-    onRecentSearchSelected: (String) -> Unit,
-    onClearRecentSearches: () -> Unit,
-    onAppSelected: (AppModel) -> Unit,
-    minHeight: Dp,
-    enabled: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val searchCardShape = RoundedCornerShape(CoverOSCornerRadiusMedium)
-    Column(
-        modifier = modifier
-            .coverGlassSurface(
-                fillAlpha = 0.5f,
-                borderAlpha = 0.56f,
-                shape = searchCardShape
-            )
-            .heightIn(min = minHeight)
-            .animateContentSize()
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        val launchTopResult = {
-            val topResult = searchedApps.firstOrNull()
-            if (topResult != null) {
-                onAppSelected(topResult)
-            }
-        }
-        CoverSearchField(
-            value = query,
-            onValueChange = onQueryChange,
-            enabled = enabled,
-            focusRequestToken = focusRequestToken,
-            onSearchAction = launchTopResult,
-            onClearQuery = { onQueryChange("") }
-        )
-
-        if (query.trim().isBlank()) {
-            if (recentSearches.isNotEmpty()) {
-                LockSearchHistoryRow(
-                    searches = recentSearches,
-                    onSearchSelected = onRecentSearchSelected,
-                    onClearHistory = onClearRecentSearches
-                )
-            } else {
-                Text(
-                    text = "Type to search installed apps",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp)
-                )
-            }
-        } else if (searchedApps.isEmpty()) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    text = "No matching apps",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.72f)
-                )
-                Text(
-                    text = lockSearchNoResultGuidance(query),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(alpha = 0.58f)
-                )
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                searchedApps.forEach { app ->
-                    LockSearchResultRow(
-                        app = app,
-                        enabled = enabled,
-                        onAppSelected = onAppSelected
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LockSearchHistoryRow(
-    searches: List<String>,
-    onSearchSelected: (String) -> Unit,
-    onClearHistory: () -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Recent searches",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.64f)
-            )
-            Text(
-                text = "Clear",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.72f),
-                modifier = Modifier.clickable(onClick = onClearHistory)
-            )
-        }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(searches, key = { it }) { search ->
-                SearchHistoryChip(
-                    text = search,
-                    onClick = { onSearchSelected(search) }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SearchHistoryChip(
-    text: String,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(alpha = 0.16f))
-            .border(1.dp, Color.White.copy(alpha = 0.24f), RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp)
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun LockSearchResultRow(
-    app: AppModel,
-    enabled: Boolean,
-    onAppSelected: (AppModel) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(CoverOSCornerRadiusSmall))
-            .background(Color.White.copy(alpha = SEARCH_RESULT_FILL_ALPHA * 0.14f))
-            .clickable(enabled = enabled) { onAppSelected(app) }
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        AndroidView(
-            factory = { viewContext ->
-                ImageView(viewContext).apply {
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                }
-            },
-            update = { imageView ->
-                if (imageView.tag !== app.iconDrawable) {
-                    imageView.setImageDrawable(app.iconDrawable)
-                    imageView.tag = app.iconDrawable
-                }
-            },
-            modifier = Modifier.size(22.dp)
-        )
-        Text(
-            text = app.name,
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
 
 @Composable
 private fun AppGridPageTile(
     apps: List<AppModel>,
+    deferHydration: Boolean,
     isDeviceLocked: Boolean,
-    pageVisibility: Float,
     onAppSelected: (AppModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // Each pager tile shows a fixed-size, non-scrollable grid for predictable touch mapping.
+    if (deferHydration) {
+        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+            columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(GRID_COLUMNS),
+            modifier = modifier,
+            contentPadding = GRID_CONTENT_PADDING,
+            userScrollEnabled = false,
+            horizontalArrangement = Arrangement.spacedBy(GRID_TILE_GAP),
+            verticalArrangement = Arrangement.spacedBy(GRID_TILE_GAP)
+        ) {
+            repeat(APPS_PER_GRID_PAGE) {
+                item {
+                AppGridPlaceholderTile()
+                }
+            }
+        }
+        return
+    }
+
     if (apps.isEmpty()) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
             Text(
                 text = "No launchable apps",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.7f)
+                color = Color.White
             )
         }
         return
@@ -1050,7 +714,7 @@ private fun AppGridPageTile(
             key = { index, app -> app?.packageName ?: "placeholder_$index" }
         ) { _, app ->
             if (app == null) {
-                AppGridPlaceholderTile(visibilityProgress = pageVisibility)
+                AppGridPlaceholderTile()
             } else {
                 AppGridTile(
                     app = app,
@@ -1068,30 +732,21 @@ private fun GridPageLetterTooltip(
     visible: Boolean,
     modifier: Modifier = Modifier
 ) {
-    AnimatedVisibility(
-        visible = visible && letter != null,
-        enter = fadeIn(animationSpec = tween(durationMillis = 100)) +
-                scaleIn(animationSpec = tween(durationMillis = 100), initialScale = 0.9f),
-        exit = fadeOut(animationSpec = tween(durationMillis = 130)) +
-                scaleOut(animationSpec = tween(durationMillis = 130), targetScale = 0.9f),
+    if (!visible || letter == null) return
+
+    Box(
         modifier = modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(com.tyejaedon.coverscreenos.ui.theme.CoverOSPrimary),
+        contentAlignment = Alignment.Center
     ) {
-        // A circular index badge (fast-scroll style) reads more native than
-        // a boxed rounded-rect tooltip.
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(com.tyejaedon.coverscreenos.ui.theme.CoverOSPrimary.copy(alpha = 0.9f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = letter ?: "",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                color = Color.Black,
-                maxLines = 1
-            )
-        }
+        Text(
+            text = letter,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = Color.Black,
+            maxLines = 1
+        )
     }
 }
 
@@ -1329,7 +984,7 @@ private fun PageIndicator(
                         modifier = Modifier
                             .size(dotDiameter)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.12f))
+                            .background(Color.White)
                     )
                 }
             }
@@ -1368,34 +1023,23 @@ private fun CoverDockRow(
     // A single floating glass pill holds all four slots — icons sit
     // directly in it with no per-slot card, matching a real One UI dock.
     Row(
-        modifier = modifier
-            .coverGlassSurface(
-                fillAlpha = DOCK_FILL_ALPHA,
-                borderAlpha = DOCK_BORDER_ALPHA,
-                shape = RoundedCornerShape(28.dp)
-            )
-            .coverScreenPadding(horizontal = 14.dp, vertical = 10.dp),
+        modifier = modifier.coverScreenPadding(horizontal = 14.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
         repeat(DOCK_SLOT_COUNT) { index ->
             val app = dockSlots.getOrNull(index)
             val isSlotEnabled = app != null && !isDeviceLocked
-            val slotAlpha by animateFloatAsState(
-                targetValue = if (app != null && isDeviceLocked) ICON_DISABLED_TINT_ALPHA else 1f,
-                animationSpec = tween(durationMillis = 180),
-                label = "dockSlotAlpha$index"
-            )
             Box(
                 modifier = Modifier
                     .size(48.dp)
                     .coverMinimumTouchTarget()
-                    .graphicsLayer { alpha = slotAlpha }
                     .clip(RoundedCornerShape(CoverOSCornerRadiusSmall))
                     .clickable(enabled = isSlotEnabled) { app?.let(onAppSelected) },
                 contentAlignment = Alignment.Center
             ) {
                 if (app != null) {
+                    val iconDrawable = rememberAppIconDrawable(app)
                     AndroidView(
                         factory = { viewContext ->
                             ImageView(viewContext).apply {
@@ -1403,18 +1047,12 @@ private fun CoverDockRow(
                             }
                         },
                         update = { imageView ->
-                            if (imageView.tag !== app.iconDrawable) {
-                                imageView.setImageDrawable(app.iconDrawable)
-                                imageView.tag = app.iconDrawable
+                            if (imageView.tag !== iconDrawable) {
+                                imageView.setImageDrawable(iconDrawable)
+                                imageView.tag = iconDrawable
                             }
                         },
                         modifier = Modifier.size(40.dp)
-                    )
-
-                    DisabledTapBadge(
-                        visible = isDeviceLocked,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
                     )
                 }
             }
@@ -1423,20 +1061,11 @@ private fun CoverDockRow(
 }
 
 @Composable
-private fun AppGridPlaceholderTile(visibilityProgress: Float) {
-    val clampedProgress = visibilityProgress.coerceIn(0f, 1f)
-    val placeholderAlpha = clampedProgress * 0.4f
-    val placeholderScale = 0.97f + (0.03f * clampedProgress)
-
+private fun AppGridPlaceholderTile() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 84.dp)
-            .graphicsLayer {
-                alpha = placeholderAlpha
-                scaleX = placeholderScale
-                scaleY = placeholderScale
-            },
+            .heightIn(min = 84.dp),
         contentAlignment = Alignment.TopCenter
     ) {
         // A quiet dashed-feeling dot rather than a boxed placeholder card —
@@ -1446,7 +1075,7 @@ private fun AppGridPlaceholderTile(visibilityProgress: Float) {
                 .padding(top = 24.dp)
                 .size(6.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.25f))
+                .background(Color.White)
         )
     }
 }
@@ -1457,12 +1086,8 @@ private fun AppGridTile(
     enabled: Boolean,
     onClick: () -> Unit
 ) {
-    val tileAlpha by animateFloatAsState(
-        targetValue = if (enabled) 1f else ICON_DISABLED_TINT_ALPHA,
-        animationSpec = tween(durationMillis = 180),
-        label = "appGridTileAlpha"
-    )
     val hapticFeedback = LocalHapticFeedback.current
+    val iconDrawable = rememberAppIconDrawable(app)
 
     // Icon + label float directly over the blurred wallpaper with no card
     // background — the authentic One UI app-drawer treatment — while still
@@ -1473,7 +1098,6 @@ private fun AppGridTile(
             .heightIn(min = 84.dp)
             .coverMinimumTouchTarget()
             .clip(RoundedCornerShape(CoverOSCornerRadiusMedium))
-            .graphicsLayer { alpha = tileAlpha }
             .clickable(enabled = enabled) {
                 hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
@@ -1489,7 +1113,6 @@ private fun AppGridTile(
             Box(
                 modifier = Modifier
                     .size(52.dp)
-                    .shadow(elevation = if (enabled) 3.dp else 0.dp, shape = RoundedCornerShape(16.dp), clip = false)
                     .clip(RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) {
@@ -1500,9 +1123,9 @@ private fun AppGridTile(
                         }
                     },
                     update = { imageView ->
-                        if (imageView.tag !== app.iconDrawable) {
-                            imageView.setImageDrawable(app.iconDrawable)
-                            imageView.tag = app.iconDrawable
+                        if (imageView.tag !== iconDrawable) {
+                            imageView.setImageDrawable(iconDrawable)
+                            imageView.tag = iconDrawable
                         }
                     },
                     modifier = Modifier.size(46.dp)
@@ -1512,75 +1135,16 @@ private fun AppGridTile(
             Text(
                 text = app.name,
                 style = CoverOSTextStyles.AppLabelText,
-                color = if (enabled) Color.White else Color.White.copy(alpha = 0.6f),
+                color = Color.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
         }
-
-        DisabledTapBadge(
-            visible = !enabled,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 4.dp, end = 10.dp)
-        )
     }
 }
 
-@Composable
-private fun DisabledTapBadge(
-    visible: Boolean,
-    modifier: Modifier = Modifier
-) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(animationSpec = tween(durationMillis = 180, delayMillis = 30)) +
-                scaleIn(
-                    animationSpec = tween(durationMillis = 180, delayMillis = 30),
-                    initialScale = 0.9f
-                ),
-        exit = fadeOut(animationSpec = tween(durationMillis = 140)) +
-                scaleOut(
-                    animationSpec = tween(durationMillis = 140),
-                    targetScale = 0.9f
-                ),
-        modifier = modifier
-    ) {
-        Box(
-            modifier = Modifier
-                .size(16.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.55f)),
-            contentAlignment = Alignment.Center
-        ) {
-            TapDisabledGlyph()
-        }
-    }
-}
-
-@Composable
-private fun TapDisabledGlyph(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .size(9.dp)
-                .clip(CircleShape)
-                .border(1.dp, Color.White, CircleShape)
-        )
-        Box(
-            modifier = Modifier
-                .width(6.dp)
-                .height(1.dp)
-                .graphicsLayer { rotationZ = -42f }
-                .background(Color.White, RoundedCornerShape(1.dp))
-        )
-    }
-}
 
 private fun resolveDockSlots(
     apps: List<AppModel>,
@@ -1601,89 +1165,6 @@ private fun resolveDockSlots(
     }
 }
 
-private data class RankedSearchResult(
-    val app: AppModel,
-    val matchRank: Int,
-    val tokenStartHits: Int
-)
-
-internal fun rankSearchResults(
-    allApps: List<AppModel>,
-    query: String,
-    limit: Int = LOCK_SEARCH_RESULT_LIMIT
-): List<AppModel> {
-    val normalizedQuery = query.trim().lowercase(Locale.getDefault())
-    if (normalizedQuery.isBlank()) return emptyList()
-    val queryTokens = normalizedQuery.split("\\s+".toRegex()).filter { it.isNotBlank() }
-
-    return allApps.asSequence()
-        .mapNotNull { app ->
-            val normalizedName = app.name.lowercase(Locale.getDefault())
-            val normalizedPackage = app.packageName.lowercase(Locale.getDefault())
-            val tokenStartHits = queryTokens.count { token ->
-                normalizedName.split("\\s+".toRegex()).any { word -> word.startsWith(token) }
-            }
-            val acronym = buildAppNameAcronym(normalizedName)
-            val rank = when {
-                normalizedName == normalizedQuery -> 0
-                normalizedPackage == normalizedQuery -> 1
-                normalizedName.startsWith(normalizedQuery) -> 2
-                tokenStartHits == queryTokens.size && queryTokens.isNotEmpty() -> 3
-                normalizedName.contains(normalizedQuery) -> 4
-                normalizedPackage.contains(normalizedQuery) -> 5
-                acronym.startsWith(normalizedQuery) -> 6
-                else -> null
-            }
-
-            rank?.let {
-                RankedSearchResult(
-                    app = app,
-                    matchRank = it,
-                    tokenStartHits = tokenStartHits
-                )
-            }
-        }
-        .sortedWith(
-            compareBy<RankedSearchResult> { it.matchRank }
-                .thenByDescending { it.tokenStartHits }
-                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.app.name }
-                .thenBy { it.app.name }
-        )
-        .map { it.app }
-        .take(limit.coerceAtLeast(1))
-        .toList()
-}
-
-internal fun pushSearchHistory(
-    currentHistory: List<String>,
-    query: String,
-    maxEntries: Int = LOCK_SEARCH_HISTORY_LIMIT
-): List<String> {
-    val normalized = query.trim()
-    if (normalized.isEmpty()) return currentHistory
-
-    val withoutDuplicate = currentHistory.filterNot { existing ->
-        existing.equals(normalized, ignoreCase = true)
-    }
-    return (listOf(normalized) + withoutDuplicate).take(maxEntries.coerceAtLeast(1))
-}
-
-internal fun lockSearchNoResultGuidance(query: String): String {
-    val trimmedQuery = query.trim()
-    if (trimmedQuery.isBlank()) {
-        return "Try app name, package name, or initials."
-    }
-    return "Try a shorter keyword, package name, or initials (for example: 'sst')."
-}
-
-private fun buildAppNameAcronym(normalizedName: String): String {
-    if (normalizedName.isBlank()) return ""
-    return normalizedName
-        .split("\\s+".toRegex())
-        .filter { it.isNotBlank() }
-        .mapNotNull { token -> token.firstOrNull() }
-        .joinToString(separator = "")
-}
 
 @Composable
 private fun CoverWallpaperLayer(
@@ -1693,14 +1174,9 @@ private fun CoverWallpaperLayer(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
-    val density = LocalDensity.current
-    val requestedWidthPx = remember(configuration.screenWidthDp, density) {
-        max(with(density) { configuration.screenWidthDp.dp.roundToPx() }, 1)
-    }
-    val requestedHeightPx = remember(configuration.screenHeightDp, density) {
-        max(with(density) { configuration.screenHeightDp.dp.roundToPx() }, 1)
-    }
+    val containerSize = LocalWindowInfo.current.containerSize
+    val requestedWidthPx = remember(containerSize.width) { max(containerSize.width, 1) }
+    val requestedHeightPx = remember(containerSize.height) { max(containerSize.height, 1) }
     val wallpaperCacheVersionToken = remember(wallpaperUri) {
         wallpaperUri
             ?.takeUnless { it.isBlank() }
@@ -1715,6 +1191,7 @@ private fun CoverWallpaperLayer(
         requestedHeightPx
     ) {
         value = if (wallpaperUri.isNullOrBlank()) {
+            Log.d(WALLPAPER_LOG_TAG, "Wallpaper skipped: empty URI")
             null
         } else {
             withContext(Dispatchers.IO) {
@@ -1727,6 +1204,13 @@ private fun CoverWallpaperLayer(
                         requestedWidthPx = requestedWidthPx,
                         requestedHeightPx = requestedHeightPx
                     )
+                }.also { result ->
+                    if (result.getOrNull() == null) {
+                        Log.w(
+                            WALLPAPER_LOG_TAG,
+                            "Wallpaper decode returned null uri=$wallpaperUri size=${requestedWidthPx}x${requestedHeightPx} token=$wallpaperCacheVersionToken"
+                        )
+                    }
                 }.onFailure { error ->
                     Log.w(WALLPAPER_LOG_TAG, "Wallpaper decode failed for URI=$wallpaperUri: ${error.message}")
                 }.getOrNull()
@@ -1736,6 +1220,12 @@ private fun CoverWallpaperLayer(
 
     val bitmap = wallpaperBitmap
     if (bitmap == null) {
+        if (!wallpaperUri.isNullOrBlank()) {
+            Log.w(
+                WALLPAPER_LOG_TAG,
+                "Wallpaper fallback to gradient uri=$wallpaperUri size=${requestedWidthPx}x${requestedHeightPx}"
+            )
+        }
         // No custom wallpaper: fall back to a deep, near-black gradient
         // rather than a flat theme background, so the cover screen still
         // feels considered instead of empty.
@@ -1750,11 +1240,11 @@ private fun CoverWallpaperLayer(
             )
         )
     } else {
-        val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
-        val constrainedBlurRadius = blurRadiusDp.coerceIn(
-            MIN_WALLPAPER_BLUR_RADIUS_DP,
-            MAX_WALLPAPER_BLUR_RADIUS_DP
+        Log.d(
+            WALLPAPER_LOG_TAG,
+            "Wallpaper render success bitmap=${bitmap.width}x${bitmap.height} size=${requestedWidthPx}x${requestedHeightPx}"
         )
+        val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
         Image(
             bitmap = imageBitmap,
             contentDescription = "Custom cover wallpaper",
@@ -1763,11 +1253,7 @@ private fun CoverWallpaperLayer(
             } else {
                 ContentScale.Fit
             },
-            modifier = if (constrainedBlurRadius > 0f) {
-                modifier.blur(constrainedBlurRadius.dp)
-            } else {
-                modifier
-            }
+            modifier = modifier
         )
     }
 }
@@ -1785,7 +1271,21 @@ private fun decodeSampledBitmapFromUri(
         requestedWidthPx = requestedWidthPx,
         requestedHeightPx = requestedHeightPx
     )
+
+    val nowElapsedMs = SystemClock.elapsedRealtime()
+    if (WallpaperDecodeBackoff.shouldSkip(cacheKey, nowElapsedMs)) {
+        Log.w(
+            WALLPAPER_LOG_TAG,
+            "Wallpaper decode skipped by backoff key=$cacheKey uri=$uri"
+        )
+        return null
+    }
+
     WallpaperBitmapCache.get(cacheKey)?.let { cachedBitmap ->
+        Log.d(
+            WALLPAPER_LOG_TAG,
+            "Wallpaper cache hit key=$cacheKey bitmap=${cachedBitmap.width}x${cachedBitmap.height}"
+        )
         return cachedBitmap
     }
 
@@ -1794,7 +1294,40 @@ private fun decodeSampledBitmapFromUri(
     }
     openWallpaperInputStream(context, uri)?.use { boundsStream ->
         BitmapFactory.decodeStream(boundsStream, null, boundsOptions)
-    } ?: return null
+    } ?: run {
+        val fallbackDecoded = if (uri.scheme == "file") {
+            decodeSampledBitmapFromFilePath(
+                uri = uri,
+                requestedWidthPx = requestedWidthPx,
+                requestedHeightPx = requestedHeightPx
+            )
+        } else {
+            null
+        }
+
+        if (fallbackDecoded != null) {
+            WallpaperBitmapCache.put(cacheKey, fallbackDecoded)
+            WallpaperDecodeBackoff.clearFailure(cacheKey)
+            Log.d(
+                WALLPAPER_LOG_TAG,
+                "Wallpaper file fallback decode success uri=$uri bitmap=${fallbackDecoded.width}x${fallbackDecoded.height}"
+            )
+            return fallbackDecoded
+        }
+
+        Log.w(WALLPAPER_LOG_TAG, "Wallpaper stream unavailable for bounds decode uri=$uri")
+        WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
+        return null
+    }
+
+    if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) {
+        Log.w(
+            WALLPAPER_LOG_TAG,
+            "Wallpaper bounds invalid uri=$uri out=${boundsOptions.outWidth}x${boundsOptions.outHeight}"
+        )
+        WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
+        return null
+    }
 
     val sampledOptions = BitmapFactory.Options().apply {
         inSampleSize = calculateInSampleSize(
@@ -1810,11 +1343,53 @@ private fun decodeSampledBitmapFromUri(
         BitmapFactory.decodeStream(decodeStream, null, sampledOptions)
     }
 
+    if (decodedBitmap == null) {
+        Log.w(
+            WALLPAPER_LOG_TAG,
+            "Wallpaper bitmap decode null uri=$uri sample=${sampledOptions.inSampleSize} req=${requestedWidthPx}x${requestedHeightPx} bounds=${boundsOptions.outWidth}x${boundsOptions.outHeight}"
+        )
+        WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
+    }
+
     if (decodedBitmap != null) {
         WallpaperBitmapCache.put(cacheKey, decodedBitmap)
+        WallpaperDecodeBackoff.clearFailure(cacheKey)
+        Log.d(
+            WALLPAPER_LOG_TAG,
+            "Wallpaper cache store key=$cacheKey bitmap=${decodedBitmap.width}x${decodedBitmap.height} sample=${sampledOptions.inSampleSize}"
+        )
     }
 
     return decodedBitmap
+}
+
+private fun decodeSampledBitmapFromFilePath(
+    uri: Uri,
+    requestedWidthPx: Int,
+    requestedHeightPx: Int
+): Bitmap? {
+    if (uri.scheme != "file") return null
+    val path = uri.path ?: return null
+
+    val boundsOptions = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    BitmapFactory.decodeFile(path, boundsOptions)
+    if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) {
+        return null
+    }
+
+    val sampledOptions = BitmapFactory.Options().apply {
+        inSampleSize = calculateInSampleSize(
+            outWidth = boundsOptions.outWidth,
+            outHeight = boundsOptions.outHeight,
+            requestedWidthPx = requestedWidthPx,
+            requestedHeightPx = requestedHeightPx
+        )
+        inPreferredConfig = Bitmap.Config.RGB_565
+    }
+
+    return BitmapFactory.decodeFile(path, sampledOptions)
 }
 
 private fun resolveWallpaperCacheVersionToken(uri: Uri): String? {
@@ -1827,8 +1402,40 @@ private fun resolveWallpaperCacheVersionToken(uri: Uri): String? {
 
 private fun openWallpaperInputStream(context: android.content.Context, uri: Uri): InputStream? {
     return when (uri.scheme) {
-        "file" -> uri.path?.let { path -> runCatching { File(path).inputStream() }.getOrNull() }
-        else -> runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+        "file" -> {
+            val path = uri.path
+            if (path.isNullOrBlank()) {
+                Log.w(WALLPAPER_LOG_TAG, "File wallpaper URI has blank path uri=$uri")
+                null
+            } else {
+                val wallpaperFile = File(path)
+                runCatching { wallpaperFile.inputStream() }
+                    .onFailure { error ->
+                        Log.w(
+                            WALLPAPER_LOG_TAG,
+                            "File wallpaper stream open failed uri=$uri path=$path exists=${wallpaperFile.exists()} isFile=${wallpaperFile.isFile} canRead=${wallpaperFile.canRead()} length=${wallpaperFile.length()} error=${error.message}"
+                        )
+                    }
+                    .getOrNull()
+                    ?: runCatching { context.contentResolver.openInputStream(uri) }
+                        .onFailure { error ->
+                            Log.w(
+                                WALLPAPER_LOG_TAG,
+                                "ContentResolver fallback failed for file URI uri=$uri error=${error.message}"
+                            )
+                        }
+                        .getOrNull()
+            }
+        }
+
+        else -> runCatching { context.contentResolver.openInputStream(uri) }
+            .onFailure { error ->
+                Log.w(
+                    WALLPAPER_LOG_TAG,
+                    "ContentResolver wallpaper stream open failed uri=$uri scheme=${uri.scheme} error=${error.message}"
+                )
+            }
+            .getOrNull()
     }
 }
 

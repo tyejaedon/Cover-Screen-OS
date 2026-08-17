@@ -8,11 +8,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatterySaver
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Notifications
@@ -25,14 +25,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
-import com.tyejaedon.coverscreenos.ui.theme.coverTopLevelSafeInsets
 import com.tyejaedon.coverscreenos.ui.theme.navbarPadding
 
 private data class PermissionRequirementUiModel(
@@ -58,8 +56,14 @@ fun PermissionScreen(
     var hasAccessibilityPermission by remember {
         mutableStateOf(AppPermissionHelper.isAccessibilityServiceEnabled(context))
     }
+    var hasNotificationListenerPermission by remember {
+        mutableStateOf(AppPermissionHelper.isNotificationListenerEnabled(context))
+    }
     var hasBatteryOptimizationExemption by remember {
         mutableStateOf(AppPermissionHelper.isBatteryOptimizationDisabled(context))
+    }
+    var hasGalleryMediaPermission by remember {
+        mutableStateOf(AppPermissionHelper.hasGalleryMediaPermissions(context))
     }
     var isForegroundServiceRunning by remember {
         mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning(context))
@@ -70,7 +74,9 @@ fun PermissionScreen(
         hasNotificationPermission = AppPermissionHelper.hasNotificationPermission(context)
         hasOverlayPermission = AppPermissionHelper.canDrawOverlays(context)
         hasAccessibilityPermission = AppPermissionHelper.isAccessibilityServiceEnabled(context)
+        hasNotificationListenerPermission = AppPermissionHelper.isNotificationListenerEnabled(context)
         hasBatteryOptimizationExemption = AppPermissionHelper.isBatteryOptimizationDisabled(context)
+        hasGalleryMediaPermission = AppPermissionHelper.hasGalleryMediaPermissions(context)
         isForegroundServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning(context)
     }
 
@@ -92,6 +98,12 @@ fun PermissionScreen(
         refreshPermissionState()
     }
 
+    val openNotificationListenerSettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        refreshPermissionState()
+    }
+
     val openAppSettingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
@@ -104,7 +116,16 @@ fun PermissionScreen(
         refreshPermissionState()
     }
 
-    val allPermissionsGranted = hasNotificationPermission && hasOverlayPermission && hasAccessibilityPermission
+    val requestGalleryMediaPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        refreshPermissionState()
+    }
+
+    val allPermissionsGranted = hasNotificationPermission &&
+        hasOverlayPermission &&
+        hasAccessibilityPermission &&
+        hasNotificationListenerPermission
 
     LaunchedEffect(allPermissionsGranted) {
         if (allPermissionsGranted && !hasTriggeredGrantedCallback) {
@@ -147,6 +168,18 @@ fun PermissionScreen(
             icon = Icons.Filled.Accessibility,
             onAction = {
                 openAccessibilitySettingsLauncher.launch(AppPermissionHelper.createAccessibilitySettingsIntent())
+            }
+        ),
+        PermissionRequirementUiModel(
+            title = "Notification access service",
+            details = "Required for notification listener callbacks used by launcher runtime checks.",
+            granted = hasNotificationListenerPermission,
+            actionLabel = "Open notification access settings",
+            icon = Icons.Filled.Notifications,
+            onAction = {
+                openNotificationListenerSettingsLauncher.launch(
+                    AppPermissionHelper.createNotificationListenerSettingsIntent()
+                )
             }
         )
     )
@@ -195,6 +228,19 @@ fun PermissionScreen(
                     onAction = requirement.onAction
                 )
             }
+
+            PermissionRequirementCard(
+                title = "Gallery access (optional)",
+                details = "Optional: grant this if your OEM picker requires storage permission for wallpaper imports.",
+                granted = hasGalleryMediaPermission,
+                actionLabel = "Grant gallery access",
+                icon = Icons.Filled.PhotoLibrary,
+                onAction = {
+                    requestGalleryMediaPermissionLauncher.launch(
+                        AppPermissionHelper.galleryMediaPermissionsToRequest()
+                    )
+                }
+            )
 
             PermissionRequirementCard(
                 title = "Battery optimization",

@@ -31,7 +31,10 @@ import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import kotlinx.coroutines.flow.StateFlow
 
-class OverlayWindowController(private val context: Context) {
+internal class OverlayWindowController(
+    private val context: Context,
+    private val launchCoordinator: CoverLaunchCoordinator? = null
+) {
 
     private val appRepository = PackageManagerAppScannerRepository(context.applicationContext)
     private val launcherSettingsStore = LauncherSettingsStore(context.applicationContext)
@@ -40,6 +43,8 @@ class OverlayWindowController(private val context: Context) {
     private var overlayWindowContext: Context? = null
     private var activeDisplayId: Int? = null
     private var overlayLifecycleOwner: OverlayViewLifecycleOwner? = null
+    private var overlayLayoutParams: WindowManager.LayoutParams? = null
+    private var isLaunchSuppressed: Boolean = false
 
     fun showOverlay(
         targetDisplay: Display? = null,
@@ -48,6 +53,7 @@ class OverlayWindowController(private val context: Context) {
     ): Boolean {
         val desiredDisplayId = targetDisplay?.displayId ?: Display.DEFAULT_DISPLAY
         if (overlayView != null && !forceReattach && activeDisplayId == desiredDisplayId) {
+            setLaunchSuppressed(false)
             return true
         }
         if (overlayView != null) {
@@ -64,28 +70,34 @@ class OverlayWindowController(private val context: Context) {
                 setViewTreeLifecycleOwner(lifecycleOwner)
                 setViewTreeSavedStateRegistryOwner(lifecycleOwner)
                 setContent {
-                    val context = LocalContext.current
+                    val composeContext = LocalContext.current
                     val isDeviceLocked = deviceLockState?.collectAsState()?.value ?: false
                     val launcherSettings = launcherSettingsStore.settings
                         .collectAsState(initial = LauncherSettings())
                         .value
+
                     CoverOSTheme(themePreference = launcherSettings.themePreference) {
                         CoverAppGridOverlay(
                             repository = appRepository,
                             onAppSelected = { appModel ->
-                                val launchIntent = ForegroundService.createLaunchAppIntent(
-                                    context = context,
-                                    packageName = appModel.packageName
-                                )
-                                runCatching { context.startService(launchIntent) }
-                                    .onFailure { error ->
-                                        Log.w(
-                                            "OverlayWindowController",
-                                            "Service launch routing failed for ${appModel.packageName}: ${error.message}"
-                                        )
-                                        // Fallback keeps launch functional even if service command delivery fails.
-                                        CoverAppLauncher.launchAppOnCoverScreen(context, appModel)
-                                    }
+                                val packageName = appModel.packageName
+                                val coordinator = launchCoordinator
+                                val readyToLaunch = coordinator?.beginLaunch(packageName) ?: true
+                                if (!readyToLaunch) {
+                                    Log.w(
+                                        "OverlayWindowController",
+                                        "Launch coordination rejected package=$packageName"
+                                    )
+                                    return@CoverAppGridOverlay
+                                }
+
+                                val launched = CoverAppLauncher.launchAppOnCoverScreen(composeContext, appModel)
+                                if (coordinator != null) {
+                                    coordinator.completeLaunch(
+                                        packageName = packageName,
+                                        launchDispatched = launched
+                                    )
+                                }
                             },
                             isDeviceLocked = isDeviceLocked,
                             dockPackageSlots = launcherSettings.dockPackages,
@@ -112,7 +124,8 @@ class OverlayWindowController(private val context: Context) {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -125,9 +138,11 @@ class OverlayWindowController(private val context: Context) {
             overlayWindowManager = windowManager
             overlayWindowContext = windowContext
             overlayLifecycleOwner = lifecycleOwner
+            overlayLayoutParams = layoutParams
             activeDisplayId = runCatching { windowContext.display.displayId }.getOrNull()
                 ?: targetDisplay?.displayId
-                ?: Display.DEFAULT_DISPLAY
+                        ?: Display.DEFAULT_DISPLAY
+            setLaunchSuppressed(false)
             true
         }.getOrDefault(false)
 
@@ -136,6 +151,7 @@ class OverlayWindowController(private val context: Context) {
             overlayWindowManager = null
             overlayWindowContext = null
             overlayLifecycleOwner = null
+            overlayLayoutParams = null
             activeDisplayId = null
         }
 
@@ -150,7 +166,22 @@ class OverlayWindowController(private val context: Context) {
         overlayWindowManager = null
         overlayWindowContext = null
         overlayLifecycleOwner = null
+        overlayLayoutParams = null
+        isLaunchSuppressed = false
         activeDisplayId = null
+    }
+
+    // Aliased to ensure compatibility with ForegroundService action commands
+    fun hideOverlay() {
+        suppressOverlayForLaunch()
+    }
+
+    fun suppressOverlayForLaunch() {
+        setLaunchSuppressed(true)
+    }
+
+    fun destroy() {
+        removeOverlay()
     }
 
     fun getActiveDisplayId(): Int? {
@@ -159,6 +190,36 @@ class OverlayWindowController(private val context: Context) {
 
     fun isOverlayAttached(): Boolean {
         return overlayView != null
+    }
+
+    private fun setLaunchSuppressed(suppressed: Boolean) {
+        val view = overlayView ?: return
+        val manager = overlayWindowManager ?: return
+        val params = overlayLayoutParams ?: return
+
+        if (isLaunchSuppressed == suppressed) {
+            return
+        }
+
+        val updatedFlags = if (suppressed) {
+            params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        } else {
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        }
+
+        val shouldUpdateLayout = params.flags != updatedFlags
+        params.flags = updatedFlags
+        // Keep the view attached/visible so the surface is not torn down between launches.
+        view.visibility = View.VISIBLE
+        view.alpha = if (suppressed) 0f else 1f
+        isLaunchSuppressed = suppressed
+
+        if (shouldUpdateLayout) {
+            runCatching { manager.updateViewLayout(view, params) }
+                .onFailure { error ->
+                    Log.w("OverlayWindowController", "Unable to update launch suppression layout: ${error.message}")
+                }
+        }
     }
 
     private fun createWindowContext(targetDisplay: Display?): Context {
@@ -214,4 +275,3 @@ private class OverlayViewLifecycleOwner : LifecycleOwner, SavedStateRegistryOwne
         store.clear()
     }
 }
-
