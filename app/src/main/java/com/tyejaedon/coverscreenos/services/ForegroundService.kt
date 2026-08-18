@@ -34,18 +34,18 @@ class ForegroundService : Service() {
     companion object {
         private const val LOG_TAG = "CoverForegroundService"
         private const val DISPLAY_CHANGE_DEBOUNCE_MS = 450L
-        private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 150L
-        private const val APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS = 450L
+        private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 60L
+        private const val APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS = 120L
         private const val APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS = 2_500L
-        private const val APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT = 2
+        private const val APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT = 1
         private const val APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS = 45_000L
-        private const val APP_LAUNCH_RESUME_MIN_LAUNCHER_MS = 1_500L
-        private const val TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS = 700L
-        private const val TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS = 3_500L
-        private const val TRANSIENT_EXIT_PATTERN_WINDOW_MS = 6_000L
+        private const val APP_LAUNCH_RESUME_MIN_LAUNCHER_MS = 300L
+        private const val TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS = 120L
+        private const val TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS = 700L
+        private const val TRANSIENT_EXIT_PATTERN_WINDOW_MS = 1_800L
         private const val INCOMING_CALL_SUPPRESSION_MAX_MS = 7_200_000L
         private const val INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS = 5_000L
-        private const val OVERLAY_RECLAIM_MIN_INTERVAL_MS = 500L
+        private const val OVERLAY_RECLAIM_MIN_INTERVAL_MS = 80L
         private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
 
         private val TRANSIENT_SYSTEM_UI_PREFIXES = arrayOf(
