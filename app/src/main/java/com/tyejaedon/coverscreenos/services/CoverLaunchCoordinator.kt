@@ -6,8 +6,8 @@ import android.util.Log
 /**
  * Keeps overlay suppression and app launch dispatch in a single synchronous call path.
  *
- * In debug builds a non-main-thread call throws immediately so threading bugs surface early.
- * In release builds, non-main-thread calls fail safely and trigger rollback when needed.
+ * Prevents race conditions during rapid consecutive taps and guarantees that
+ * the foreground service is always notified of a launch's success or failure.
  */
 internal class CoverLaunchCoordinator(
     private val onBeginLaunch: (String) -> Boolean,
@@ -21,15 +21,54 @@ internal class CoverLaunchCoordinator(
         private const val LOG_TAG = "CoverLaunchCoordinator"
     }
 
+    // Tracks the current launch to prevent rapid-fire double-tap race conditions.
+    private var activeLaunchPackage: String? = null
+
+    /**
+     * Modern, safe wrapper for launching apps. Guarantees that the launch lifecycle
+     * is properly completed and cleaned up, even if the execution block throws an exception.
+     */
+    inline fun launchWithCoordination(packageName: String, launchAction: () -> Boolean): Boolean {
+        val ready = beginLaunch(packageName)
+        if (!ready) return false
+
+        var dispatched = false
+        return try {
+            dispatched = launchAction()
+            dispatched
+        } finally {
+            completeLaunch(packageName, dispatched)
+        }
+    }
+
     fun beginLaunch(packageName: String): Boolean {
         if (!isMainThreadGuarded("beginLaunch", packageName)) {
             return false
         }
-        return onBeginLaunch(packageName)
+
+        if (activeLaunchPackage != null) {
+            logWarning("Launch rejected for $packageName; already launching $activeLaunchPackage")
+            return false
+        }
+
+        val canLaunch = onBeginLaunch(packageName)
+        if (canLaunch) {
+            activeLaunchPackage = packageName
+        }
+        return canLaunch
     }
 
     fun completeLaunch(packageName: String, launchDispatched: Boolean) {
         val calledFromMainThread = isMainThreadGuarded("completeLaunch", packageName)
+
+        // Ensure we are completing the package that was actually tracked
+        if (activeLaunchPackage != packageName) {
+            logWarning("Attempted to complete launch for $packageName but active launch is $activeLaunchPackage")
+        }
+
+        // Always clear the lock so the system can recover for the next interaction
+        activeLaunchPackage = null
+
         if (!calledFromMainThread) {
             // If caller violates threading in release, recover overlay state conservatively.
             onLaunchFailed(packageName)
@@ -44,9 +83,7 @@ internal class CoverLaunchCoordinator(
     }
 
     private fun isMainThreadGuarded(actionName: String, packageName: String): Boolean {
-        if (isMainThread()) {
-            return true
-        }
+        if (isMainThread()) return true
 
         val message = "Cover launch coordinator action=$actionName package=$packageName must run on main thread"
         if (debugThrowOnThreadViolation) {
@@ -58,8 +95,6 @@ internal class CoverLaunchCoordinator(
     }
 
     private fun logWarning(message: String) {
-        runCatching {
-            Log.w(LOG_TAG, message)
-        }
+        Log.w(LOG_TAG, message)
     }
 }

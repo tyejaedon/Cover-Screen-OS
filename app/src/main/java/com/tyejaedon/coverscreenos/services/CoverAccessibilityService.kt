@@ -10,9 +10,23 @@ import android.view.accessibility.AccessibilityEvent
 @SuppressLint("AccessibilityPolicy")
 class CoverAccessibilityService : AccessibilityService() {
     companion object {
+        private const val LOG_TAG = "CoverAccessibility"
+        private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
         private const val GESTURE_DEBOUNCE_MS = 550L
         private const val ACTION_THROTTLE_MS = 300L
         private const val FOREGROUND_EVENT_REFRESH_MIN_INTERVAL_MS = 250L
+        private val OVERLAY_RECLAIM_PACKAGE_PREFIXES = arrayOf(
+            "com.sec.android.app.launcher",
+            "com.samsung.android.app.aodservice",
+            "com.android.systemui",
+            "com.samsung.systemui"
+        )
+        private val INCOMING_CALL_PACKAGE_PREFIXES = arrayOf(
+            "com.samsung.android.incallui",
+            "com.android.incallui",
+            "com.google.android.dialer",
+            "com.android.server.telecom"
+        )
 
         @Volatile
         private var latestForegroundPackage: String? = null
@@ -29,6 +43,12 @@ class CoverAccessibilityService : AccessibilityService() {
         }
     }
 
+    private inline fun logDebug(message: () -> String) {
+        if (Log.isLoggable(LOG_TAG, Log.DEBUG)) {
+            Log.d(LOG_TAG, message())
+        }
+    }
+
     private var lastWindowPackage: String? = null
     private var lastGestureId: Int? = null
     private var lastGestureAtMs: Long = 0L
@@ -36,7 +56,7 @@ class CoverAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.d("CoverAccessibility", "Service connected")
+        logDebug { "Service connected" }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -63,7 +83,16 @@ class CoverAccessibilityService : AccessibilityService() {
 
         if (foregroundPackage != lastWindowPackage) {
             lastWindowPackage = foregroundPackage
-            Log.d("CoverAccessibility", "Window changed: $foregroundPackage")
+            logDebug { "Window changed: $foregroundPackage" }
+
+            if (shouldAllowIncomingCallSurface(foregroundPackage)) {
+                ForegroundService.requestIncomingCallPassthrough(foregroundPackage)
+            } else if (shouldRequestOverlayReclaim(foregroundPackage)) {
+                if (Log.isLoggable(OVERLAY_RECLAIM_LOG_TAG, Log.DEBUG)) {
+                    Log.d(OVERLAY_RECLAIM_LOG_TAG, "trigger from accessibility package=$foregroundPackage")
+                }
+                ForegroundService.requestOverlayReclaim(reason = foregroundPackage)
+            }
         }
     }
 
@@ -83,7 +112,7 @@ class CoverAccessibilityService : AccessibilityService() {
         if (shouldThrottleGlobalAction()) return false
 
         val result = performGlobalAction(globalAction)
-        Log.d("CoverAccessibility", "Gesture=$gestureId action=$globalAction result=$result")
+        logDebug { "Gesture=$gestureId action=$globalAction result=$result" }
         return result
     }
 
@@ -93,7 +122,7 @@ class CoverAccessibilityService : AccessibilityService() {
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (shouldThrottleGlobalAction()) return true
             val result = performGlobalAction(GLOBAL_ACTION_BACK)
-            Log.d("CoverAccessibility", "Back key intercepted result=$result")
+            logDebug { "Back key intercepted result=$result" }
             return result
         }
 
@@ -101,7 +130,7 @@ class CoverAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
-        Log.d("CoverAccessibility", "Accessibility service interrupted")
+        logDebug { "Accessibility service interrupted" }
     }
 
     private fun shouldDebounceGesture(gestureId: Int): Boolean {
@@ -110,7 +139,7 @@ class CoverAccessibilityService : AccessibilityService() {
         lastGestureId = gestureId
         lastGestureAtMs = now
         if (isRepeated) {
-            Log.d("CoverAccessibility", "Gesture debounced id=$gestureId")
+            logDebug { "Gesture debounced id=$gestureId" }
         }
         return isRepeated
     }
@@ -121,9 +150,21 @@ class CoverAccessibilityService : AccessibilityService() {
         if (!throttled) {
             lastActionAtMs = now
         } else {
-            Log.d("CoverAccessibility", "Global action throttled")
+            logDebug { "Global action throttled" }
         }
         return throttled
+    }
+
+    private fun shouldRequestOverlayReclaim(packageName: String): Boolean {
+        return OVERLAY_RECLAIM_PACKAGE_PREFIXES.any { prefix ->
+            packageName.startsWith(prefix)
+        }
+    }
+
+    private fun shouldAllowIncomingCallSurface(packageName: String): Boolean {
+        return INCOMING_CALL_PACKAGE_PREFIXES.any { prefix ->
+            packageName.startsWith(prefix)
+        }
     }
 }
 

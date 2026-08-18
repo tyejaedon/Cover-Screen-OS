@@ -92,6 +92,11 @@ fun DeploymentStatusScreen(modifier: Modifier = Modifier) {
     ) {
         refreshTicker += 1
     }
+    val openBatteryOptimizationSettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        refreshTicker += 1
+    }
 
     var overlayReady by remember(refreshTicker) { mutableStateOf(AppPermissionHelper.canDrawOverlays(context)) }
     var accessibilityReady by remember(refreshTicker) {
@@ -103,6 +108,9 @@ fun DeploymentStatusScreen(modifier: Modifier = Modifier) {
     var notificationListenerReady by remember(refreshTicker) {
         mutableStateOf(AppPermissionHelper.isNotificationListenerEnabled(context))
     }
+    var batteryOptimizationReady by remember(refreshTicker) {
+        mutableStateOf(AppPermissionHelper.isBatteryOptimizationDisabled(context))
+    }
     var serviceRunning by remember(refreshTicker) {
         mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning(context))
     }
@@ -112,6 +120,7 @@ fun DeploymentStatusScreen(modifier: Modifier = Modifier) {
         overlayReady = AppPermissionHelper.canDrawOverlays(context)
         accessibilityReady = AppPermissionHelper.isAccessibilityServiceEnabled(context)
         notificationListenerReady = AppPermissionHelper.isNotificationListenerEnabled(context)
+        batteryOptimizationReady = AppPermissionHelper.isBatteryOptimizationDisabled(context)
         serviceRunning = ForegroundServiceHelper.isForegroundServiceRunning(context)
     }
 
@@ -168,6 +177,7 @@ fun DeploymentStatusScreen(modifier: Modifier = Modifier) {
                     overlayReady = overlayReady,
                     accessibilityReady = accessibilityReady,
                     notificationListenerReady = notificationListenerReady,
+                    batteryOptimizationReady = batteryOptimizationReady,
                     serviceRunning = serviceRunning,
                     onEnableNotifications = {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -185,6 +195,12 @@ fun DeploymentStatusScreen(modifier: Modifier = Modifier) {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         openNotificationListenerSettingsLauncher.launch(
                             AppPermissionHelper.createNotificationListenerSettingsIntent()
+                        )
+                    },
+                    onDisableBatteryOptimization = {
+                        hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        openBatteryOptimizationSettingsLauncher.launch(
+                            AppPermissionHelper.createBatteryOptimizationSettingsIntent(context)
                         )
                     },
                     onStartService = {
@@ -236,11 +252,13 @@ private fun DeploymentReadinessCard(
     overlayReady: Boolean,
     accessibilityReady: Boolean,
     notificationListenerReady: Boolean,
+    batteryOptimizationReady: Boolean,
     serviceRunning: Boolean,
     onEnableNotifications: () -> Unit,
     onEnableOverlay: () -> Unit,
     onEnableAccessibility: () -> Unit,
     onEnableNotificationListener: () -> Unit,
+    onDisableBatteryOptimization: () -> Unit,
     onStartService: () -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
@@ -250,9 +268,10 @@ private fun DeploymentReadinessCard(
         overlayReady,
         accessibilityReady,
         notificationListenerReady,
+        batteryOptimizationReady,
         serviceRunning
     ).count { it }
-    val isFullyReady = checksReadyCount == 5
+    val isFullyReady = checksReadyCount == 6
     val statusLabel = when {
         isFullyReady -> "Ready"
         checksReadyCount >= 2 -> "Action needed"
@@ -264,6 +283,7 @@ private fun DeploymentReadinessCard(
         !overlayReady -> "Enable Appear on top to allow the launcher overlay to render."
         !accessibilityReady -> "Enable Accessibility service so navigation events can be handled."
         !notificationListenerReady -> "Enable notification listener so cover notification controls can work."
+        !batteryOptimizationReady -> "Disable battery optimization so OEM power management does not evict launcher runtime."
         !serviceRunning -> "Start the foreground service to activate launcher runtime."
         else -> "All deployment checks are passing. Your launcher is active."
     }
@@ -295,7 +315,7 @@ private fun DeploymentReadinessCard(
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
                     )
                     Text(
-                        text = "$checksReadyCount of 5 checks ready",
+                        text = "$checksReadyCount of 6 checks ready",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -342,6 +362,13 @@ private fun DeploymentReadinessCard(
                     onAction = onEnableNotificationListener
                 )
                 DeploymentCheckRow(
+                    title = "Battery optimization",
+                    details = "Prevents OEM battery policies from reclaiming launcher runtime.",
+                    ready = batteryOptimizationReady,
+                    actionLabel = "Disable",
+                    onAction = onDisableBatteryOptimization
+                )
+                DeploymentCheckRow(
                     title = "Foreground service",
                     details = "Keeps launcher runtime active in the background.",
                     ready = serviceRunning,
@@ -362,6 +389,7 @@ private fun DeploymentReadinessCard(
                             !overlayReady -> onEnableOverlay()
                             !accessibilityReady -> onEnableAccessibility()
                             !notificationListenerReady -> onEnableNotificationListener()
+                            !batteryOptimizationReady -> onDisableBatteryOptimization()
                             !serviceRunning -> onStartService()
                             else -> onRefresh()
                         }
@@ -373,6 +401,7 @@ private fun DeploymentReadinessCard(
                             !overlayReady -> "Enable overlay"
                             !accessibilityReady -> "Enable accessibility"
                             !notificationListenerReady -> "Enable notif listener"
+                            !batteryOptimizationReady -> "Disable battery optimization"
                             !serviceRunning -> "Start launcher"
                             else -> "All checks ready"
                         },

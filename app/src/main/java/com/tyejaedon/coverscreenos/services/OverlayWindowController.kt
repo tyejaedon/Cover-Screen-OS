@@ -1,6 +1,7 @@
 package com.tyejaedon.coverscreenos.services
 
 import android.content.Context
+import android.content.Context.WINDOW_SERVICE
 import android.hardware.display.DisplayManager
 import android.graphics.PixelFormat
 import android.os.Bundle
@@ -9,7 +10,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.Display
 import android.view.WindowManager
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -18,6 +19,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
@@ -25,6 +27,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
+import com.tyejaedon.coverscreenos.receivers.LockStatusReceiver
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.ui.CoverAppGridOverlay
 import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
@@ -33,12 +36,12 @@ import kotlinx.coroutines.flow.StateFlow
 
 internal class OverlayWindowController(
     private val context: Context,
+    private val appRepository: PackageManagerAppScannerRepository,
+    private val launcherSettingsStore: LauncherSettingsStore,
     private val launchCoordinator: CoverLaunchCoordinator? = null
 ) {
 
-    private val appRepository = PackageManagerAppScannerRepository(context.applicationContext)
-    private val launcherSettingsStore = LauncherSettingsStore(context.applicationContext)
-    private var overlayView: View? = null
+    private var composeView: ComposeView? = null
     private var overlayWindowManager: WindowManager? = null
     private var overlayWindowContext: Context? = null
     private var activeDisplayId: Int? = null
@@ -52,52 +55,57 @@ internal class OverlayWindowController(
         deviceLockState: StateFlow<Boolean>? = null
     ): Boolean {
         val desiredDisplayId = targetDisplay?.displayId ?: Display.DEFAULT_DISPLAY
-        if (overlayView != null && !forceReattach && activeDisplayId == desiredDisplayId) {
+
+        if (composeView != null && !forceReattach && activeDisplayId == desiredDisplayId) {
             setLaunchSuppressed(false)
             return true
         }
-        if (overlayView != null) {
+
+        if (composeView != null) {
             removeOverlay()
         }
 
-        val preparedOverlay = runCatching {
-            val windowContext = createWindowContext(targetDisplay)
-            val windowManager = windowContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        try {
+            overlayWindowContext = createWindowContext(targetDisplay)
+            overlayWindowManager = overlayWindowContext?.getSystemService(WINDOW_SERVICE) as WindowManager
 
-            val lifecycleOwner = OverlayViewLifecycleOwner()
-            val composeView = ComposeView(windowContext).apply {
+            overlayLifecycleOwner = OverlayViewLifecycleOwner().apply {
+                start() // Initialize the custom lifecycle
+            }
+
+            composeView = ComposeView(overlayWindowContext!!).apply {
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setViewTreeLifecycleOwner(lifecycleOwner)
-                setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+                setViewTreeLifecycleOwner(overlayLifecycleOwner)
+                setViewTreeSavedStateRegistryOwner(overlayLifecycleOwner)
                 setContent {
                     val composeContext = LocalContext.current
-                    val isDeviceLocked = deviceLockState?.collectAsState()?.value ?: false
-                    val launcherSettings = launcherSettingsStore.settings
-                        .collectAsState(initial = LauncherSettings())
-                        .value
+                    val isDeviceLocked = deviceLockState
+                        ?.collectAsStateWithLifecycle(initialValue = false)
+                        ?.value
+                        ?: false
+                    val launcherSettings by launcherSettingsStore.settings
+                        .collectAsStateWithLifecycle(initialValue = LauncherSettings())
 
                     CoverOSTheme(themePreference = launcherSettings.themePreference) {
                         CoverAppGridOverlay(
                             repository = appRepository,
                             onAppSelected = { appModel ->
+                                if (LockStatusReceiver.currentLockStatus(composeContext)) {
+                                    Log.d("OverlayWindowController", "Blocked app tap while locked package=${appModel.packageName}")
+                                    return@CoverAppGridOverlay
+                                }
+
                                 val packageName = appModel.packageName
                                 val coordinator = launchCoordinator
                                 val readyToLaunch = coordinator?.beginLaunch(packageName) ?: true
+
                                 if (!readyToLaunch) {
-                                    Log.w(
-                                        "OverlayWindowController",
-                                        "Launch coordination rejected package=$packageName"
-                                    )
+                                    Log.w("OverlayWindowController", "Launch coordination rejected package=$packageName")
                                     return@CoverAppGridOverlay
                                 }
 
                                 val launched = CoverAppLauncher.launchAppOnCoverScreen(composeContext, appModel)
-                                if (coordinator != null) {
-                                    coordinator.completeLaunch(
-                                        packageName = packageName,
-                                        launchDispatched = launched
-                                    )
-                                }
+                                coordinator?.completeLaunch(packageName = packageName, launchDispatched = launched)
                             },
                             isDeviceLocked = isDeviceLocked,
                             dockPackageSlots = launcherSettings.dockPackages,
@@ -111,67 +119,53 @@ internal class OverlayWindowController(
                 }
             }
 
-            Triple(windowContext, windowManager, composeView) to lifecycleOwner
-        }.getOrElse { error ->
-            Log.w("OverlayWindowController", "Overlay preparation failed: ${error.message}")
-            return false
-        }
+            overlayLayoutParams = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
 
-        val (overlayParts, lifecycleOwner) = preparedOverlay
-        val (windowContext, windowManager, composeView) = overlayParts
-
-        val layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-        }
-
-        val added = runCatching {
-            windowManager.addView(composeView, layoutParams)
-            overlayView = composeView
-            overlayWindowManager = windowManager
-            overlayWindowContext = windowContext
-            overlayLifecycleOwner = lifecycleOwner
-            overlayLayoutParams = layoutParams
-            activeDisplayId = runCatching { windowContext.display.displayId }.getOrNull()
-                ?: targetDisplay?.displayId
-                        ?: Display.DEFAULT_DISPLAY
+            overlayWindowManager?.addView(composeView, overlayLayoutParams)
+            activeDisplayId = overlayWindowContext?.display?.displayId ?: targetDisplay?.displayId ?: Display.DEFAULT_DISPLAY
             setLaunchSuppressed(false)
-            true
-        }.getOrDefault(false)
+            return true
 
-        if (!added) {
-            overlayView = null
+        } catch (e: WindowManager.BadTokenException) {
+            Log.e("OverlayWindowController", "Invalid window token for overlay attachment", e)
+        } catch (e: Exception) {
+            Log.e("OverlayWindowController", "Failed to attach overlay window", e)
+        }
+
+        // Cleanup on failure
+        removeOverlay()
+        return false
+    }
+
+    fun removeOverlay() {
+        try {
+            composeView?.let { view ->
+                view.disposeComposition() // Force instant tear-down of the Compose tree
+                overlayWindowManager?.removeView(view)
+            }
+        } catch (e: IllegalArgumentException) {
+            Log.w("OverlayWindowController", "View was not attached to window manager", e)
+        } finally {
+            overlayLifecycleOwner?.destroy()
+            composeView = null
             overlayWindowManager = null
             overlayWindowContext = null
             overlayLifecycleOwner = null
             overlayLayoutParams = null
             activeDisplayId = null
+            isLaunchSuppressed = false
         }
-
-        return added
     }
 
-    fun removeOverlay() {
-        val view = overlayView ?: return
-        runCatching { overlayWindowManager?.removeView(view) }
-        overlayLifecycleOwner?.onDestroy()
-        overlayView = null
-        overlayWindowManager = null
-        overlayWindowContext = null
-        overlayLifecycleOwner = null
-        overlayLayoutParams = null
-        isLaunchSuppressed = false
-        activeDisplayId = null
-    }
-
-    // Aliased to ensure compatibility with ForegroundService action commands
     fun hideOverlay() {
         suppressOverlayForLaunch()
     }
@@ -184,22 +178,16 @@ internal class OverlayWindowController(
         removeOverlay()
     }
 
-    fun getActiveDisplayId(): Int? {
-        return activeDisplayId
-    }
+    fun getActiveDisplayId(): Int? = activeDisplayId
 
-    fun isOverlayAttached(): Boolean {
-        return overlayView != null
-    }
+    fun isOverlayAttached(): Boolean = composeView != null
 
     private fun setLaunchSuppressed(suppressed: Boolean) {
-        val view = overlayView ?: return
+        val view = composeView ?: return
         val manager = overlayWindowManager ?: return
         val params = overlayLayoutParams ?: return
 
-        if (isLaunchSuppressed == suppressed) {
-            return
-        }
+        if (isLaunchSuppressed == suppressed) return
 
         val updatedFlags = if (suppressed) {
             params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
@@ -209,16 +197,24 @@ internal class OverlayWindowController(
 
         val shouldUpdateLayout = params.flags != updatedFlags
         params.flags = updatedFlags
-        // Keep the view attached/visible so the surface is not torn down between launches.
+
         view.visibility = View.VISIBLE
         view.alpha = if (suppressed) 0f else 1f
         isLaunchSuppressed = suppressed
 
+        // Optimize performance by halting Compose background recompositions while the view is suppressed
+        if (suppressed) {
+            overlayLifecycleOwner?.pause()
+        } else {
+            overlayLifecycleOwner?.resume()
+        }
+
         if (shouldUpdateLayout) {
-            runCatching { manager.updateViewLayout(view, params) }
-                .onFailure { error ->
-                    Log.w("OverlayWindowController", "Unable to update launch suppression layout: ${error.message}")
-                }
+            try {
+                manager.updateViewLayout(view, params)
+            } catch (e: Exception) {
+                Log.w("OverlayWindowController", "Unable to update launch suppression layout: ${e.message}")
+            }
         }
     }
 
@@ -235,7 +231,6 @@ internal class OverlayWindowController(
                 Bundle()
             )
         }.getOrElse {
-            // Some OEM builds reject createWindowContext from service-derived contexts.
             Log.w("OverlayWindowController", "Falling back to display context: ${it.message}")
             displayContext
         }
@@ -248,6 +243,9 @@ internal class OverlayWindowController(
     }
 }
 
+/**
+ * A dynamic LifecycleOwner that allows pausing Compose recomposition when the overlay is visually suppressed.
+ */
 private class OverlayViewLifecycleOwner : LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
     private val registry = LifecycleRegistry(this)
     private val savedStateController = SavedStateRegistryController.create(this)
@@ -256,21 +254,29 @@ private class OverlayViewLifecycleOwner : LifecycleOwner, SavedStateRegistryOwne
     init {
         savedStateController.performAttach()
         savedStateController.performRestore(null)
+    }
+
+    override val lifecycle: Lifecycle get() = registry
+    override val savedStateRegistry: SavedStateRegistry get() = savedStateController.savedStateRegistry
+    override val viewModelStore: ViewModelStore get() = store
+
+    fun start() {
         registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
     }
 
-    override val lifecycle: Lifecycle
-        get() = registry
+    fun pause() {
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+    }
 
-    override val savedStateRegistry: SavedStateRegistry
-        get() = savedStateController.savedStateRegistry
+    fun resume() {
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    }
 
-    override val viewModelStore: ViewModelStore
-        get() = store
-
-    fun onDestroy() {
+    fun destroy() {
         registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
     }

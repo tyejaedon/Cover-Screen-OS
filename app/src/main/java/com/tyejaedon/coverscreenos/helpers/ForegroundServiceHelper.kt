@@ -19,7 +19,8 @@ object ForegroundServiceHelper {
         return hasNotificationPermission(context) &&
             AppPermissionHelper.canDrawOverlays(context) &&
             AppPermissionHelper.isAccessibilityServiceEnabled(context) &&
-            AppPermissionHelper.isNotificationListenerEnabled(context)
+            AppPermissionHelper.isNotificationListenerEnabled(context) &&
+            AppPermissionHelper.isBatteryOptimizationDisabled(context)
     }
 
     // Starts the foreground service using the canonical start intent.

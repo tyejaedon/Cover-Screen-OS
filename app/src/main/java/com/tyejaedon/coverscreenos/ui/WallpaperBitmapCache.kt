@@ -4,39 +4,15 @@ import android.graphics.Bitmap
 import android.util.LruCache
 import kotlin.math.max
 
-internal object WallpaperBitmapCache {
-
-    private val bitmapCache by lazy {
-        val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt().coerceAtLeast(2048)
-        val cacheSizeKb = (maxMemoryKb / 16).coerceAtLeast(1024)
-        object : LruCache<String, Bitmap>(cacheSizeKb) {
-            override fun sizeOf(key: String, value: Bitmap): Int {
-                return max(1, value.byteCount / 1024)
-            }
-        }
+ object WallpaperBitmapCache {
+    private val cache = object : LruCache<String, Bitmap>(24 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
     }
 
-    fun buildKey(
-        uri: String,
-        requestedWidthPx: Int,
-        requestedHeightPx: Int,
-        versionToken: String? = null
-    ): String {
-        return if (versionToken.isNullOrBlank()) {
-            "$uri|$requestedWidthPx|$requestedHeightPx"
-        } else {
-            "$uri|$versionToken|$requestedWidthPx|$requestedHeightPx"
-        }
+    fun buildKey(uri: String, versionToken: String?, requestedWidthPx: Int, requestedHeightPx: Int): String {
+        return "$uri|$versionToken|${requestedWidthPx}x$requestedHeightPx"
     }
 
-    fun get(cacheKey: String): Bitmap? = synchronized(bitmapCache) {
-        bitmapCache.get(cacheKey)
-    }
-
-    fun put(cacheKey: String, bitmap: Bitmap) {
-        synchronized(bitmapCache) {
-            bitmapCache.put(cacheKey, bitmap)
-        }
-    }
+    fun get(key: String): Bitmap? = synchronized(cache) { cache.get(key) }
+    fun put(key: String, bitmap: Bitmap) { synchronized(cache) { cache.put(key, bitmap) } }
 }
-
