@@ -1,6 +1,5 @@
 package com.tyejaedon.coverscreenos.helpers
 
-import android.app.ActivityManager
 import android.content.Context
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -40,13 +39,8 @@ object ForegroundServiceHelper {
         appContext.startService(ForegroundService.createStopIntent(appContext))
     }
 
-    // Provides a lightweight runtime check for service status to drive UI indicators.
-    @Suppress("DEPRECATION")
-    fun isForegroundServiceRunning(context: Context): Boolean {
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        return activityManager.getRunningServices(Int.MAX_VALUE).any {
-            it.service.className == ForegroundService::class.java.name
-        }
+    fun isForegroundServiceRunning(): Boolean {
+        return ForegroundService.isServiceRuntimeActive()
     }
 }
 

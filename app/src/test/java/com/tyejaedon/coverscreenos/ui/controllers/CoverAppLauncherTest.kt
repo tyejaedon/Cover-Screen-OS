@@ -14,6 +14,7 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
+import io.mockk.verify
 import com.tyejaedon.coverscreenos.services.ForegroundService
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -47,11 +48,15 @@ class CoverAppLauncherTest {
 
         mockkObject(ForegroundService.Companion)
         every { ForegroundService.createHideOverlayIntent(any(), any()) } returns mockk(relaxed = true)
+
+        mockkObject(UnlockBridgeActivity.Companion)
+        every { UnlockBridgeActivity.startUnlockRequest(any(), any(), any()) } returns true
     }
 
     @After
     fun teardown() {
         unmockkObject(ForegroundService.Companion)
+        unmockkObject(UnlockBridgeActivity.Companion)
     }
 
     @Test
@@ -87,10 +92,14 @@ class CoverAppLauncherTest {
             context = context,
             packageName = PACKAGE_NAME,
             displayId = EXPLICIT_DISPLAY_ID,
-            activityLaunchExecutor = RecordingLaunchExecutor()
+            activityLaunchExecutor = RecordingLaunchExecutor(),
+            skipUnlockChallenge = false
         )
 
         assertFalse(launched)
+        verify(exactly = 1) {
+            UnlockBridgeActivity.startUnlockRequest(context, PACKAGE_NAME, EXPLICIT_DISPLAY_ID)
+        }
     }
 
     @Test
@@ -176,10 +185,13 @@ class CoverAppLauncherTest {
         val launchIntent = mockk<Intent>()
         val launchExecutor = RecordingLaunchExecutor()
         val displayManager = mockk<DisplayManager>()
+        val contextDisplay = mockk<Display>()
         val defaultDisplay = mockk<Display>()
 
         stubLaunchableActivity(launchIntent = launchIntent)
         every { launchIntent.addFlags(any()) } returns launchIntent
+        every { context.display } returns contextDisplay
+        every { contextDisplay.displayId } returns Display.INVALID_DISPLAY
         every { context.getSystemService(Context.DISPLAY_SERVICE) } returns displayManager
         every { displayManager.getDisplay(Display.DEFAULT_DISPLAY) } returns defaultDisplay
         every { defaultDisplay.displayId } returns DEFAULT_DISPLAY_ID
@@ -239,15 +251,9 @@ class CoverAppLauncherTest {
         launchIntent: Intent,
         activityInfo: ActivityInfo = createActivityInfo(enabled = true, exported = true)
     ) {
-        val launchComponent = mockk<ComponentName>(relaxed = true)
         every { packageManager.getLaunchIntentForPackage(PACKAGE_NAME) } returns launchIntent
-        every { launchIntent.component } returns launchComponent
-        every { packageManager.getActivityInfo(any<ComponentName>(), 0) } returns activityInfo
         every {
-            packageManager.getActivityInfo(
-                any<ComponentName>(),
-                any<PackageManager.ComponentInfoFlags>()
-            )
+            launchIntent.resolveActivityInfo(packageManager, PackageManager.MATCH_DEFAULT_ONLY)
         } returns activityInfo
     }
 

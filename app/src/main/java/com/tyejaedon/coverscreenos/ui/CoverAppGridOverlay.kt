@@ -15,7 +15,6 @@ import android.graphics.RectF
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
-import android.os.Build
 import android.os.BatteryManager
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -91,6 +90,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxDefaults
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberSwipeToDismissBoxState
@@ -904,15 +904,10 @@ private fun openMediaApplicationFromOverlay(
         addCategory(Intent.CATEGORY_APP_MUSIC)
     }
     val fallbackPackage = runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.resolveActivity(
-                categoryMusicIntent,
-                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
-            )?.activityInfo?.packageName
-        } else {
-            @Suppress("DEPRECATION")
-            packageManager.resolveActivity(categoryMusicIntent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
-        }
+        packageManager.resolveActivity(
+            categoryMusicIntent,
+            PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+        )?.activityInfo?.packageName
     }.getOrNull()
 
     return fallbackPackage?.let { packageName ->
@@ -1719,15 +1714,15 @@ private fun NotificationGroupRow(
     onDismiss: () -> Unit
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { dismissValue ->
-            if (dismissValue == SwipeToDismissBoxValue.StartToEnd) {
-                onDismiss()
-                true
-            } else {
-                false
-            }
-        }
+        initialValue = SwipeToDismissBoxValue.Settled,
+        positionalThreshold = SwipeToDismissBoxDefaults.positionalThreshold
     )
+
+    LaunchedEffect(dismissState.currentValue) {
+        if (dismissState.currentValue == SwipeToDismissBoxValue.StartToEnd) {
+            onDismiss()
+        }
+    }
 
     SwipeToDismissBox(
         state = dismissState,
@@ -1867,7 +1862,7 @@ private fun AppGridPageTile(
             } else {
                 AppGridTile(
                     app = app,
-                    enabled = !isDeviceLocked,
+                    enabled = true,
                     onClick = { onAppSelected(app) }
                 )
             }
@@ -2048,7 +2043,7 @@ private fun CoverDockRow(
     ) {
         repeat(DOCK_SLOT_COUNT) { index ->
             val app = dockSlots.getOrNull(index)
-            val isSlotEnabled = app != null && !isDeviceLocked
+            val isSlotEnabled = app != null
 
             Box(
                 modifier = Modifier
@@ -2413,20 +2408,10 @@ private fun calculateImageDecoderSampleSize(
 
 private fun resolvePackageIconVersionToken(packageManager: PackageManager, packageName: String): String? {
     val packageInfo = runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
-        } else {
-            @Suppress("DEPRECATION")
-            packageManager.getPackageInfo(packageName, 0)
-        }
+        packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
     }.getOrNull() ?: return null
 
-    val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-        packageInfo.longVersionCode
-    } else {
-        @Suppress("DEPRECATION")
-        packageInfo.versionCode.toLong()
-    }
+    val versionCode = packageInfo.longVersionCode
     return "$packageName|$versionCode|${packageInfo.lastUpdateTime}"
 }
 

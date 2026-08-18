@@ -66,7 +66,7 @@ fun PermissionScreen(
         mutableStateOf(AppPermissionHelper.hasGalleryMediaPermissions(context))
     }
     var isForegroundServiceRunning by remember {
-        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning(context))
+        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning())
     }
     var hasTriggeredGrantedCallback by remember { mutableStateOf(false) }
 
@@ -77,7 +77,7 @@ fun PermissionScreen(
         hasNotificationListenerPermission = AppPermissionHelper.isNotificationListenerEnabled(context)
         hasBatteryOptimizationExemption = AppPermissionHelper.isBatteryOptimizationDisabled(context)
         hasGalleryMediaPermission = AppPermissionHelper.hasGalleryMediaPermissions(context)
-        isForegroundServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning(context)
+        isForegroundServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning()
     }
 
     val requestNotificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -125,8 +125,7 @@ fun PermissionScreen(
     val allPermissionsGranted = hasNotificationPermission &&
         hasOverlayPermission &&
         hasAccessibilityPermission &&
-        hasNotificationListenerPermission &&
-        hasBatteryOptimizationExemption
+        hasNotificationListenerPermission
 
     LaunchedEffect(allPermissionsGranted) {
         if (allPermissionsGranted && !hasTriggeredGrantedCallback) {
@@ -185,9 +184,9 @@ fun PermissionScreen(
         ),
         PermissionRequirementUiModel(
             title = "Battery optimization",
-            details = "Required: disable optimization so OEM power management does not reclaim launcher runtime.",
+            details = "Recommended: exclude this app from battery optimization to improve launcher reliability.",
             granted = hasBatteryOptimizationExemption,
-            actionLabel = "Disable battery optimization",
+            actionLabel = "Open battery optimization settings",
             icon = Icons.Filled.BatterySaver,
             onAction = {
                 openBatteryOptimizationLauncher.launch(
@@ -243,10 +242,10 @@ fun PermissionScreen(
             }
 
             PermissionRequirementCard(
-                title = "Gallery access (optional)",
-                details = "Optional: grant this if your OEM picker requires storage permission for wallpaper imports.",
+                title = "Selected photos access (optional)",
+                details = "Optional: grant limited selected-photos access if your OEM picker needs it for wallpaper imports.",
                 granted = hasGalleryMediaPermission,
-                actionLabel = "Grant gallery access",
+                actionLabel = "Grant selected photos access",
                 icon = Icons.Filled.PhotoLibrary,
                 onAction = {
                     requestGalleryMediaPermissionLauncher.launch(

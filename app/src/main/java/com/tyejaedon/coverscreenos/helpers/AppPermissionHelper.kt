@@ -19,7 +19,7 @@ object AppPermissionHelper {
     private const val ENABLED_NOTIFICATION_LISTENERS_KEY = "enabled_notification_listeners"
 
     private val galleryMediaPermissions = arrayOf(
-        Manifest.permission.READ_MEDIA_IMAGES
+        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
     )
 
     fun hasNotificationPermission(context: Context): Boolean {
@@ -105,7 +105,7 @@ object AppPermissionHelper {
     }
 
     fun createBatteryOptimizationSettingsIntent(context: Context): Intent {
-        return Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+        return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
             data = "package:${context.packageName}".toUri()
         }
     }

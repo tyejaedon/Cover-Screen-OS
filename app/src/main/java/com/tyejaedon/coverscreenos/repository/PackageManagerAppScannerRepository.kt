@@ -3,7 +3,6 @@ package com.tyejaedon.coverscreenos.repository
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.Intent
-import android.os.Build
 import android.os.SystemClock
 import com.tyejaedon.coverscreenos.models.AppModel
 import kotlinx.coroutines.CoroutineDispatcher
@@ -39,15 +38,10 @@ class PackageManagerAppScannerRepository(
         val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
         }
-        val launcherActivities = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.queryIntentActivities(
-                launcherIntent,
-                PackageManager.ResolveInfoFlags.of(0)
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            packageManager.queryIntentActivities(launcherIntent, 0)
-        }
+        val launcherActivities = packageManager.queryIntentActivities(
+            launcherIntent,
+            PackageManager.ResolveInfoFlags.of(0)
+        )
 
         val defaultIcon = packageManager.defaultActivityIcon
 
