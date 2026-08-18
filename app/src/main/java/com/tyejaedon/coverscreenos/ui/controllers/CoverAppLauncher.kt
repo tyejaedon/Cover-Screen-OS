@@ -10,7 +10,7 @@ import android.hardware.display.DisplayManager
 import android.util.Log
 import android.view.Display
 import com.tyejaedon.coverscreenos.models.AppModel
-import com.tyejaedon.coverscreenos.services.ForegroundService
+import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
 
 object CoverAppLauncher {
 

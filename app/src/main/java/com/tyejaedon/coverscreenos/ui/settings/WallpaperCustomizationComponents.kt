@@ -97,7 +97,7 @@ internal fun WallpaperCustomizationCard(
                 .coverScreenPadding(horizontal = 14.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Wallpaper", style = MaterialTheme.typography.titleMedium)
+            Text("Wallpaper customization", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Keep visuals clean: adjust readability so app labels stay clear in bright or busy photos.",
                 style = MaterialTheme.typography.bodySmall,
@@ -290,7 +290,7 @@ private fun WallpaperPreviewCard(
     val isPreviewLoading =
         isCustomWallpaperConfigured && wallpaperBitmap == null && decodeRetryAttempt < WALLPAPER_PREVIEW_RETRY_MAX_ATTEMPTS
     val previewFallbackMessage = when {
-        !isCustomWallpaperConfigured -> "Using pure black launcher background"
+        !isCustomWallpaperConfigured -> "Using a pure black home screen background"
         hasPreviewDecodeFailure -> "Wallpaper preview failed. Pick a different image."
         else -> "Loading wallpaper preview... (${decodeRetryAttempt + 1}/$WALLPAPER_PREVIEW_RETRY_MAX_ATTEMPTS)"
     }

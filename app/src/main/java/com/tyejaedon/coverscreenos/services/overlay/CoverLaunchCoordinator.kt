@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services
+package com.tyejaedon.coverscreenos.services.overlay
 
 import android.os.Looper
 import android.util.Log

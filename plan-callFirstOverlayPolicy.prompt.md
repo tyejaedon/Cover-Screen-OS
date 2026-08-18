@@ -4,10 +4,10 @@ Implement a call-priority overlay policy in CoverOS so incoming calls (phone + W
 Context:
 - Project path: `C:\Cover-Screen-OS`
 - Core files:
-  - `app/src/main/java/com/tyejaedon/coverscreenos/services/CoverAccessibilityService.kt`
-  - `app/src/main/java/com/tyejaedon/coverscreenos/services/ForegroundService.kt`
-  - `app/src/main/java/com/tyejaedon/coverscreenos/services/CoverNotificationListenerService.kt`
-  - `app/src/main/java/com/tyejaedon/coverscreenos/ui/CoverAppGridOverlay.kt`
+  - `app/src/main/java/com/tyejaedon/coverscreenos/services/overlay/CoverAccessibilityService.kt`
+  - `app/src/main/java/com/tyejaedon/coverscreenos/services/overlay/ForegroundService.kt`
+  - `app/src/main/java/com/tyejaedon/coverscreenos/services/notifications/CoverNotificationListenerService.kt`
+  - `app/src/main/java/com/tyejaedon/coverscreenos/ui/launcher/CoverAppGridOverlay.kt`
 
 Primary UX requirements:
 1. If an incoming call is detected, overlay must suppress immediately so user can answer.
@@ -18,7 +18,7 @@ Primary UX requirements:
 
 Implementation tasks:
 
-1) Introduce typed suppression reason model in `ForegroundService.kt`
+1) Introduce typed suppression reason model in `services/overlay/ForegroundService.kt`
 - Add enum/state:
   - `NONE`
   - `APP_LAUNCH`
@@ -35,10 +35,10 @@ Implementation tasks:
 
 3) Dual-source call signal model
 - Accessibility source:
-  - keep incoming-call package detection in `CoverAccessibilityService.kt`
+  - keep incoming-call package detection in `services/overlay/CoverAccessibilityService.kt`
   - continue `ForegroundService.requestIncomingCallPassthrough(packageName)`
 - Notification source:
-  - in `CoverNotificationListenerService.kt`, detect active call notifications (category/style/package heuristics)
+  - in `services/notifications/CoverNotificationListenerService.kt`, detect active call notifications (category/style/package heuristics)
   - expose call-active updates to `ForegroundService` (new API, e.g. `updateCallNotificationState(...)`)
 - Reclaim allowed only when both call signals are inactive (with grace window).
 
@@ -51,7 +51,7 @@ Implementation tasks:
 
 5) Prevent state drift
 - Remove duplicated package-prefix lists by creating one shared matcher utility/class (e.g. `CallPackageMatchers.kt`).
-- Use same matcher in `CoverAccessibilityService` and `ForegroundService`.
+- Use same matcher in `services/overlay/CoverAccessibilityService` and `services/overlay/ForegroundService`.
 
 6) Logging and observability
 - Emit structured logs with tag `CoverOverlayReclaim`:

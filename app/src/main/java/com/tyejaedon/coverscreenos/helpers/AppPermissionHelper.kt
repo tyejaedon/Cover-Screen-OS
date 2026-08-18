@@ -10,9 +10,9 @@ import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.content.ContextCompat
-import com.tyejaedon.coverscreenos.services.CoverAccessibilityService
-import com.tyejaedon.coverscreenos.services.CoverNotificationListenerService
 import androidx.core.net.toUri
+import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
+import com.tyejaedon.coverscreenos.services.overlay.CoverAccessibilityService
 
 object AppPermissionHelper {
 
@@ -110,4 +110,3 @@ object AppPermissionHelper {
         }
     }
 }
-

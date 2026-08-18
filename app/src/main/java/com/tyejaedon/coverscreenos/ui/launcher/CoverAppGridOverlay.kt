@@ -141,7 +141,7 @@ import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
-import com.tyejaedon.coverscreenos.services.CoverNotificationListenerService
+import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusLarge
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusSmall
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTextStyles
@@ -2325,113 +2325,113 @@ private fun decodeWallpaperBitmapWithImageDecoder(
     requestedHeightPx: Int,
     nowElapsedMs: Long
 ): Bitmap? {
-    val source = when (uri.scheme) {
-        "file" -> {
-            val path = uri.path ?: run {
-                WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
-                return null
+        val source = when (uri.scheme) {
+            "file" -> {
+                val path = uri.path ?: run {
+                    WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
+                    return null
+                }
+                val file = File(path)
+                if (!file.exists() || !file.isFile || !file.canRead()) {
+                    WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
+                    return null
+                }
+                ImageDecoder.createSource(file)
             }
-            val file = File(path)
-            if (!file.exists() || !file.isFile || !file.canRead()) {
-                WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
-                return null
-            }
-            ImageDecoder.createSource(file)
+            else -> runCatching { ImageDecoder.createSource(context.contentResolver, uri) }
+                .getOrNull()
+                ?: run {
+                    WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
+                    return null
+                }
         }
-        else -> runCatching { ImageDecoder.createSource(context.contentResolver, uri) }
-            .getOrNull()
-            ?: run {
-                WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
-                return null
-            }
-    }
 
-    val decodedBitmap = runCatching {
-        ImageDecoder.decodeBitmap(source) { decoder, imageInfo, _ ->
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val sampleSize = calculateImageDecoderSampleSize(
-                sourceWidth = imageInfo.size.width,
-                sourceHeight = imageInfo.size.height,
-                requestedWidthPx = requestedWidthPx,
-                requestedHeightPx = requestedHeightPx
-            )
-            if (sampleSize > 1) {
-                decoder.setTargetSampleSize(sampleSize)
+        val decodedBitmap = runCatching {
+            ImageDecoder.decodeBitmap(source) { decoder, imageInfo, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val sampleSize = calculateImageDecoderSampleSize(
+                    sourceWidth = imageInfo.size.width,
+                    sourceHeight = imageInfo.size.height,
+                    requestedWidthPx = requestedWidthPx,
+                    requestedHeightPx = requestedHeightPx
+                )
+                if (sampleSize > 1) {
+                    decoder.setTargetSampleSize(sampleSize)
+                }
             }
+        }.onFailure { error ->
+            Log.w(WALLPAPER_LOG_TAG, "ImageDecoder wallpaper decode failed uri=$uri error=${error.message}")
+        }.getOrNull()
+
+        if (decodedBitmap != null) {
+            WallpaperBitmapCache.put(cacheKey, decodedBitmap)
+            WallpaperDecodeBackoff.clearFailure(cacheKey)
+        } else {
+            WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
         }
-    }.onFailure { error ->
-        Log.w(WALLPAPER_LOG_TAG, "ImageDecoder wallpaper decode failed uri=$uri error=${error.message}")
-    }.getOrNull()
 
-    if (decodedBitmap != null) {
-        WallpaperBitmapCache.put(cacheKey, decodedBitmap)
-        WallpaperDecodeBackoff.clearFailure(cacheKey)
-    } else {
-        WallpaperDecodeBackoff.markFailure(cacheKey, nowElapsedMs)
+        return decodedBitmap
     }
 
-    return decodedBitmap
-}
-
-private fun resolveWallpaperCacheVersionToken(uri: Uri): String? {
-    if (uri.scheme != "file") return null
-    val path = uri.path ?: return null
-    val file = File(path)
-    if (!file.exists() || !file.isFile) return null
-    return "${file.lastModified()}_${file.length()}"
-}
-
-private fun openWallpaperInputStream(context: Context, uri: Uri): InputStream? {
-    return when (uri.scheme) {
-        "file" -> uri.path?.let { path -> runCatching { File(path).inputStream() }.getOrNull() }
-        else -> runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
-            ?: runCatching {
-                context.contentResolver.openFileDescriptor(uri, "r")
-                    ?.let { descriptor ->
-                        ParcelFileDescriptor.AutoCloseInputStream(descriptor)
-                    }
-            }.getOrNull()
+    private fun resolveWallpaperCacheVersionToken(uri: Uri): String? {
+        if (uri.scheme != "file") return null
+        val path = uri.path ?: return null
+        val file = File(path)
+        if (!file.exists() || !file.isFile) return null
+        return "${file.lastModified()}_${file.length()}"
     }
-}
 
-private fun calculateImageDecoderSampleSize(
-    sourceWidth: Int,
-    sourceHeight: Int,
-    requestedWidthPx: Int,
-    requestedHeightPx: Int
-): Int {
-    if (sourceWidth <= 0 || sourceHeight <= 0) return 1
-    val widthRatio = sourceWidth.toFloat() / requestedWidthPx.coerceAtLeast(1)
-    val heightRatio = sourceHeight.toFloat() / requestedHeightPx.coerceAtLeast(1)
-    return max(widthRatio, heightRatio).toInt().coerceAtLeast(1)
-}
-
-private fun resolvePackageIconVersionToken(packageManager: PackageManager, packageName: String): String? {
-    val packageInfo = runCatching {
-        packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
-    }.getOrNull() ?: return null
-
-    val versionCode = packageInfo.longVersionCode
-    return "$packageName|$versionCode|${packageInfo.lastUpdateTime}"
-}
-
-private fun calculateInSampleSize(
-    outWidth: Int,
-    outHeight: Int,
-    requestedWidthPx: Int,
-    requestedHeightPx: Int
-): Int {
-    if (outWidth <= 0 || outHeight <= 0) return 1
-    var inSampleSize = 1
-    val halfWidth = outWidth / 2
-    val halfHeight = outHeight / 2
-
-    while ((halfWidth / inSampleSize) >= requestedWidthPx && (halfHeight / inSampleSize) >= requestedHeightPx) {
-        inSampleSize *= 2
+    private fun openWallpaperInputStream(context: Context, uri: Uri): InputStream? {
+        return when (uri.scheme) {
+            "file" -> uri.path?.let { path -> runCatching { File(path).inputStream() }.getOrNull() }
+            else -> runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+                ?: runCatching {
+                    context.contentResolver.openFileDescriptor(uri, "r")
+                        ?.let { descriptor ->
+                            ParcelFileDescriptor.AutoCloseInputStream(descriptor)
+                        }
+                }.getOrNull()
+        }
     }
-    return inSampleSize.coerceAtLeast(1)
-}
 
-private fun currentCoverTime(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
+    private fun calculateImageDecoderSampleSize(
+        sourceWidth: Int,
+        sourceHeight: Int,
+        requestedWidthPx: Int,
+        requestedHeightPx: Int
+    ): Int {
+        if (sourceWidth <= 0 || sourceHeight <= 0) return 1
+        val widthRatio = sourceWidth.toFloat() / requestedWidthPx.coerceAtLeast(1)
+        val heightRatio = sourceHeight.toFloat() / requestedHeightPx.coerceAtLeast(1)
+        return max(widthRatio, heightRatio).toInt().coerceAtLeast(1)
+    }
 
-private fun currentCoverDate(): String = LocalDate.now().format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()))
+    private fun resolvePackageIconVersionToken(packageManager: PackageManager, packageName: String): String? {
+        val packageInfo = runCatching {
+            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+        }.getOrNull() ?: return null
+
+        val versionCode = packageInfo.longVersionCode
+        return "$packageName|$versionCode|${packageInfo.lastUpdateTime}"
+    }
+
+    private fun calculateInSampleSize(
+        outWidth: Int,
+        outHeight: Int,
+        requestedWidthPx: Int,
+        requestedHeightPx: Int
+    ): Int {
+        if (outWidth <= 0 || outHeight <= 0) return 1
+        var inSampleSize = 1
+        val halfWidth = outWidth / 2
+        val halfHeight = outHeight / 2
+
+        while ((halfWidth / inSampleSize) >= requestedWidthPx && (halfHeight / inSampleSize) >= requestedHeightPx) {
+            inSampleSize *= 2
+        }
+        return inSampleSize.coerceAtLeast(1)
+    }
+
+    private fun currentCoverTime(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
+
+    private fun currentCoverDate(): String = LocalDate.now().format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()))

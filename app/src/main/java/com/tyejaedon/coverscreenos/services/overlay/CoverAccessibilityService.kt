@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services
+package com.tyejaedon.coverscreenos.services.overlay
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityGestureEvent
@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
+import com.tyejaedon.coverscreenos.services.CallPackageMatchers
 
 @SuppressLint("AccessibilityPolicy")
 class CoverAccessibilityService : AccessibilityService() {
@@ -288,4 +289,5 @@ class CoverAccessibilityService : AccessibilityService() {
         return CallPackageMatchers.isIncomingCallPackage(packageName)
     }
 }
+
 

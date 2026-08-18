@@ -34,7 +34,7 @@
         android:theme="@style/Theme.CoverScreenOS">
 
         <service
-            android:name=".services.ForegroundService"
+            android:name=".services.overlay.ForegroundService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="specialUse">
@@ -44,7 +44,7 @@
         </service>
 
         <service
-            android:name=".services.CoverAccessibilityService"
+            android:name=".services.overlay.CoverAccessibilityService"
             android:enabled="true"
             android:exported="true"
             android:label="@string/app_name"
@@ -60,7 +60,7 @@
         </service>
 
         <service
-            android:name=".services.CoverNotificationListenerService"
+            android:name=".services.notifications.CoverNotificationListenerService"
             android:enabled="true"
             android:exported="false"
             android:label="@string/app_name"

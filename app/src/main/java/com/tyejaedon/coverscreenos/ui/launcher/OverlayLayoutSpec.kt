@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui
+package com.tyejaedon.coverscreenos.ui.launcher
 
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -15,4 +15,5 @@ object OverlayLayoutSpec {
         return available.coerceAtMost(maxOverlayWidth)
     }
 }
+
 

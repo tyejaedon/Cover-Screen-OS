@@ -876,3 +876,4 @@ class LauncherSettingsStore(
 		}
 	}
 }
+

@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.controllers
+package com.tyejaedon.coverscreenos.ui.homescreen
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,7 +37,7 @@ import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
-fun ForegroundServiceController(
+internal fun HomeRuntimeControls(
     modifier: Modifier = Modifier,
     refreshIntervalMs: Long = 6_000L
 ) {
@@ -53,7 +53,6 @@ fun ForegroundServiceController(
         lastCheckedAt = currentStatusTimestamp()
     }
 
-    // Keeps UI state in sync even when service state changes outside this screen.
     LaunchedEffect(refreshIntervalMs) {
         while (true) {
             refreshServiceState()
@@ -69,9 +68,9 @@ fun ForegroundServiceController(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Service Controls", style = MaterialTheme.typography.titleMedium)
+            Text("Runtime controls", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Start or stop the launcher runtime. Status updates every ${refreshIntervalMs / 1000}s.",
+                text = "Start or stop the home screen runtime. Status updates every ${refreshIntervalMs / 1000}s.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -109,7 +108,7 @@ fun ForegroundServiceController(
                     )
                 }
                 Text(
-                    text = if (isServiceRunning) "Launcher runtime is active" else "Launcher runtime is inactive",
+                    text = if (isServiceRunning) "Home screen runtime is active" else "Home screen runtime is inactive",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -150,7 +149,7 @@ fun ForegroundServiceController(
                         refreshServiceState()
                     }
                 ) {
-                    Text(if (isServiceRunning) "Stop launcher" else "Start launcher")
+                    Text(if (isServiceRunning) "Stop home screen" else "Start home screen")
                 }
 
                 OutlinedButton(
@@ -170,4 +169,5 @@ private fun currentStatusTimestamp(): String {
     val formatter = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.getDefault())
     return LocalTime.now().format(formatter)
 }
+
 
