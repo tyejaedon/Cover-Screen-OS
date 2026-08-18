@@ -99,7 +99,7 @@ internal fun PermissionHeaderCard(
             }
 
             Text(
-                text = "Each permission has one job: keep the launcher visible, responsive, and reliable.",
+                text = "Each permission has one job: keep your home screen visible, responsive, and reliable.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -153,7 +153,7 @@ internal fun PermissionPriorityActionCard(
                 color = MaterialTheme.colorScheme.primary
             )
             Text(
-                text = "Enable $requirementTitle to unlock launcher deployment.",
+                text = "Enable $requirementTitle to finish home screen setup.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )

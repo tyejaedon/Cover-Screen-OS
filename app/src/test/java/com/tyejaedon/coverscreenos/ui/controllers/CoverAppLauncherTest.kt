@@ -15,7 +15,7 @@ import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
 import io.mockk.verify
-import com.tyejaedon.coverscreenos.services.ForegroundService
+import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

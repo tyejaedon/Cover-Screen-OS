@@ -13,7 +13,7 @@ import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
 import com.tyejaedon.coverscreenos.permissions.PermissionScreen
-import com.tyejaedon.coverscreenos.ui.DeploymentStatusScreen
+import com.tyejaedon.coverscreenos.ui.homescreen.HomeScreen
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 
 class MainActivity : ComponentActivity() {
@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
                         ForegroundServiceHelper.startForegroundService(this)
                     },
                     grantedContent = {
-                        DeploymentStatusScreen(modifier = Modifier.fillMaxSize())
+                        HomeScreen(modifier = Modifier.fillMaxSize())
                     }
                 )
             }

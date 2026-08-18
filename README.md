@@ -12,6 +12,12 @@ Since Android OEMs (like Samsung) do not natively allow replacing the cover scre
 
 ---
 
+## Project Organization
+
+A staged module-organization roadmap is documented in `docs/architecture/module-organization-plan.md`.
+
+---
+
 ## 🏗 System Architecture Blueprint
 
 +-----------------------------------------------------------------------+

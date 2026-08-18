@@ -3,7 +3,7 @@ package com.tyejaedon.coverscreenos.helpers
 import android.content.Context
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.tyejaedon.coverscreenos.services.ForegroundService
+import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
 
 object ForegroundServiceHelper {
 
@@ -43,4 +43,3 @@ object ForegroundServiceHelper {
         return ForegroundService.isServiceRuntimeActive()
     }
 }
-

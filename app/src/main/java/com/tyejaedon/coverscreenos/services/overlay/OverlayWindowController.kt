@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services
+package com.tyejaedon.coverscreenos.services.overlay
 
 import android.content.Context
 import android.content.Context.WINDOW_SERVICE

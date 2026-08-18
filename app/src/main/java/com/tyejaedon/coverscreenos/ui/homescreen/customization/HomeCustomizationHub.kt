@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui
+package com.tyejaedon.coverscreenos.ui.homescreen.customization
 
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -6,11 +6,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -40,32 +35,21 @@ import com.tyejaedon.coverscreenos.datastore.MAX_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.MAX_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_DIM_AMOUNT
-import com.tyejaedon.coverscreenos.datastore.ThemePreference
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
-import com.tyejaedon.coverscreenos.ui.settings.AppearanceCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.DockAppPickerDialog
-import com.tyejaedon.coverscreenos.ui.settings.DockCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.LauncherSettingsHeaderCard
-import com.tyejaedon.coverscreenos.ui.settings.SettingsMenuItem
 import com.tyejaedon.coverscreenos.ui.settings.SettingsQuickMenuCard
-import com.tyejaedon.coverscreenos.ui.settings.WallpaperCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.normalizeDockPackageSlots
 import com.tyejaedon.coverscreenos.ui.settings.updateDockSlotSelection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class LauncherSettingsPanel {
-    DOCK,
-    WALLPAPER,
-    APPEARANCE
-}
-
-private const val SETTINGS_HUB_LOG_TAG = "LauncherSettingsHub"
+private const val CUSTOMIZATION_HUB_LOG_TAG = "HomeCustomizationHub"
 
 @Composable
-fun LauncherSettingsHub(modifier: Modifier = Modifier) {
+fun HomeCustomizationHub(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val appContext = context.applicationContext
     val scope = rememberCoroutineScope()
@@ -117,7 +101,7 @@ fun LauncherSettingsHub(modifier: Modifier = Modifier) {
     }
 
     var activeDockSlotIndex by remember { mutableStateOf<Int?>(null) }
-    var activePanel by remember { mutableStateOf(LauncherSettingsPanel.DOCK) }
+    var activePanel by remember { mutableStateOf(HomeCustomizationPanel.DOCK) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
     var isWallpaperImportInProgress by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -150,7 +134,7 @@ fun LauncherSettingsHub(modifier: Modifier = Modifier) {
         runCatching {
             wallpaperPickerLauncher.launch("image/*")
         }.onFailure { error ->
-            Log.w(SETTINGS_HUB_LOG_TAG, "Unable to launch wallpaper picker: ${error.message}")
+            Log.w(CUSTOMIZATION_HUB_LOG_TAG, "Unable to launch wallpaper picker: ${error.message}")
             scope.launch {
                 snackbarHostState.showSnackbar(
                     message = "Unable to open image picker on this device."
@@ -171,130 +155,86 @@ fun LauncherSettingsHub(modifier: Modifier = Modifier) {
         } else {
             "Custom image | Dim ${(wallpaperDimPreview * 100f).toInt()}% | Blur ${wallpaperBlurPreview.toInt()}dp"
         }
-        val themeSummary = when (themePreferencePreview) {
-            ThemePreference.SYSTEM -> "Follow system"
-            ThemePreference.LIGHT -> "Always light"
-            ThemePreference.DARK -> "Always dark"
-        }
 
         SettingsQuickMenuCard(
-            items = listOf(
-                SettingsMenuItem(
-                    key = "dock",
-                    title = "Dock apps",
-                    summary = "$dockFilledCount of $COVER_DOCK_SLOT_COUNT slots filled",
-                    icon = Icons.Filled.Layers,
-                    selected = activePanel == LauncherSettingsPanel.DOCK,
-                    onClick = { activePanel = LauncherSettingsPanel.DOCK }
-                ),
-                SettingsMenuItem(
-                    key = "wallpaper",
-                    title = "Wallpaper",
-                    summary = wallpaperSummary,
-                    icon = Icons.Filled.Image,
-                    selected = activePanel == LauncherSettingsPanel.WALLPAPER,
-                    onClick = { activePanel = LauncherSettingsPanel.WALLPAPER }
-                ),
-                SettingsMenuItem(
-                    key = "appearance",
-                    title = "Appearance",
-                    summary = themeSummary,
-                    icon = Icons.Filled.DarkMode,
-                    selected = activePanel == LauncherSettingsPanel.APPEARANCE,
-                    onClick = { activePanel = LauncherSettingsPanel.APPEARANCE }
-                ),
-                SettingsMenuItem(
-                    key = "reset",
-                    title = "Reset layout",
-                    summary = "Restore dock and wallpaper defaults",
-                    icon = Icons.Filled.Restore,
-                    selected = false,
-                    onClick = { showResetConfirmDialog = true }
-                )
+            items = buildHomeCustomizationMenuItems(
+                activePanel = activePanel,
+                dockFilledCount = dockFilledCount,
+                wallpaperSummary = wallpaperSummary,
+                themePreference = themePreferencePreview,
+                onPanelSelected = { selectedPanel -> activePanel = selectedPanel },
+                onResetRequested = { showResetConfirmDialog = true }
             )
         )
 
-        if (activePanel == LauncherSettingsPanel.DOCK) {
-            DockCustomizationCard(
-                dockPackages = dockPackagePreview,
-                resolveLabel = { packageName ->
-                    packageName?.let { appNameByPackage[it] ?: packageName } ?: "Empty"
-                },
-                onPreviewReorder = { reorderedDock ->
-                    dockPackagePreview = reorderedDock
-                },
-                onReorderCommitted = { committedDock ->
-                    scope.launch {
-                        settingsStore.setDockPackages(committedDock)
-                    }
-                },
-                onPickSlot = { slotIndex -> activeDockSlotIndex = slotIndex },
-                onClearSlot = { slotIndex ->
-                    val updatedDock = dockPackagePreview.toMutableList().also { slots ->
-                        slots[slotIndex] = null
-                    }
-                    val normalizedDock = normalizeDockPackageSlots(updatedDock)
-                    dockPackagePreview = normalizedDock
-                    scope.launch {
-                        settingsStore.setDockPackages(normalizedDock)
-                    }
+        HomeCustomizationPanelContent(
+            activePanel = activePanel,
+            dockPackages = dockPackagePreview,
+            resolveLabel = { packageName ->
+                packageName?.let { appNameByPackage[it] ?: packageName } ?: "Empty"
+            },
+            onPreviewReorder = { reorderedDock -> dockPackagePreview = reorderedDock },
+            onReorderCommitted = { committedDock ->
+                scope.launch {
+                    settingsStore.setDockPackages(committedDock)
                 }
-            )
-        }
-
-        if (activePanel == LauncherSettingsPanel.APPEARANCE) {
-            AppearanceCustomizationCard(
-                themePreference = themePreferencePreview,
-                onThemePreferenceSelected = { selectedPreference ->
-                    themePreferencePreview = selectedPreference
-                    scope.launch {
-                        settingsStore.setThemePreference(selectedPreference)
-                    }
+            },
+            onPickSlot = { slotIndex -> activeDockSlotIndex = slotIndex },
+            onClearSlot = { slotIndex ->
+                val updatedDock = dockPackagePreview.toMutableList().also { slots ->
+                    slots[slotIndex] = null
                 }
-            )
-        }
-
-        if (activePanel == LauncherSettingsPanel.WALLPAPER) {
-            WallpaperCustomizationCard(
-                wallpaperUri = settings.wallpaperUri,
-                wallpaperScaleMode = wallpaperScaleModePreview,
-                dimAmount = wallpaperDimPreview,
-                blurRadiusDp = wallpaperBlurPreview,
-                isWallpaperImportInProgress = isWallpaperImportInProgress,
-                onChooseWallpaper = {
-                    if (!isWallpaperImportInProgress) {
-                        launchWallpaperPicker()
-                    }
-                },
-                onClearWallpaper = {
-                    scope.launch {
-                        settingsStore.clearWallpaper()
-                    }
-                },
-                onScaleModeSelected = { selectedMode ->
-                    wallpaperScaleModePreview = selectedMode
-                    scope.launch {
-                        settingsStore.setWallpaperScaleMode(selectedMode)
-                    }
-                },
-                onDimAmountPreviewChanged = { dimAmount ->
-                    wallpaperDimPreview = dimAmount
-                },
-                onDimAmountCommit = {
-                    scope.launch {
-                        settingsStore.setWallpaperDimAmount(wallpaperDimPreview)
-                    }
-                },
-                onBlurRadiusPreviewChanged = { blurRadius ->
-                    wallpaperBlurPreview = blurRadius
-                },
-                onBlurRadiusCommit = {
-                    scope.launch {
-                        settingsStore.setWallpaperBlurRadiusDp(wallpaperBlurPreview)
-                    }
+                val normalizedDock = normalizeDockPackageSlots(updatedDock)
+                dockPackagePreview = normalizedDock
+                scope.launch {
+                    settingsStore.setDockPackages(normalizedDock)
                 }
-            )
-        }
+            },
+            themePreference = themePreferencePreview,
+            onThemePreferenceSelected = { selectedPreference ->
+                themePreferencePreview = selectedPreference
+                scope.launch {
+                    settingsStore.setThemePreference(selectedPreference)
+                }
+            },
+            wallpaperUri = settings.wallpaperUri,
+            wallpaperScaleMode = wallpaperScaleModePreview,
+            dimAmount = wallpaperDimPreview,
+            blurRadiusDp = wallpaperBlurPreview,
+            isWallpaperImportInProgress = isWallpaperImportInProgress,
+            onChooseWallpaper = {
+                if (!isWallpaperImportInProgress) {
+                    launchWallpaperPicker()
+                }
+            },
+            onClearWallpaper = {
+                scope.launch {
+                    settingsStore.clearWallpaper()
+                }
+            },
+            onScaleModeSelected = { selectedMode ->
+                wallpaperScaleModePreview = selectedMode
+                scope.launch {
+                    settingsStore.setWallpaperScaleMode(selectedMode)
+                }
+            },
+            onDimAmountPreviewChanged = { dimAmount ->
+                wallpaperDimPreview = dimAmount
+            },
+            onDimAmountCommit = {
+                scope.launch {
+                    settingsStore.setWallpaperDimAmount(wallpaperDimPreview)
+                }
+            },
+            onBlurRadiusPreviewChanged = { blurRadius ->
+                wallpaperBlurPreview = blurRadius
+            },
+            onBlurRadiusCommit = {
+                scope.launch {
+                    settingsStore.setWallpaperBlurRadiusDp(wallpaperBlurPreview)
+                }
+            }
+        )
 
         SnackbarHost(
             hostState = snackbarHostState,
@@ -325,7 +265,7 @@ fun LauncherSettingsHub(modifier: Modifier = Modifier) {
     if (showResetConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showResetConfirmDialog = false },
-            title = { Text("Reset launcher layout?") },
+            title = { Text("Reset home layout?") },
             text = {
                 Text(
                     "This will clear dock customizations and wallpaper selection, and restore default wallpaper style controls."
@@ -360,7 +300,7 @@ fun LauncherSettingsHub(modifier: Modifier = Modifier) {
 
                             snackbarHostState.currentSnackbarData?.dismiss()
                             val snackbarResult = snackbarHostState.showSnackbar(
-                                message = "Launcher layout reset",
+                                message = "Home layout reset",
                                 actionLabel = "Undo",
                                 withDismissAction = true,
                                 duration = SnackbarDuration.Long
@@ -393,5 +333,4 @@ fun LauncherSettingsHub(modifier: Modifier = Modifier) {
         )
     }
 }
-
 

@@ -172,7 +172,7 @@ fun PermissionScreen(
         ),
         PermissionRequirementUiModel(
             title = "Notification access service",
-            details = "Required for notification listener callbacks used by launcher runtime checks.",
+                details = "Required for notification listener callbacks used by home screen runtime checks.",
             granted = hasNotificationListenerPermission,
             actionLabel = "Open notification access settings",
             icon = Icons.Filled.Notifications,
@@ -184,7 +184,7 @@ fun PermissionScreen(
         ),
         PermissionRequirementUiModel(
             title = "Battery optimization",
-            details = "Recommended: exclude this app from battery optimization to improve launcher reliability.",
+                details = "Recommended: exclude this app from battery optimization to improve home screen reliability.",
             granted = hasBatteryOptimizationExemption,
             actionLabel = "Open battery optimization settings",
             icon = Icons.Filled.BatterySaver,

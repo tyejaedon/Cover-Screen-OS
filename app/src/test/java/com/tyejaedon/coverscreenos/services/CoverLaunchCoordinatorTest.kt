@@ -1,6 +1,7 @@
 package com.tyejaedon.coverscreenos.services
 
 import android.util.Log
+import com.tyejaedon.coverscreenos.services.overlay.CoverLaunchCoordinator
 import io.mockk.every
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
@@ -122,4 +123,3 @@ class CoverLaunchCoordinatorTest {
         }
     }
 }
-

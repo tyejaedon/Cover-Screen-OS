@@ -53,12 +53,12 @@ internal fun LauncherSettingsHeaderCard(modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "Personalize your cover launcher",
+                text = "Customize your home screen",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                text = "Pick what matters: quick dock access, wallpaper readability, and reset only when needed.",
+                text = "Pick what matters: quick dock access, wallpaper readability, and layout reset only when needed.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

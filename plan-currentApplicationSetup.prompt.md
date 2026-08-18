@@ -49,12 +49,12 @@
         - `docs/RUNTIME_PIPELINES.md` with three subsections: Overlay, Launch Routing, Wallpaper.
         - Annotated code pointers and failure-path tables referencing exact files.
     - **Action items**
-        - Overlay: trace code in `app/src/main/java/.../services/OverlayWindowController.kt` and `ForegroundService.kt`. Document window types, attach flow, and focus handling.
+        - Overlay: trace code in `app/src/main/java/.../services/overlay/OverlayWindowController.kt` and `services/overlay/ForegroundService.kt`. Document window types, attach flow, and focus handling.
         - Launch routing: trace `app/src/main/java/.../ui/controllers/CoverAppLauncher.kt` and document `ActivityOptions.setLaunchDisplayId()` usage and overlay hide/resume handshake.
         - Wallpaper: trace picker → persistence → render paths:
-            - Picker: `ui/LauncherSettingsHub.kt`
-            - Persistence: `datastore/Prefrences.kt`
-            - Render: `ui/CoverAppGridOverlay.kt`, `ui/WallpaperBitmapCache.kt`, `ui/settings/WallpaperCustomizationComponents.kt`
+            - Picker: `ui/homescreen/customization/HomeCustomizationHub.kt`
+            - Persistence: `datastore/LauncherSettingsStore.kt`
+            - Render: `ui/launcher/CoverAppGridOverlay.kt`, `ui/launcher/WallpaperBitmapCache.kt`, `ui/settings/WallpaperCustomizationComponents.kt`
         - For each pipeline produce a table of **inputs**, **transformations**, **outputs**, and **failure modes**.
     - **Acceptance criteria**
         - `docs/RUNTIME_PIPELINES.md` contains annotated file references and a failure-mode table for each pipeline.
@@ -81,7 +81,7 @@
         - Code changes and tests to ensure “never silently black” behavior.
         - Runtime diagnostics and telemetry logs for decode inputs.
     - **Action items**
-        - Add explicit decode state machine in `datastore/Prefrences.kt` and `ui/CoverAppGridOverlay.kt` with states: `IDLE`, `LOADING`, `RETRYING`, `FAILED`, `READY`.
+        - Add explicit decode state machine in `datastore/LauncherSettingsStore.kt` and `ui/launcher/CoverAppGridOverlay.kt` with states: `IDLE`, `LOADING`, `RETRYING`, `FAILED`, `READY`.
         - Surface decode status in `WallpaperCustomizationComponents.kt` UI with explicit messages and retry button.
         - Add diagnostic logging for: URI scheme, file length, decode bounds, decode attempts, and last error.
         - Implement a fallback placeholder (non-black) and a visible failure card that explains the reason and offers retry.
@@ -132,16 +132,16 @@ Context:
 - Key files: 
   - Manifest: app/src/main/AndroidManifest.xml
   - MainActivity: app/src/main/java/com/tyejaedon/coverscreenos/MainActivity.kt
-  - Foreground service: app/src/main/java/com/tyejaedon/coverscreenos/services/ForegroundService.kt
-  - Overlay controller: app/src/main/java/com/tyejaedon/coverscreenos/services/OverlayWindowController.kt
+  - Foreground service: app/src/main/java/com/tyejaedon/coverscreenos/services/overlay/ForegroundService.kt
+  - Overlay controller: app/src/main/java/com/tyejaedon/coverscreenos/services/overlay/OverlayWindowController.kt
   - Display helper: app/src/main/java/com/tyejaedon/coverscreenos/helpers/CoverDisplayHelper.kt
   - App launcher: app/src/main/java/com/tyejaedon/coverscreenos/ui/controllers/CoverAppLauncher.kt
-  - Accessibility service: app/src/main/java/com/tyejaedon/coverscreenos/services/CoverAccessibilityService.kt
-  - Notification listener: app/src/main/java/com/tyejaedon/coverscreenos/services/CoverNotificationListenerService.kt
-  - Wallpaper picker: app/src/main/java/com/tyejaedon/coverscreenos/ui/LauncherSettingsHub.kt
-  - Wallpaper persistence: app/src/main/java/com/tyejaedon/coverscreenos/datastore/Prefrences.kt
-  - Wallpaper render: app/src/main/java/com/tyejaedon/coverscreenos/ui/CoverAppGridOverlay.kt
-  - Wallpaper cache: app/src/main/java/com/tyejaedon/coverscreenos/ui/WallpaperBitmapCache.kt
+  - Accessibility service: app/src/main/java/com/tyejaedon/coverscreenos/services/overlay/CoverAccessibilityService.kt
+  - Notification listener: app/src/main/java/com/tyejaedon/coverscreenos/services/notifications/CoverNotificationListenerService.kt
+  - Wallpaper picker: app/src/main/java/com/tyejaedon/coverscreenos/ui/homescreen/customization/HomeCustomizationHub.kt
+  - Wallpaper persistence: app/src/main/java/com/tyejaedon/coverscreenos/datastore/LauncherSettingsStore.kt
+  - Wallpaper render: app/src/main/java/com/tyejaedon/coverscreenos/ui/launcher/CoverAppGridOverlay.kt
+  - Wallpaper cache: app/src/main/java/com/tyejaedon/coverscreenos/ui/launcher/WallpaperBitmapCache.kt
   - Wallpaper preview: app/src/main/java/com/tyejaedon/coverscreenos/ui/settings/WallpaperCustomizationComponents.kt
 
 Deliverables:

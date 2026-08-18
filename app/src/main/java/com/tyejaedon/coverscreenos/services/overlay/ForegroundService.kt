@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services
+package com.tyejaedon.coverscreenos.services.overlay
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -19,6 +19,7 @@ import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
+import com.tyejaedon.coverscreenos.services.CallPackageMatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -124,6 +125,21 @@ class ForegroundService : Service() {
     private lateinit var coverDisplayHelper: CoverDisplayHelper
     private lateinit var displayManager: DisplayManager
 
+    private val suppressionState = OverlaySuppressionState()
+    private val reclaimPolicy = OverlayReclaimPolicy(
+        incomingCallSuppressionMaxMs = INCOMING_CALL_SUPPRESSION_MAX_MS,
+        incomingCallReclaimBlockGraceMs = INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS
+    )
+    private val transientSignalPolicy = OverlayTransientSignalPolicy(
+        transientSystemUiPrefixes = TRANSIENT_SYSTEM_UI_PREFIXES,
+        transientSystemUiResumeSafePrefixes = TRANSIENT_SYSTEM_UI_RESUME_SAFE_PREFIXES,
+        overlayResumePackagePrefixes = OVERLAY_RESUME_PACKAGE_PREFIXES,
+        launcherPackagePrefixes = LAUNCHER_PACKAGE_PREFIXES,
+        transientSystemUiResumeGraceMs = TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS,
+        transientExitFailsafeMinSuppressionMs = TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS,
+        transientExitPatternWindowMs = TRANSIENT_EXIT_PATTERN_WINDOW_MS
+    )
+
     private var overlayRequested = false
     private var isDisplayListenerRegistered = false
     private var hasEnteredForeground = false
@@ -131,33 +147,103 @@ class ForegroundService : Service() {
     private var pendingDisplayRetargetJob: Job? = null
     private var suppressionResumePollerJob: Job? = null
 
-    private var isOverlaySuppressedForAppLaunch = false
-    private var suppressionReason: SuppressionReason = SuppressionReason.NONE
-    private var launchSuppressedPackageName: String? = null
-    private var launchSuppressedStartedElapsedMs = 0L
-    private var suppressionSessionId = 0L
-    private var completedSuppressionSessionId: Long? = null
-    private var resumeSignalStableCount = 0
-    private var lastResumeSignalPackage: String? = null
-    private var lastOverlayReclaimElapsedMs = 0L
-    private var lastOverlayReclaimReason: String? = null
-    private var incomingCallPassthroughPackage: String? = null
-    private var incomingCallPassthroughStartedElapsedMs: Long = 0L
-    private var incomingCallLastSignalElapsedMs: Long = 0L
-    private var callNotificationActive: Boolean = false
-    private var callNotificationPackage: String? = null
-    private var callNotificationLastSignalElapsedMs: Long = 0L
-    private var pendingRetargetReason: String? = null
-    private var transientForegroundPackage: String? = null
-    private var transientForegroundSinceElapsedMs: Long = 0L
-    private var transientSystemUiSeenElapsedMs: Long = 0L
-    private var transientAodSeenElapsedMs: Long = 0L
+    private var isOverlaySuppressedForAppLaunch: Boolean
+        get() = suppressionState.isOverlaySuppressedForAppLaunch
+        set(value) {
+            suppressionState.isOverlaySuppressedForAppLaunch = value
+        }
 
-    private enum class SuppressionReason {
-        NONE,
-        APP_LAUNCH,
-        INCOMING_CALL
-    }
+    private var suppressionReason: OverlaySuppressionReason
+        get() = suppressionState.suppressionReason
+        set(value) {
+            suppressionState.suppressionReason = value
+        }
+
+    private var launchSuppressedPackageName: String?
+        get() = suppressionState.launchSuppressedPackageName
+        set(value) {
+            suppressionState.launchSuppressedPackageName = value
+        }
+
+    private var launchSuppressedStartedElapsedMs: Long
+        get() = suppressionState.launchSuppressedStartedElapsedMs
+        set(value) {
+            suppressionState.launchSuppressedStartedElapsedMs = value
+        }
+
+    private var suppressionSessionId: Long
+        get() = suppressionState.suppressionSessionId
+        set(value) {
+            suppressionState.suppressionSessionId = value
+        }
+
+    private var completedSuppressionSessionId: Long?
+        get() = suppressionState.completedSuppressionSessionId
+        set(value) {
+            suppressionState.completedSuppressionSessionId = value
+        }
+
+    private var resumeSignalStableCount: Int
+        get() = suppressionState.resumeSignalStableCount
+        set(value) {
+            suppressionState.resumeSignalStableCount = value
+        }
+
+    private var lastResumeSignalPackage: String?
+        get() = suppressionState.lastResumeSignalPackage
+        set(value) {
+            suppressionState.lastResumeSignalPackage = value
+        }
+
+    private var lastOverlayReclaimElapsedMs: Long
+        get() = suppressionState.lastOverlayReclaimElapsedMs
+        set(value) {
+            suppressionState.lastOverlayReclaimElapsedMs = value
+        }
+
+    private var lastOverlayReclaimReason: String?
+        get() = suppressionState.lastOverlayReclaimReason
+        set(value) {
+            suppressionState.lastOverlayReclaimReason = value
+        }
+
+    private var incomingCallPassthroughPackage: String?
+        get() = suppressionState.incomingCallPassthroughPackage
+        set(value) {
+            suppressionState.incomingCallPassthroughPackage = value
+        }
+
+    private var incomingCallPassthroughStartedElapsedMs: Long
+        get() = suppressionState.incomingCallPassthroughStartedElapsedMs
+        set(value) {
+            suppressionState.incomingCallPassthroughStartedElapsedMs = value
+        }
+
+    private var incomingCallLastSignalElapsedMs: Long
+        get() = suppressionState.incomingCallLastSignalElapsedMs
+        set(value) {
+            suppressionState.incomingCallLastSignalElapsedMs = value
+        }
+
+    private var callNotificationActive: Boolean
+        get() = suppressionState.callNotificationActive
+        set(value) {
+            suppressionState.callNotificationActive = value
+        }
+
+    private var callNotificationPackage: String?
+        get() = suppressionState.callNotificationPackage
+        set(value) {
+            suppressionState.callNotificationPackage = value
+        }
+
+    private var callNotificationLastSignalElapsedMs: Long
+        get() = suppressionState.callNotificationLastSignalElapsedMs
+        set(value) {
+            suppressionState.callNotificationLastSignalElapsedMs = value
+        }
+    private var pendingRetargetReason: String? = null
+    // Transient foreground state is managed by OverlayTransientSignalPolicy.
 
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = onDisplayTopologyChanged("added", displayId)
@@ -278,12 +364,11 @@ class ForegroundService : Service() {
             return
         }
 
-        if (normalizedReason == lastOverlayReclaimReason && (nowElapsedMs - lastOverlayReclaimElapsedMs) < OVERLAY_RECLAIM_MIN_INTERVAL_MS) {
+        if (suppressionState.shouldSkipReclaimRequest(normalizedReason, nowElapsedMs, OVERLAY_RECLAIM_MIN_INTERVAL_MS)) {
             return
         }
 
-        lastOverlayReclaimElapsedMs = nowElapsedMs
-        lastOverlayReclaimReason = normalizedReason
+        suppressionState.markReclaimRequested(normalizedReason, nowElapsedMs)
 
         logDebug { "request reason=$normalizedReason overlayActive=$isOverlayActive display=${overlayWindowController.getActiveDisplayId()} suppressed=$isOverlaySuppressedForAppLaunch" }
 
@@ -301,12 +386,12 @@ class ForegroundService : Service() {
         val normalizedPackageName = packageName.trim().ifEmpty { "incoming_call" }
         trackIncomingCallPassthrough(normalizedPackageName)
 
-        if (isOverlaySuppressedForAppLaunch && suppressionReason == SuppressionReason.INCOMING_CALL) {
+        if (isOverlaySuppressedForAppLaunch && suppressionReason == OverlaySuppressionReason.INCOMING_CALL) {
             return
         }
 
         serviceScope.launch {
-            suppressOverlayForReason(packageName = normalizedPackageName, reason = SuppressionReason.INCOMING_CALL)
+            suppressOverlayForReason(packageName = normalizedPackageName, reason = OverlaySuppressionReason.INCOMING_CALL)
         }
     }
 
@@ -321,18 +406,18 @@ class ForegroundService : Service() {
             callNotificationLastSignalElapsedMs = nowElapsedMs
             normalizedPackageName?.let { trackIncomingCallPassthrough(it) }
 
-            if (!isOverlaySuppressedForAppLaunch || suppressionReason != SuppressionReason.INCOMING_CALL) {
+            if (!isOverlaySuppressedForAppLaunch || suppressionReason != OverlaySuppressionReason.INCOMING_CALL) {
                 serviceScope.launch {
                     suppressOverlayForReason(
                         packageName = normalizedPackageName ?: "incoming_call_notification",
-                        reason = SuppressionReason.INCOMING_CALL
+                        reason = OverlaySuppressionReason.INCOMING_CALL
                     )
                 }
             }
             return
         }
 
-        if (isOverlaySuppressedForAppLaunch && suppressionReason == SuppressionReason.INCOMING_CALL) {
+        if (isOverlaySuppressedForAppLaunch && suppressionReason == OverlaySuppressionReason.INCOMING_CALL) {
             serviceScope.launch {
                 maybeResumeOverlayAfterAppLaunch(reason = "call_notification_ended")
             }
@@ -469,7 +554,7 @@ class ForegroundService : Service() {
         overlayRequested = true
         coverDisplayHelper.startLockStatusMonitoring()
         registerDisplayListenerIfNeeded()
-        suppressOverlayForReason(packageName = packageName, reason = SuppressionReason.APP_LAUNCH)
+        suppressOverlayForReason(packageName = packageName, reason = OverlaySuppressionReason.APP_LAUNCH)
         return true
     }
 
@@ -481,14 +566,12 @@ class ForegroundService : Service() {
         completeSuppressionAndRetargetOnce(reason = "launch_app_failed_restore_overlay:$packageName")
     }
 
-    private fun suppressOverlayForReason(packageName: String, reason: SuppressionReason) {
-        suppressionSessionId += 1L
-        completedSuppressionSessionId = null
-        isOverlaySuppressedForAppLaunch = true
-        suppressionReason = reason
-        launchSuppressedPackageName = packageName
-        launchSuppressedStartedElapsedMs = SystemClock.elapsedRealtime()
-        resetResumeSignalStability()
+    private fun suppressOverlayForReason(packageName: String, reason: OverlaySuppressionReason) {
+        suppressionState.markSuppressionStarted(
+            packageName = packageName,
+            reason = reason,
+            nowElapsedMs = SystemClock.elapsedRealtime()
+        )
 
         clearPendingDisplayWork()
         overlayWindowController.suppressOverlayForLaunch()
@@ -520,9 +603,9 @@ class ForegroundService : Service() {
 
         val suppressedForMs = SystemClock.elapsedRealtime() - launchSuppressedStartedElapsedMs
         val maxSuppressionMs = when (suppressionReason) {
-            SuppressionReason.APP_LAUNCH -> APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS
-            SuppressionReason.INCOMING_CALL -> INCOMING_CALL_SUPPRESSION_MAX_MS
-            SuppressionReason.NONE -> APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS
+            OverlaySuppressionReason.APP_LAUNCH -> APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS
+            OverlaySuppressionReason.INCOMING_CALL -> INCOMING_CALL_SUPPRESSION_MAX_MS
+            OverlaySuppressionReason.NONE -> APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS
         }
         if (suppressedForMs >= maxSuppressionMs) {
             logResumeDecision(
@@ -612,7 +695,7 @@ class ForegroundService : Service() {
         }
 
         if (!reason.startsWith("reclaim:") &&
-            suppressionReason == SuppressionReason.APP_LAUNCH &&
+            suppressionReason == OverlaySuppressionReason.APP_LAUNCH &&
             isLauncherPackageForResume(foregroundPackage) &&
             suppressedForMs < APP_LAUNCH_RESUME_MIN_LAUNCHER_MS
         ) {
@@ -685,18 +768,24 @@ class ForegroundService : Service() {
 
     private fun shouldResumeOverlayForPackage(packageName: String): Boolean {
         val launchedPackage = launchSuppressedPackageName?.trim()?.takeUnless { it.isEmpty() }
-        if (launchedPackage != null && packageName == launchedPackage) return false
-        if (packageName == this.packageName) return true
-        return OVERLAY_RESUME_PACKAGE_PREFIXES.any { packageName.startsWith(it) }
+        return transientSignalPolicy.shouldResumeOverlayForPackage(
+            packageName = packageName,
+            launchedPackage = launchedPackage,
+            appPackageName = this.packageName
+        )
     }
 
-    private fun isTransientSystemUiPackage(packageName: String): Boolean = TRANSIENT_SYSTEM_UI_PREFIXES.any { packageName.startsWith(it) }
+    private fun isTransientSystemUiPackage(packageName: String): Boolean {
+        return transientSignalPolicy.isTransientSystemUiPackage(packageName)
+    }
 
     private fun isTransientForegroundSafeForResume(packageName: String): Boolean {
-        return TRANSIENT_SYSTEM_UI_RESUME_SAFE_PREFIXES.any { packageName.startsWith(it) }
+        return transientSignalPolicy.isTransientForegroundSafeForResume(packageName)
     }
 
-    private fun isLauncherPackageForResume(packageName: String): Boolean = LAUNCHER_PACKAGE_PREFIXES.any { packageName.startsWith(it) }
+    private fun isLauncherPackageForResume(packageName: String): Boolean {
+        return transientSignalPolicy.isLauncherPackageForResume(packageName)
+    }
 
     private fun isIncomingCallPackage(packageName: String): Boolean = CallPackageMatchers.isIncomingCallPackage(packageName)
 
@@ -707,142 +796,77 @@ class ForegroundService : Service() {
     }
 
     private fun trackIncomingCallPassthrough(packageName: String) {
-        val nowElapsedMs = SystemClock.elapsedRealtime()
-        if (incomingCallPassthroughPackage == null) {
-            incomingCallPassthroughStartedElapsedMs = nowElapsedMs
-        }
-        incomingCallPassthroughPackage = packageName
-        incomingCallLastSignalElapsedMs = nowElapsedMs
+        reclaimPolicy.trackIncomingCallPassthrough(
+            state = suppressionState,
+            packageName = packageName,
+            nowElapsedMs = SystemClock.elapsedRealtime()
+        )
     }
 
     private fun clearIncomingCallPassthrough(reason: String) {
-        if (incomingCallPassthroughPackage != null && Log.isLoggable(OVERLAY_RECLAIM_LOG_TAG, Log.DEBUG)) {
-            Log.d(OVERLAY_RECLAIM_LOG_TAG, "incoming_call_passthrough_cleared reason=$reason package=$incomingCallPassthroughPackage")
-        }
-        incomingCallPassthroughPackage = null
-        incomingCallPassthroughStartedElapsedMs = 0L
-        incomingCallLastSignalElapsedMs = 0L
-        callNotificationActive = false
-        callNotificationPackage = null
-        callNotificationLastSignalElapsedMs = 0L
+        reclaimPolicy.clearIncomingCallPassthrough(
+            state = suppressionState,
+            reason = reason,
+            onDebugLog = { message ->
+                if (Log.isLoggable(OVERLAY_RECLAIM_LOG_TAG, Log.DEBUG)) {
+                    Log.d(OVERLAY_RECLAIM_LOG_TAG, message)
+                }
+            }
+        )
     }
 
     private fun shouldKeepOverlaySuppressedForIncomingCall(): Boolean {
-        if (incomingCallPassthroughPackage == null) return false
-        val nowElapsedMs = SystemClock.elapsedRealtime()
-
-        if (incomingCallPassthroughStartedElapsedMs > 0L &&
-            (nowElapsedMs - incomingCallPassthroughStartedElapsedMs) > INCOMING_CALL_SUPPRESSION_MAX_MS
-        ) {
-            clearIncomingCallPassthrough(reason = "max_suppression_elapsed")
-            return false
-        }
-
-        val foregroundPackage = resolveRawForegroundPackageForCallGuard()
-        if (foregroundPackage != null && isIncomingCallPackage(foregroundPackage)) {
-            incomingCallPassthroughPackage = foregroundPackage
-            incomingCallLastSignalElapsedMs = nowElapsedMs
-            return true
-        }
-
-        if (callNotificationActive) {
-            callNotificationLastSignalElapsedMs = nowElapsedMs
-            callNotificationPackage?.let { incomingCallPassthroughPackage = it }
-            return true
-        }
-
-        if ((nowElapsedMs - incomingCallLastSignalElapsedMs) <= INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS) {
-            return true
-        }
-
-        if ((nowElapsedMs - callNotificationLastSignalElapsedMs) <= INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS) {
-            return true
-        }
-
-        clearIncomingCallPassthrough(reason = "foreground_exited_call_surface")
-        return false
+        return reclaimPolicy.shouldKeepOverlaySuppressedForIncomingCall(
+            state = suppressionState,
+            nowElapsedMs = SystemClock.elapsedRealtime(),
+            resolveRawForegroundPackage = ::resolveRawForegroundPackageForCallGuard,
+            isIncomingCallPackage = ::isIncomingCallPackage,
+            onClearPassthrough = ::clearIncomingCallPassthrough
+        )
     }
 
     private fun shouldBlockReclaimForIncomingCall(nowElapsedMs: Long): Boolean {
-        if (incomingCallPassthroughPackage == null) return false
-
-        val foregroundPackage = resolveRawForegroundPackageForCallGuard()
-        if (foregroundPackage != null && isIncomingCallPackage(foregroundPackage)) {
-            incomingCallPassthroughPackage = foregroundPackage
-            incomingCallLastSignalElapsedMs = nowElapsedMs
-            return true
-        }
-
-        if (callNotificationActive) return true
-
-        return (nowElapsedMs - incomingCallLastSignalElapsedMs) <= INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS ||
-            (nowElapsedMs - callNotificationLastSignalElapsedMs) <= INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS
+        return reclaimPolicy.shouldBlockReclaimForIncomingCall(
+            state = suppressionState,
+            nowElapsedMs = nowElapsedMs,
+            resolveRawForegroundPackage = ::resolveRawForegroundPackageForCallGuard,
+            isIncomingCallPackage = ::isIncomingCallPackage
+        )
     }
 
     private fun hasStableResumeSignal(packageName: String): Boolean {
-        if (packageName == lastResumeSignalPackage) {
-            resumeSignalStableCount += 1
-        } else {
-            lastResumeSignalPackage = packageName
-            resumeSignalStableCount = 1
-        }
-        return resumeSignalStableCount >= APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT
+        return suppressionState.hasStableResumeSignal(packageName, APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT)
     }
 
     private fun resetResumeSignalStability() {
-        lastResumeSignalPackage = null
-        resumeSignalStableCount = 0
+        suppressionState.resetResumeSignalStability()
     }
 
     private fun clearAppLaunchSuppression() {
         suppressionResumePollerJob?.cancel()
         suppressionResumePollerJob = null
-        isOverlaySuppressedForAppLaunch = false
-        suppressionReason = SuppressionReason.NONE
-        launchSuppressedPackageName = null
-        launchSuppressedStartedElapsedMs = 0L
+        suppressionState.clearSuppressionState()
         resetTransientForegroundTracking()
-        resetResumeSignalStability()
         clearIncomingCallPassthrough(reason = "suppression_cleared")
     }
 
     private fun shouldResumeFromTransientForeground(packageName: String): Boolean {
-        val nowElapsedMs = SystemClock.elapsedRealtime()
-        if (transientForegroundPackage != packageName) {
-            transientForegroundPackage = packageName
-            transientForegroundSinceElapsedMs = nowElapsedMs
-            return false
-        }
-
-        val seenForMs = (nowElapsedMs - transientForegroundSinceElapsedMs).coerceAtLeast(0L)
-        return seenForMs >= TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS
+        return transientSignalPolicy.shouldResumeFromTransientForeground(packageName)
     }
 
     private fun resetTransientForegroundTracking() {
-        transientForegroundPackage = null
-        transientForegroundSinceElapsedMs = 0L
-        transientSystemUiSeenElapsedMs = 0L
-        transientAodSeenElapsedMs = 0L
+        transientSignalPolicy.resetTransientForegroundTracking()
     }
 
     private fun trackTransientExitPattern(packageName: String) {
-        val nowElapsedMs = SystemClock.elapsedRealtime()
-        when {
-            packageName.startsWith("com.android.systemui") -> transientSystemUiSeenElapsedMs = nowElapsedMs
-            packageName.startsWith("com.samsung.android.app.aodservice") -> transientAodSeenElapsedMs = nowElapsedMs
-        }
+        transientSignalPolicy.trackTransientExitPattern(packageName)
     }
 
     private fun shouldResumeFromTransientExitPattern(suppressedForMs: Long): Boolean {
-        if (suppressionReason != SuppressionReason.APP_LAUNCH) return false
-        if (suppressedForMs < TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS) return false
-        if (transientSystemUiSeenElapsedMs <= 0L || transientAodSeenElapsedMs <= 0L) return false
-
-        val nowElapsedMs = SystemClock.elapsedRealtime()
-        val systemUiAgeMs = (nowElapsedMs - transientSystemUiSeenElapsedMs).coerceAtLeast(0L)
-        val aodAgeMs = (nowElapsedMs - transientAodSeenElapsedMs).coerceAtLeast(0L)
-        return systemUiAgeMs <= TRANSIENT_EXIT_PATTERN_WINDOW_MS &&
-            aodAgeMs <= TRANSIENT_EXIT_PATTERN_WINDOW_MS
+        return transientSignalPolicy.shouldResumeFromTransientExitPattern(
+            suppressionReason = suppressionReason,
+            suppressedForMs = suppressedForMs
+        )
     }
 
     private fun logResumeDecision(reason: String, decision: String, detail: String? = null) {
