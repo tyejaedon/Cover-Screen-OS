@@ -34,18 +34,27 @@ class ForegroundService : Service() {
     companion object {
         private const val LOG_TAG = "CoverForegroundService"
         private const val DISPLAY_CHANGE_DEBOUNCE_MS = 450L
-        private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 250L
-        private const val APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS = 450L
+        private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 60L
+        private const val APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS = 120L
         private const val APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS = 2_500L
-        private const val APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT = 2
+        private const val APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT = 1
         private const val APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS = 45_000L
+        private const val APP_LAUNCH_RESUME_MIN_LAUNCHER_MS = 300L
+        private const val TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS = 120L
+        private const val TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS = 700L
+        private const val TRANSIENT_EXIT_PATTERN_WINDOW_MS = 1_800L
         private const val INCOMING_CALL_SUPPRESSION_MAX_MS = 7_200_000L
         private const val INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS = 5_000L
-        private const val OVERLAY_RECLAIM_MIN_INTERVAL_MS = 500L
+        private const val OVERLAY_RECLAIM_MIN_INTERVAL_MS = 80L
         private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
 
         private val TRANSIENT_SYSTEM_UI_PREFIXES = arrayOf(
             "com.android.systemui",
+            "com.samsung.systemui",
+            "com.samsung.android.app.aodservice"
+        )
+
+        private val TRANSIENT_SYSTEM_UI_RESUME_SAFE_PREFIXES = arrayOf(
             "com.samsung.systemui",
             "com.samsung.android.app.aodservice"
         )
@@ -57,6 +66,12 @@ class ForegroundService : Service() {
             "com.sec.android.app.launcher",
             "com.samsung.android.app.cocktailbarservice",
             "com.samsung.android.app.clockface"
+        )
+
+        private val LAUNCHER_PACKAGE_PREFIXES = arrayOf(
+            "com.sec.android.app.launcher",
+            "com.android.launcher",
+            "com.google.android.apps.nexuslauncher"
         )
 
         @Volatile
@@ -133,6 +148,10 @@ class ForegroundService : Service() {
     private var callNotificationPackage: String? = null
     private var callNotificationLastSignalElapsedMs: Long = 0L
     private var pendingRetargetReason: String? = null
+    private var transientForegroundPackage: String? = null
+    private var transientForegroundSinceElapsedMs: Long = 0L
+    private var transientSystemUiSeenElapsedMs: Long = 0L
+    private var transientAodSeenElapsedMs: Long = 0L
 
     private enum class SuppressionReason {
         NONE,
@@ -489,8 +508,12 @@ class ForegroundService : Service() {
     }
 
     private fun maybeResumeOverlayAfterAppLaunch(reason: String) {
-        if (!isOverlaySuppressedForAppLaunch) return
+        if (!isOverlaySuppressedForAppLaunch) {
+            logResumeDecision(reason = reason, decision = "skip_not_suppressed")
+            return
+        }
         if (!overlayRequested) {
+            logResumeDecision(reason = reason, decision = "clear_no_overlay_request")
             clearAppLaunchSuppression()
             return
         }
@@ -502,25 +525,110 @@ class ForegroundService : Service() {
             SuppressionReason.NONE -> APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS
         }
         if (suppressedForMs >= maxSuppressionMs) {
+            logResumeDecision(
+                reason = reason,
+                decision = "resume_timeout",
+                detail = "suppressedForMs=$suppressedForMs maxSuppressionMs=$maxSuppressionMs"
+            )
             completeSuppressionAndRetargetOnce(
                 reason = "resume_after_suppression_timeout:${suppressionReason.name.lowercase()}:$reason"
             )
             return
         }
-        if (suppressedForMs < APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS) return
+        if (suppressedForMs < APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS) {
+            logResumeDecision(
+                reason = reason,
+                decision = "wait_min_suppression",
+                detail = "suppressedForMs=$suppressedForMs requiredMs=$APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS"
+            )
+            return
+        }
 
         if (coverDisplayHelper.getDisplayLockStatus()) {
+            logResumeDecision(reason = reason, decision = "resume_locked")
             completeSuppressionAndRetargetOnce(reason = "resume_after_app_launch_locked:$reason")
             return
         }
 
         if (shouldKeepOverlaySuppressedForIncomingCall()) {
+            logResumeDecision(
+                reason = reason,
+                decision = "hold_incoming_call",
+                detail = "incomingCallPackage=$incomingCallPassthroughPackage callNotificationActive=$callNotificationActive"
+            )
             return
         }
 
-        val foregroundPackage = resolveForegroundPackageForResume() ?: return
-        if (reason == "poll" && isTransientSystemUiPackage(foregroundPackage)) return
-        if (!reason.startsWith("reclaim:") && !hasStableResumeSignal(foregroundPackage)) return
+        val foregroundPackage = resolveForegroundPackageForResume()
+        if (foregroundPackage == null) {
+            logResumeDecision(reason = reason, decision = "wait_no_eligible_foreground")
+            return
+        }
+        var hasTransientResumeSignal = false
+        if (reason == "poll" && isTransientSystemUiPackage(foregroundPackage)) {
+            trackTransientExitPattern(foregroundPackage)
+
+            if (shouldResumeFromTransientExitPattern(suppressedForMs)) {
+                logResumeDecision(
+                    reason = reason,
+                    decision = "resume_transient_exit_pattern",
+                    detail = "foreground=$foregroundPackage minSuppressionMs=$TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS"
+                )
+                hasTransientResumeSignal = true
+            } else {
+            if (!isTransientForegroundSafeForResume(foregroundPackage)) {
+                logResumeDecision(
+                    reason = reason,
+                    decision = "block_transient_resume_package",
+                    detail = "foreground=$foregroundPackage"
+                )
+                return
+            }
+            if (!shouldResumeFromTransientForeground(foregroundPackage)) {
+                logResumeDecision(
+                    reason = reason,
+                    decision = "skip_transient_poll",
+                    detail = "foreground=$foregroundPackage"
+                )
+                return
+            }
+            logResumeDecision(
+                reason = reason,
+                decision = "resume_after_transient_grace",
+                detail = "foreground=$foregroundPackage graceMs=$TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS"
+            )
+            hasTransientResumeSignal = true
+            }
+        } else {
+            resetTransientForegroundTracking()
+        }
+        if (!reason.startsWith("reclaim:") && !hasTransientResumeSignal && !hasStableResumeSignal(foregroundPackage)) {
+            logResumeDecision(
+                reason = reason,
+                decision = "wait_stability",
+                detail = "foreground=$foregroundPackage stableCount=$resumeSignalStableCount required=$APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT"
+            )
+            return
+        }
+
+        if (!reason.startsWith("reclaim:") &&
+            suppressionReason == SuppressionReason.APP_LAUNCH &&
+            isLauncherPackageForResume(foregroundPackage) &&
+            suppressedForMs < APP_LAUNCH_RESUME_MIN_LAUNCHER_MS
+        ) {
+            logResumeDecision(
+                reason = reason,
+                decision = "wait_launcher_guard",
+                detail = "foreground=$foregroundPackage suppressedForMs=$suppressedForMs requiredMs=$APP_LAUNCH_RESUME_MIN_LAUNCHER_MS"
+            )
+            return
+        }
+
+        logResumeDecision(
+            reason = reason,
+            decision = "resume_now",
+            detail = "foreground=$foregroundPackage suppressedForMs=$suppressedForMs"
+        )
 
         completeSuppressionAndRetargetOnce(reason = "resume_after_app_launch:$foregroundPackage:$reason")
     }
@@ -542,9 +650,36 @@ class ForegroundService : Service() {
     }
 
     private fun resolveForegroundPackageForResume(): String? {
-        val foregroundPackage = CoverAccessibilityService.currentForegroundPackage()?.trim()?.takeUnless { it.isEmpty() } ?: return null
-        if (CoverAccessibilityService.currentForegroundPackageEventAgeMs() > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) return null
-        if (!shouldResumeOverlayForPackage(foregroundPackage)) return null
+        val foregroundPackage = CoverAccessibilityService.currentForegroundPackage()?.trim()?.takeUnless { it.isEmpty() }
+            ?: run {
+                logResumeDecision(reason = "resolve", decision = "no_foreground_package")
+                return null
+            }
+        val eventAgeMs = CoverAccessibilityService.currentForegroundPackageEventAgeMs()
+        if (eventAgeMs > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) {
+            if (isTransientSystemUiPackage(foregroundPackage) && isTransientForegroundSafeForResume(foregroundPackage)) {
+                logResumeDecision(
+                    reason = "resolve",
+                    decision = "stale_transient_allowed",
+                    detail = "foreground=$foregroundPackage eventAgeMs=$eventAgeMs"
+                )
+                return foregroundPackage
+            }
+            logResumeDecision(
+                reason = "resolve",
+                decision = "stale_foreground_event",
+                detail = "foreground=$foregroundPackage eventAgeMs=$eventAgeMs maxAgeMs=$APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS"
+            )
+            return null
+        }
+        if (!shouldResumeOverlayForPackage(foregroundPackage)) {
+            logResumeDecision(
+                reason = "resolve",
+                decision = "foreground_not_eligible",
+                detail = "foreground=$foregroundPackage launchedPackage=$launchSuppressedPackageName"
+            )
+            return null
+        }
         return foregroundPackage
     }
 
@@ -556,6 +691,12 @@ class ForegroundService : Service() {
     }
 
     private fun isTransientSystemUiPackage(packageName: String): Boolean = TRANSIENT_SYSTEM_UI_PREFIXES.any { packageName.startsWith(it) }
+
+    private fun isTransientForegroundSafeForResume(packageName: String): Boolean {
+        return TRANSIENT_SYSTEM_UI_RESUME_SAFE_PREFIXES.any { packageName.startsWith(it) }
+    }
+
+    private fun isLauncherPackageForResume(packageName: String): Boolean = LAUNCHER_PACKAGE_PREFIXES.any { packageName.startsWith(it) }
 
     private fun isIncomingCallPackage(packageName: String): Boolean = CallPackageMatchers.isIncomingCallPackage(packageName)
 
@@ -660,8 +801,63 @@ class ForegroundService : Service() {
         suppressionReason = SuppressionReason.NONE
         launchSuppressedPackageName = null
         launchSuppressedStartedElapsedMs = 0L
+        resetTransientForegroundTracking()
         resetResumeSignalStability()
         clearIncomingCallPassthrough(reason = "suppression_cleared")
+    }
+
+    private fun shouldResumeFromTransientForeground(packageName: String): Boolean {
+        val nowElapsedMs = SystemClock.elapsedRealtime()
+        if (transientForegroundPackage != packageName) {
+            transientForegroundPackage = packageName
+            transientForegroundSinceElapsedMs = nowElapsedMs
+            return false
+        }
+
+        val seenForMs = (nowElapsedMs - transientForegroundSinceElapsedMs).coerceAtLeast(0L)
+        return seenForMs >= TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS
+    }
+
+    private fun resetTransientForegroundTracking() {
+        transientForegroundPackage = null
+        transientForegroundSinceElapsedMs = 0L
+        transientSystemUiSeenElapsedMs = 0L
+        transientAodSeenElapsedMs = 0L
+    }
+
+    private fun trackTransientExitPattern(packageName: String) {
+        val nowElapsedMs = SystemClock.elapsedRealtime()
+        when {
+            packageName.startsWith("com.android.systemui") -> transientSystemUiSeenElapsedMs = nowElapsedMs
+            packageName.startsWith("com.samsung.android.app.aodservice") -> transientAodSeenElapsedMs = nowElapsedMs
+        }
+    }
+
+    private fun shouldResumeFromTransientExitPattern(suppressedForMs: Long): Boolean {
+        if (suppressionReason != SuppressionReason.APP_LAUNCH) return false
+        if (suppressedForMs < TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS) return false
+        if (transientSystemUiSeenElapsedMs <= 0L || transientAodSeenElapsedMs <= 0L) return false
+
+        val nowElapsedMs = SystemClock.elapsedRealtime()
+        val systemUiAgeMs = (nowElapsedMs - transientSystemUiSeenElapsedMs).coerceAtLeast(0L)
+        val aodAgeMs = (nowElapsedMs - transientAodSeenElapsedMs).coerceAtLeast(0L)
+        return systemUiAgeMs <= TRANSIENT_EXIT_PATTERN_WINDOW_MS &&
+            aodAgeMs <= TRANSIENT_EXIT_PATTERN_WINDOW_MS
+    }
+
+    private fun logResumeDecision(reason: String, decision: String, detail: String? = null) {
+        if (!Log.isLoggable(OVERLAY_RECLAIM_LOG_TAG, Log.DEBUG)) return
+
+        val suppressedForMs = if (launchSuppressedStartedElapsedMs > 0L) {
+            (SystemClock.elapsedRealtime() - launchSuppressedStartedElapsedMs).coerceAtLeast(0L)
+        } else {
+            -1L
+        }
+        val detailSuffix = detail?.let { " $it" } ?: ""
+        Log.d(
+            OVERLAY_RECLAIM_LOG_TAG,
+            "resume decision=$decision reason=$reason suppressionReason=${suppressionReason.name} suppressed=$isOverlaySuppressedForAppLaunch suppressedForMs=$suppressedForMs overlayRequested=$overlayRequested launchedPackage=$launchSuppressedPackageName incomingCallPackage=$incomingCallPassthroughPackage callNotificationActive=$callNotificationActive$detailSuffix"
+        )
     }
 
     private fun stopServiceForMissingPrerequisites(reason: String) {

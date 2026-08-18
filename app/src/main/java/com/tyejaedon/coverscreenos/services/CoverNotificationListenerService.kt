@@ -14,6 +14,8 @@ import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSession
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -28,6 +30,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import androidx.core.graphics.createBitmap
 
 class CoverNotificationListenerService : NotificationListenerService() {
+
+    private val callbackHandler by lazy { Handler(Looper.getMainLooper()) }
+    @Volatile
+    private var refreshScheduled = false
+
+    @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
+    private val refreshRunnable = Runnable {
+        refreshScheduled = false
+        refreshActiveNotifications()
+    }
 
     companion object {
         private const val MEDIA_STYLE_TEMPLATE_CLASS = "android.app.Notification\$MediaStyle"
@@ -177,7 +189,10 @@ class CoverNotificationListenerService : NotificationListenerService() {
         activeService = this
     }
 
+    @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     override fun onDestroy() {
+        callbackHandler.removeCallbacks(refreshRunnable)
+        refreshScheduled = false
         if (activeService === this) {
             activeService = null
         }
@@ -192,11 +207,14 @@ class CoverNotificationListenerService : NotificationListenerService() {
         super.onListenerConnected()
         activeService = this
         listenerConnected = true
-        refreshActiveNotifications()
+        scheduleNotificationRefresh()
         Log.d(NOTIFICATION_LOG_TAG, "Notification listener connected")
     }
 
+    @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     override fun onListenerDisconnected() {
+        callbackHandler.removeCallbacks(refreshRunnable)
+        refreshScheduled = false
         if (activeService === this) {
             activeService = null
         }
@@ -209,14 +227,23 @@ class CoverNotificationListenerService : NotificationListenerService() {
 
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        refreshActiveNotifications()
         super.onNotificationPosted(sbn)
+        scheduleNotificationRefresh()
     }
 
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        refreshActiveNotifications()
         super.onNotificationRemoved(sbn)
+        scheduleNotificationRefresh()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
+    private fun scheduleNotificationRefresh() {
+        if (!listenerConnected) return
+        if (refreshScheduled) return
+        refreshScheduled = true
+        // Coalesce bursty posted/removed callbacks and avoid binder-heavy work in callback context.
+        callbackHandler.post(refreshRunnable)
     }
 
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
