@@ -92,6 +92,10 @@ class ForegroundService : Service() {
             action = ACTION_HIDE_OVERLAY
             packageName?.trim()?.takeUnless { it.isEmpty() }?.let { putExtra(EXTRA_LAUNCH_PACKAGE_NAME, it) }
         }
+
+        fun isServiceRuntimeActive(): Boolean {
+            return activeServiceRef?.get() != null
+        }
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())

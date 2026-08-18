@@ -66,7 +66,7 @@ fun PermissionScreen(
         mutableStateOf(AppPermissionHelper.hasGalleryMediaPermissions(context))
     }
     var isForegroundServiceRunning by remember {
-        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning(context))
+        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning())
     }
     var hasTriggeredGrantedCallback by remember { mutableStateOf(false) }
 
@@ -77,7 +77,7 @@ fun PermissionScreen(
         hasNotificationListenerPermission = AppPermissionHelper.isNotificationListenerEnabled(context)
         hasBatteryOptimizationExemption = AppPermissionHelper.isBatteryOptimizationDisabled(context)
         hasGalleryMediaPermission = AppPermissionHelper.hasGalleryMediaPermissions(context)
-        isForegroundServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning(context)
+        isForegroundServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning()
     }
 
     val requestNotificationPermissionLauncher = rememberLauncherForActivityResult(

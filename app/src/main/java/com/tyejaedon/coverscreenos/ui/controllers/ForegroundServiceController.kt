@@ -43,13 +43,13 @@ fun ForegroundServiceController(
 ) {
     val context = LocalContext.current
     var isServiceRunning by remember {
-        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning(context))
+        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning())
     }
     var lastCheckedAt by remember { mutableStateOf(currentStatusTimestamp()) }
     var lastActionFeedback by remember { mutableStateOf<String?>(null) }
 
     fun refreshServiceState() {
-        isServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning(context)
+        isServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning()
         lastCheckedAt = currentStatusTimestamp()
     }
 

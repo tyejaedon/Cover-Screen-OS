@@ -112,7 +112,7 @@ fun DeploymentStatusScreen(modifier: Modifier = Modifier) {
         mutableStateOf(AppPermissionHelper.isBatteryOptimizationDisabled(context))
     }
     var serviceRunning by remember(refreshTicker) {
-        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning(context))
+        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning())
     }
 
     fun refreshStatus() {
@@ -121,7 +121,7 @@ fun DeploymentStatusScreen(modifier: Modifier = Modifier) {
         accessibilityReady = AppPermissionHelper.isAccessibilityServiceEnabled(context)
         notificationListenerReady = AppPermissionHelper.isNotificationListenerEnabled(context)
         batteryOptimizationReady = AppPermissionHelper.isBatteryOptimizationDisabled(context)
-        serviceRunning = ForegroundServiceHelper.isForegroundServiceRunning(context)
+        serviceRunning = ForegroundServiceHelper.isForegroundServiceRunning()
     }
 
     // Keep status cards fresh even when users toggle settings outside this screen.
