@@ -90,12 +90,11 @@ internal class OverlayWindowController(
                         CoverAppGridOverlay(
                             repository = appRepository,
                             onAppSelected = { appModel ->
-                                if (LockStatusReceiver.currentLockStatus(composeContext)) {
-                                    Log.d("OverlayWindowController", "Blocked app tap while locked package=${appModel.packageName}")
-                                    return@CoverAppGridOverlay
-                                }
-
                                 val packageName = appModel.packageName
+                                Log.d(
+                                    "OverlayWindowController",
+                                    "App tap received package=$packageName locked=${LockStatusReceiver.currentLockStatus(composeContext)}"
+                                )
                                 val coordinator = launchCoordinator
                                 val readyToLaunch = coordinator?.beginLaunch(packageName) ?: true
 

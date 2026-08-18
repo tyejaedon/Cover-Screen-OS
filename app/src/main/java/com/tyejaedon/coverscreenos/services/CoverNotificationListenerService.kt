@@ -4,7 +4,6 @@ import android.app.PendingIntent
 import android.app.ActivityOptions
 import android.app.KeyguardManager
 import android.content.Context
-import android.content.Intent
 import android.app.Notification
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -32,6 +31,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
 
     companion object {
         private const val MEDIA_STYLE_TEMPLATE_CLASS = "android.app.Notification\$MediaStyle"
+        private const val NOTIFICATION_LOG_TAG = "CoverNotifListener"
 
         @Volatile
         private var listenerConnected: Boolean = false
@@ -40,8 +40,16 @@ class CoverNotificationListenerService : NotificationListenerService() {
         private var activeService: CoverNotificationListenerService? = null
 
         private val activeNotificationModels = MutableStateFlow<List<CoverNotificationModel>>(emptyList())
+        private var lastCallNotificationState: Pair<Boolean, String?> = false to null
 
-        fun isListenerConnected(): Boolean = listenerConnected
+        private fun createPendingIntentLaunchOptions(): android.os.Bundle {
+            return ActivityOptions.makeBasic().apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+                    pendingIntentBackgroundActivityStartMode =
+                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
+                }
+            }.toBundle()
+        }
 
         fun activeNotificationsFlow(): StateFlow<List<CoverNotificationModel>> {
             return activeNotificationModels.asStateFlow()
@@ -53,14 +61,14 @@ class CoverNotificationListenerService : NotificationListenerService() {
                 service.cancelNotification(notificationKey)
                 true
             }.getOrElse { error ->
-                Log.w("CoverNotifListener", "Dismiss failed key=$notificationKey error=${error.message}")
+                Log.w(NOTIFICATION_LOG_TAG, "Dismiss failed key=$notificationKey error=${error.message}")
                 false
             }
         }
 
         fun openNotificationFromOverlay(context: Context, model: CoverNotificationModel): Boolean {
             if (isDeviceLocked(context)) {
-                Log.d("CoverNotifListener", "Blocked notification open while locked key=${model.notificationKey}")
+                Log.d(NOTIFICATION_LOG_TAG, "Blocked notification open while locked key=${model.notificationKey}")
                 return false
             }
 
@@ -79,10 +87,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
             val contentIntent = targetSbn?.notification?.contentIntent
             if (contentIntent != null) {
                 val launchedFromIntent = runCatching {
-                    val options = ActivityOptions.makeBasic().apply {
-                        pendingIntentBackgroundActivityStartMode =
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
-                    }.toBundle()
+                    val options = createPendingIntentLaunchOptions()
                     contentIntent.send(context, 0, null, null, null, null, options)
                     true
                 }.getOrElse { error ->
@@ -91,14 +96,14 @@ class CoverNotificationListenerService : NotificationListenerService() {
                     } else {
                         "Notification content intent failed key=${model.notificationKey} error=${error.message}"
                     }
-                    Log.w("CoverNotifListener", message)
+                    Log.w(NOTIFICATION_LOG_TAG, message)
                     false
                 }
                 if (launchedFromIntent) return true
             }
 
             if (!launchAcknowledged) {
-                Log.w("CoverNotifListener", "Overlay suppression dispatch failed package=${model.packageName}")
+                Log.w(NOTIFICATION_LOG_TAG, "Overlay suppression dispatch failed package=${model.packageName}")
             }
 
             return CoverAppLauncher.launchPackageOnDisplay(
@@ -109,10 +114,6 @@ class CoverNotificationListenerService : NotificationListenerService() {
         }
 
         fun launchNotificationSourceApp(context: Context, packageName: String): Boolean {
-            if (isDeviceLocked(context)) {
-                Log.d("CoverNotifListener", "Blocked source-app launch while locked package=$packageName")
-                return false
-            }
 
             runCatching {
                 context.startService(ForegroundService.createHideOverlayIntent(context, packageName))
@@ -148,15 +149,8 @@ class CoverNotificationListenerService : NotificationListenerService() {
 
             val intent = targetAction.actionIntent ?: return false
             return runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    val options = ActivityOptions.makeBasic().apply {
-                        pendingIntentBackgroundActivityStartMode =
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
-                    }.toBundle()
-                    intent.send(service, 0, null, null, null, null, options)
-                } else {
-                    intent.send(service, 0, null)
-                }
+                val options = createPendingIntentLaunchOptions()
+                intent.send(service, 0, null, null, null, null, options)
                 true
             }.getOrElse { error ->
                 val message = if (error is PendingIntent.CanceledException) {
@@ -164,14 +158,14 @@ class CoverNotificationListenerService : NotificationListenerService() {
                 } else {
                     "Notification action failed key=$notificationKey requestedLabel=$requestedLabel resolvedLabel=${targetAction.title} error=${error.message}"
                 }
-                Log.w("CoverNotifListener", message)
+                Log.w(NOTIFICATION_LOG_TAG, message)
                 false
             }
         }
 
         private fun isDeviceLocked(context: Context): Boolean {
             if (LockStatusReceiver.currentLockStatus(context)) return true
-            val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            val keyguardManager = context.getSystemService(KeyguardManager::class.java)
             return keyguardManager?.isDeviceLocked
                 ?: keyguardManager?.isKeyguardLocked
                 ?: true
@@ -189,6 +183,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
         }
         listenerConnected = false
         activeNotificationModels.value = emptyList()
+        dispatchCallNotificationState(isActive = false, packageName = null)
         super.onDestroy()
     }
 
@@ -198,7 +193,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
         activeService = this
         listenerConnected = true
         refreshActiveNotifications()
-        Log.d("CoverNotifListener", "Notification listener connected")
+        Log.d(NOTIFICATION_LOG_TAG, "Notification listener connected")
     }
 
     override fun onListenerDisconnected() {
@@ -207,7 +202,8 @@ class CoverNotificationListenerService : NotificationListenerService() {
         }
         listenerConnected = false
         activeNotificationModels.value = emptyList()
-        Log.d("CoverNotifListener", "Notification listener disconnected")
+        dispatchCallNotificationState(isActive = false, packageName = null)
+        Log.d(NOTIFICATION_LOG_TAG, "Notification listener disconnected")
         super.onListenerDisconnected()
     }
 
@@ -225,41 +221,101 @@ class CoverNotificationListenerService : NotificationListenerService() {
 
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     private fun refreshActiveNotifications() {
+        val activeSbns = runCatching {
+            this.activeNotifications.toList()
+        }.getOrElse { error ->
+            Log.w(NOTIFICATION_LOG_TAG, "Unable to query active notifications: ${error.message}")
+            emptyList()
+        }
+
         val snapshot = runCatching {
-            this.activeNotifications
+            activeSbns
                 .asSequence()
                 .mapNotNull { sbn -> sbn.toCoverNotificationModel() }
                 .sortedByDescending { model -> model.postTime }
                 .toList()
         }.getOrElse { error ->
-            Log.w("CoverNotifListener", "Unable to refresh notifications: ${error.message}")
+            Log.w(NOTIFICATION_LOG_TAG, "Unable to refresh notifications: ${error.message}")
             emptyList()
         }
 
         activeNotificationModels.value = snapshot
+
+        val activeCallPackage = activeSbns
+            .asSequence()
+            .filter { sbn -> sbn.isLikelyActiveCallNotification() }
+            .maxByOrNull { sbn -> sbn.postTime }
+            ?.packageName
+            ?.trim()
+            ?.takeUnless { it.isEmpty() }
+        dispatchCallNotificationState(
+            isActive = activeCallPackage != null,
+            packageName = activeCallPackage
+        )
+    }
+
+    private fun dispatchCallNotificationState(isActive: Boolean, packageName: String?) {
+        val normalizedPackage = packageName?.trim()?.takeUnless { it.isEmpty() }
+        val normalizedState = isActive to normalizedPackage
+        if (lastCallNotificationState == normalizedState) return
+
+        lastCallNotificationState = normalizedState
+        ForegroundService.updateCallNotificationState(
+            isActive = isActive,
+            packageName = normalizedPackage
+        )
     }
 
     private fun findNotificationByKey(notificationKey: String): StatusBarNotification? {
         return runCatching {
             activeNotifications.firstOrNull { item -> item.key == notificationKey }
         }.getOrElse { error ->
-            Log.w("CoverNotifListener", "Unable to query active notification key=$notificationKey error=${error.message}")
+            Log.w(NOTIFICATION_LOG_TAG, "Unable to query active notification key=$notificationKey error=${error.message}")
             null
         }
+    }
+
+    private fun StatusBarNotification.isLikelyActiveCallNotification(): Boolean {
+        val callPackage = packageName.trim().takeUnless { it.isEmpty() }
+        val notificationCategory = notification.category.orEmpty()
+        if (callPackage != null && CallPackageMatchers.isIncomingCallPackage(callPackage)) {
+            return isOngoing || notificationCategory == Notification.CATEGORY_CALL
+        }
+
+        if (notificationCategory == Notification.CATEGORY_CALL) {
+            return true
+        }
+
+        if (!isOngoing && (notification.flags and Notification.FLAG_ONGOING_EVENT) == 0) {
+            return false
+        }
+
+        val extras = notification.extras
+        val mergedText = buildString {
+            append(extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty())
+            append(' ')
+            append(extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty())
+            append(' ')
+            append(extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty())
+        }.trim().lowercase()
+
+        return mergedText.contains("incoming call") ||
+            mergedText.contains("ringing") ||
+            mergedText.contains("calling")
     }
 
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     private fun StatusBarNotification.toCoverNotificationModel(): CoverNotificationModel? {
         val extras = notification.extras ?: return null
         val actions = notification.actions.orEmpty()
-        val resolvedTitle = extras.getCharSequence(android.app.Notification.EXTRA_TITLE)
+        val resolvedTitle = extras.getCharSequence(Notification.EXTRA_TITLE)
             ?.toString()
             ?.trim()
             .orEmpty()
         val resolvedText = (
-            extras.getCharSequence(android.app.Notification.EXTRA_BIG_TEXT)
-                ?: extras.getCharSequence(android.app.Notification.EXTRA_TEXT)
-                ?: extras.getCharSequence(android.app.Notification.EXTRA_SUB_TEXT)
+            extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
+                ?: extras.getCharSequence(Notification.EXTRA_TEXT)
+                ?: extras.getCharSequence(Notification.EXTRA_SUB_TEXT)
             )
             ?.toString()
             ?.trim()
@@ -371,9 +427,6 @@ class CoverNotificationListenerService : NotificationListenerService() {
         val largeIconBig = getParcelableBitmap(extras, Notification.EXTRA_LARGE_ICON_BIG)
         if (largeIconBig != null) return largeIconBig
 
-        val largeIcon = getParcelableBitmap(extras, Notification.EXTRA_LARGE_ICON)
-        if (largeIcon != null) return largeIcon
-
         val notificationLargeIcon = runCatching { notification.getLargeIcon() }.getOrNull()
         return notificationLargeIcon?.let { icon -> iconToBitmap(icon) }
     }
@@ -385,7 +438,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
 
         val metadata = runCatching { MediaController(this, token).metadata }
             .getOrElse { error ->
-                Log.d("CoverNotifListener", "Unable to read media metadata from session: ${error.message}")
+                Log.d(NOTIFICATION_LOG_TAG, "Unable to read media metadata from session: ${error.message}")
                 null
             } ?: return null
 
@@ -402,26 +455,31 @@ class CoverNotificationListenerService : NotificationListenerService() {
     }
 
     private fun getParcelableBitmap(extras: android.os.Bundle, key: String): Bitmap? {
-        val rawValue = runCatching {
-            extras.getParcelable(key, android.os.Parcelable::class.java)
-                ?: extras.get(key)
+        val bitmapValue = runCatching {
+            extras.getParcelable(key, Bitmap::class.java)
         }.getOrElse { error ->
-            Log.w("CoverNotifListener", "Unable to read notification extra key=$key: ${error.message}")
+            Log.w(NOTIFICATION_LOG_TAG, "Unable to read bitmap extra key=$key: ${error.message}")
+            null
+        }
+        if (bitmapValue != null) {
+            return toArgb8888Bitmap(bitmapValue)
+        }
+
+        val iconValue = runCatching {
+            extras.getParcelable(key, Icon::class.java)
+        }.getOrElse { error ->
+            Log.w(NOTIFICATION_LOG_TAG, "Unable to read icon extra key=$key: ${error.message}")
             null
         } ?: return null
 
-        val resolvedBitmap = when (rawValue) {
-            is Bitmap -> rawValue
-            is Icon -> iconToBitmap(rawValue)
-            else -> null
-        }
-        return resolvedBitmap?.let { bitmap -> toArgb8888Bitmap(bitmap) }
+        return iconToBitmap(iconValue)?.let { bitmap -> toArgb8888Bitmap(bitmap) }
     }
+
 
     private fun iconToBitmap(icon: Icon): Bitmap? {
         val drawable = runCatching { icon.loadDrawable(this) }
             .getOrElse { error ->
-                Log.w("CoverNotifListener", "Unable to load Icon drawable for media artwork: ${error.message}")
+                Log.w(NOTIFICATION_LOG_TAG, "Unable to load Icon drawable for media artwork: ${error.message}")
                 null
             } ?: return null
         return drawableToBitmap(drawable)?.let { bitmap -> toArgb8888Bitmap(bitmap) }
@@ -441,7 +499,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
             drawable.draw(canvas)
             bitmap
         }.getOrElse { error ->
-            Log.w("CoverNotifListener", "Unable to convert drawable to bitmap for media artwork: ${error.message}")
+            Log.w(NOTIFICATION_LOG_TAG, "Unable to convert drawable to bitmap for media artwork: ${error.message}")
             null
         }
     }
