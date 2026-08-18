@@ -2,6 +2,7 @@
 
 package com.tyejaedon.coverscreenos.ui
 
+import android.Manifest
 import android.content.Context
 import android.content.BroadcastReceiver
 import android.content.Intent
@@ -16,8 +17,12 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.BatteryManager
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Log
 import android.util.LruCache
 import androidx.compose.animation.AnimatedVisibility
@@ -54,6 +59,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -73,12 +79,17 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Dialpad
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -88,6 +99,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxDefaults
@@ -104,6 +116,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -117,6 +130,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -124,7 +139,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -132,11 +149,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.MAX_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_DIM_AMOUNT
+import com.tyejaedon.coverscreenos.datastore.SearchInputMode
 import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
@@ -197,9 +216,20 @@ private const val NOTIFICATION_PANEL_BLUR_DOWNSAMPLE = 6
 private const val WALLPAPER_RETRY_BACKOFF_MS = 4_000L
 private const val WALLPAPER_OVERLAY_RETRY_DELAY_MS = 600L
 private const val WALLPAPER_OVERLAY_RETRY_MAX_ATTEMPTS = 6
+private const val SEARCH_QUERY_MAX_LENGTH = 64
 
 private val GRID_TILE_GAP = 6.dp
 private val GRID_CONTENT_PADDING = coverScreenContentPadding(horizontal = 6.dp, vertical = 2.dp)
+private val T9_KEYPAD_ROWS: List<List<T9ButtonSpec>> = listOf(
+    listOf(T9ButtonSpec("1", ""), T9ButtonSpec("2", "ABC"), T9ButtonSpec("3", "DEF")),
+    listOf(T9ButtonSpec("4", "GHI"), T9ButtonSpec("5", "JKL"), T9ButtonSpec("6", "MNO")),
+    listOf(T9ButtonSpec("7", "PQRS"), T9ButtonSpec("8", "TUV"), T9ButtonSpec("9", "WXYZ"))
+)
+
+private data class T9ButtonSpec(
+    val digit: String,
+    val letters: String
+)
 
 private data class CoverDisplayPolishSpec(
     val statusChipMinHeight: Dp,
@@ -433,7 +463,9 @@ fun CoverAppGridOverlay(
     wallpaperUri: String? = null,
     wallpaperScaleMode: WallpaperScaleMode = WallpaperScaleMode.CROP,
     wallpaperDimAmount: Float = DEFAULT_WALLPAPER_DIM_AMOUNT,
-    wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP
+    wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP,
+    searchInputMode: SearchInputMode = SearchInputMode.T9,
+    onSearchInputModeChanged: (SearchInputMode) -> Unit = {}
 ) {
     val context = LocalContext.current
     val packageManager = remember(context) { context.packageManager }
@@ -477,6 +509,10 @@ fun CoverAppGridOverlay(
 
     val apps = appsState.value
     val notifications by CoverNotificationListenerService.activeNotificationsFlow().collectAsState()
+    var searchQuery by remember { mutableStateOf("") }
+    var isT9KeyboardVisible by remember(searchInputMode) {
+        mutableStateOf(searchInputMode == SearchInputMode.T9)
+    }
 
     // Prewarm icon bitmaps into LRU
     LaunchedEffect(apps) {
@@ -496,12 +532,27 @@ fun CoverAppGridOverlay(
         resolveDockSlots(apps = apps, dockPackageSlots = dockPackageSlots)
     }
     val constrainedWallpaperDim = wallpaperDimAmount.coerceIn(MIN_WALLPAPER_DIM_AMOUNT, MAX_WALLPAPER_DIM_AMOUNT)
-    val appPages = remember(apps) { apps.chunked(APPS_PER_GRID_PAGE) }
+    val filteredApps = remember(apps, searchQuery) {
+        filterAppsForSearchQuery(apps = apps, query = searchQuery)
+    }
+    val appPages = remember(filteredApps) {
+        if (filteredApps.isEmpty()) listOf(emptyList()) else filteredApps.chunked(APPS_PER_GRID_PAGE)
+    }
     val totalPageCount = FIRST_APP_GRID_PAGE_INDEX + appPages.size
     val pagerState = rememberPagerState(
         initialPage = LOCK_PAGER_PAGE_INDEX,
         pageCount = { totalPageCount }
     )
+
+    LaunchedEffect(searchQuery, pagerState.pageCount) {
+        if (
+            searchQuery.isNotBlank() &&
+            pagerState.currentPage < FIRST_APP_GRID_PAGE_INDEX &&
+            pagerState.pageCount > FIRST_APP_GRID_PAGE_INDEX
+        ) {
+            pagerState.scrollToPage(FIRST_APP_GRID_PAGE_INDEX)
+        }
+    }
 
     val isAppGridPage = pagerState.currentPage >= FIRST_APP_GRID_PAGE_INDEX
     val displayPolishSpec = rememberCoverDisplayPolishSpec()
@@ -565,6 +616,16 @@ fun CoverAppGridOverlay(
                         dateLabel = dateLabel,
                         totalPageCount = totalPageCount,
                         batteryStatus = batteryStatus,
+                        searchQuery = searchQuery,
+                        searchInputMode = searchInputMode,
+                        onSearchQueryChanged = { updatedQuery ->
+                            searchQuery = updatedQuery.take(SEARCH_QUERY_MAX_LENGTH)
+                        },
+                        onSearchInputModeChanged = onSearchInputModeChanged,
+                        isT9KeyboardVisible = isT9KeyboardVisible,
+                        onT9KeyboardVisibilityChanged = { visible ->
+                            isT9KeyboardVisible = visible
+                        },
                         pagerState = pagerState,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -593,13 +654,56 @@ private fun InteractiveSection(
     dateLabel: String,
     totalPageCount: Int,
     batteryStatus: BatteryStatusSnapshot?,
+    searchQuery: String,
+    searchInputMode: SearchInputMode,
+    onSearchQueryChanged: (String) -> Unit,
+    onSearchInputModeChanged: (SearchInputMode) -> Unit,
+    isT9KeyboardVisible: Boolean,
+    onT9KeyboardVisibilityChanged: (Boolean) -> Unit,
     pagerState: PagerState,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val searchFieldFocusRequester = remember { FocusRequester() }
     var showPageLetterTooltip by remember { mutableStateOf(false) }
     val maxPagerPage = (totalPageCount - 1).coerceAtLeast(0)
     var hintedPagerPage by remember { mutableIntStateOf(0) }
+    var t9CycleState by remember { mutableStateOf(T9CycleState()) }
+    var voiceHintMessage by remember { mutableStateOf<String?>(null) }
+    var isVoiceListening by remember { mutableStateOf(false) }
+
+    val voiceInputHandle = rememberVoiceInputHandle(
+        onPartialResult = { partialResult ->
+            onSearchQueryChanged(partialResult.take(SEARCH_QUERY_MAX_LENGTH))
+            t9CycleState = T9CycleState()
+            voiceHintMessage = "Listening..."
+        },
+        onFinalResult = { finalResult ->
+            onSearchQueryChanged(finalResult.take(SEARCH_QUERY_MAX_LENGTH))
+            t9CycleState = T9CycleState()
+            voiceHintMessage = null
+        },
+        onListeningStateChanged = { isListening ->
+            isVoiceListening = isListening
+        },
+        onError = { errorMessage ->
+            voiceHintMessage = errorMessage
+        }
+    )
+
+    LaunchedEffect(searchInputMode) {
+        if (searchInputMode == SearchInputMode.SYSTEM_IME) {
+            onT9KeyboardVisibilityChanged(false)
+            delay(90.milliseconds)
+            searchFieldFocusRequester.requestFocus()
+            keyboardController?.show()
+        } else {
+            keyboardController?.hide()
+            t9CycleState = T9CycleState()
+            voiceInputHandle.stopListening()
+        }
+    }
     val hintedGridLetter = remember(hintedPagerPage, appPages) {
         gridPageStartLetterForPagerPage(hintedPagerPage, appPages, FIRST_APP_GRID_PAGE_INDEX)
     }
@@ -621,14 +725,78 @@ private fun InteractiveSection(
         }
     }
 
+    val appGridEmptyStateLabel = if (searchQuery.isBlank()) {
+        "No launchable apps"
+    } else {
+        "No apps match \"$searchQuery\""
+    }
+
+    val searchContentModifier = if (searchInputMode == SearchInputMode.SYSTEM_IME) {
+        Modifier
+            .fillMaxSize()
+            .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 4.dp)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+            .imePadding()
+            .testTag(CoverSearchUiTestTags.SEARCH_CONTENT_CONTAINER_WITH_IME_PADDING)
+    } else {
+        Modifier
+            .fillMaxSize()
+            .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 4.dp)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+            .testTag(CoverSearchUiTestTags.SEARCH_CONTENT_CONTAINER_NO_IME_PADDING)
+    }
+
     Box(modifier = modifier) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 4.dp)
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
+            modifier = searchContentModifier,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            CoverSearchInputRow(
+                query = searchQuery,
+                searchInputMode = searchInputMode,
+                onQueryChanged = { updatedQuery ->
+                    onSearchQueryChanged(updatedQuery.take(SEARCH_QUERY_MAX_LENGTH))
+                    t9CycleState = T9CycleState()
+                    voiceHintMessage = null
+                },
+                onSearchFieldTapped = {
+                    if (searchInputMode == SearchInputMode.T9) {
+                        onT9KeyboardVisibilityChanged(true)
+                    }
+                },
+                onToggleInputMode = {
+                    val nextMode = if (searchInputMode == SearchInputMode.T9) {
+                        SearchInputMode.SYSTEM_IME
+                    } else {
+                        SearchInputMode.T9
+                    }
+                    onSearchInputModeChanged(nextMode)
+                    voiceHintMessage = null
+                },
+                onVoiceInputTap = {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                        voiceHintMessage = "Grant microphone permission in setup for voice search."
+                        return@CoverSearchInputRow
+                    }
+
+                    if (!voiceInputHandle.isAvailable) {
+                        voiceHintMessage = "Voice recognition unavailable on this device."
+                        return@CoverSearchInputRow
+                    }
+
+                    if (isVoiceListening) {
+                        voiceInputHandle.stopListening()
+                    } else {
+                        voiceHintMessage = "Listening..."
+                        voiceInputHandle.startListening()
+                    }
+                },
+                isVoiceListening = isVoiceListening,
+                voiceHintMessage = voiceHintMessage,
+                focusRequester = searchFieldFocusRequester,
+                modifier = Modifier.fillMaxWidth()
+            )
+
             Box(modifier = Modifier.weight(1f)) {
                 HorizontalPager(
                     state = pagerState,
@@ -672,6 +840,7 @@ private fun InteractiveSection(
                                     apps = appPages.getOrElse(gridIndex) { emptyList() },
                                     deferHydration = deferGridHydration,
                                     isDeviceLocked = isDeviceLocked,
+                                    emptyStateLabel = appGridEmptyStateLabel,
                                     onAppSelected = onAppSelected,
                                     modifier = Modifier.fillMaxSize()
                                 )
@@ -689,12 +858,443 @@ private fun InteractiveSection(
                 )
             }
 
+            if (searchInputMode == SearchInputMode.T9 && isT9KeyboardVisible) {
+                T9Keypad(
+                    onDigitPressed = { digit, letters ->
+                        val tapResult = applyT9CharacterTap(
+                            currentQuery = searchQuery,
+                            digit = digit,
+                            letters = letters,
+                            cycleState = t9CycleState,
+                            nowElapsedMs = SystemClock.elapsedRealtime()
+                        )
+                        t9CycleState = tapResult.cycleState
+                        onSearchQueryChanged(tapResult.query.take(SEARCH_QUERY_MAX_LENGTH))
+                        voiceHintMessage = null
+                    },
+                    onSpacePressed = {
+                        onSearchQueryChanged((searchQuery + " ").take(SEARCH_QUERY_MAX_LENGTH))
+                        t9CycleState = T9CycleState()
+                        voiceHintMessage = null
+                    },
+                    onBackspacePressed = {
+                        if (searchQuery.isNotEmpty()) {
+                            onSearchQueryChanged(searchQuery.dropLast(1))
+                        }
+                        t9CycleState = T9CycleState()
+                        voiceHintMessage = null
+                    },
+                    onClearPressed = {
+                        onSearchQueryChanged("")
+                        t9CycleState = T9CycleState()
+                        voiceHintMessage = null
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
             PageIndicator(
                 pagerState = pagerState,
                 pageCount = totalPageCount,
                 modifier = Modifier.fillMaxWidth()
             )
         }
+    }
+}
+
+private data class VoiceInputHandle(
+    val isAvailable: Boolean,
+    val startListening: () -> Unit,
+    val stopListening: () -> Unit
+)
+
+@Composable
+private fun CoverSearchInputRow(
+    query: String,
+    searchInputMode: SearchInputMode,
+    onQueryChanged: (String) -> Unit,
+    onSearchFieldTapped: () -> Unit,
+    onToggleInputMode: () -> Unit,
+    onVoiceInputTap: () -> Unit,
+    isVoiceListening: Boolean,
+    voiceHintMessage: String?,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier
+) {
+    val inputFieldShape = RoundedCornerShape(16.dp)
+
+    Column(
+        modifier = modifier.testTag(CoverSearchUiTestTags.SEARCH_INPUT_ROW),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (searchInputMode == SearchInputMode.SYSTEM_IME) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChanged,
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(focusRequester)
+                        .testTag(CoverSearchUiTestTags.SEARCH_SYSTEM_IME_FIELD),
+                    singleLine = true,
+                    shape = inputFieldShape,
+                    label = { Text("Search apps") }
+                )
+            } else {
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(inputFieldShape)
+                        .clickable(onClick = onSearchFieldTapped)
+                        .coverMinimumTouchTarget()
+                        .padding(horizontal = 2.dp, vertical = 1.dp)
+                        .testTag(CoverSearchUiTestTags.SEARCH_T9_FIELD),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+                    shape = inputFieldShape
+                ) {
+                    Text(
+                        text = if (query.isBlank()) "Tap to search apps" else query,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (query.isBlank()) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .coverScreenPadding(horizontal = 12.dp, vertical = 10.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = onVoiceInputTap,
+                modifier = Modifier.coverMinimumTouchTarget()
+            ) {
+                Icon(
+                    imageVector = if (isVoiceListening) Icons.Filled.MicOff else Icons.Filled.Mic,
+                    contentDescription = if (isVoiceListening) "Stop voice input" else "Start voice input"
+                )
+            }
+
+            IconButton(
+                onClick = onToggleInputMode,
+                modifier = Modifier
+                    .coverMinimumTouchTarget()
+                    .testTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_TOGGLE_BUTTON)
+            ) {
+                Icon(
+                    imageVector = if (searchInputMode == SearchInputMode.T9) {
+                        Icons.Filled.Keyboard
+                    } else {
+                        Icons.Filled.Dialpad
+                    },
+                    contentDescription = if (searchInputMode == SearchInputMode.T9) {
+                        "Use system keyboard"
+                    } else {
+                        "Use T9 keypad"
+                    }
+                )
+            }
+        }
+
+        val inputModeLabel = if (searchInputMode == SearchInputMode.T9) {
+            "Input: T9 keypad"
+        } else {
+            "Input: system keyboard"
+        }
+        Text(
+            text = inputModeLabel,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_LABEL)
+        )
+
+        voiceHintMessage?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun T9Keypad(
+    onDigitPressed: (digit: Char, letters: String) -> Unit,
+    onSpacePressed: () -> Unit,
+    onBackspacePressed: () -> Unit,
+    onClearPressed: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.testTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .coverScreenPadding(horizontal = 6.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            T9_KEYPAD_ROWS.forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    row.forEach { key ->
+                        T9KeyButton(
+                            digit = key.digit,
+                            letters = key.letters,
+                            onClick = {
+                                val digitValue = key.digit.firstOrNull() ?: return@T9KeyButton
+                                onDigitPressed(digitValue, key.letters)
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                T9ActionButton(
+                    label = "CLR",
+                    secondaryLabel = "",
+                    onClick = onClearPressed,
+                    modifier = Modifier.weight(1f)
+                )
+                T9ActionButton(
+                    label = "0",
+                    secondaryLabel = "SPACE",
+                    onClick = onSpacePressed,
+                    modifier = Modifier.weight(1f)
+                )
+                T9ActionButton(
+                    label = "DEL",
+                    secondaryLabel = "",
+                    icon = Icons.AutoMirrored.Filled.Backspace,
+                    onClick = onBackspacePressed,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun T9KeyButton(
+    digit: String,
+    letters: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .coverMinimumTouchTarget(),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .coverScreenPadding(horizontal = 4.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = digit,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = letters,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun T9ActionButton(
+    label: String,
+    secondaryLabel: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null
+) {
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .coverMinimumTouchTarget(),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .coverScreenPadding(horizontal = 4.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            if (icon != null) {
+                Icon(imageVector = icon, contentDescription = null)
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            if (secondaryLabel.isNotBlank()) {
+                Text(
+                    text = secondaryLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun rememberVoiceInputHandle(
+    onPartialResult: (String) -> Unit,
+    onFinalResult: (String) -> Unit,
+    onListeningStateChanged: (Boolean) -> Unit,
+    onError: (String) -> Unit
+): VoiceInputHandle {
+    val context = LocalContext.current
+    val latestOnPartialResult = rememberUpdatedState(onPartialResult)
+    val latestOnFinalResult = rememberUpdatedState(onFinalResult)
+    val latestOnListeningStateChanged = rememberUpdatedState(onListeningStateChanged)
+    val latestOnError = rememberUpdatedState(onError)
+
+    val speechRecognizer = remember(context) {
+        if (SpeechRecognizer.isRecognitionAvailable(context)) {
+            runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
+        } else {
+            null
+        }
+    }
+
+    DisposableEffect(speechRecognizer) {
+        val recognizer = speechRecognizer
+        if (recognizer == null) {
+            latestOnListeningStateChanged.value(false)
+            onDispose { }
+        } else {
+            val listener = object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    latestOnListeningStateChanged.value(true)
+                }
+
+                override fun onBeginningOfSpeech() = Unit
+
+                override fun onRmsChanged(rmsdB: Float) = Unit
+
+                override fun onBufferReceived(buffer: ByteArray?) = Unit
+
+                override fun onEndOfSpeech() {
+                    latestOnListeningStateChanged.value(false)
+                }
+
+                override fun onError(error: Int) {
+                    latestOnListeningStateChanged.value(false)
+                    latestOnError.value(mapSpeechRecognizerError(error))
+                }
+
+                override fun onResults(results: Bundle?) {
+                    latestOnListeningStateChanged.value(false)
+                    extractBestSpeechMatch(results)?.let { transcript ->
+                        latestOnFinalResult.value(transcript)
+                    }
+                }
+
+                override fun onPartialResults(partialResults: Bundle?) {
+                    extractBestSpeechMatch(partialResults)?.let { transcript ->
+                        latestOnPartialResult.value(transcript)
+                    }
+                }
+
+                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            }
+
+            recognizer.setRecognitionListener(listener)
+            onDispose {
+                runCatching { recognizer.stopListening() }
+                runCatching { recognizer.destroy() }
+            }
+        }
+    }
+
+    val languageTag = remember { Locale.getDefault().toLanguageTag() }
+    return remember(speechRecognizer, languageTag) {
+        VoiceInputHandle(
+            isAvailable = speechRecognizer != null,
+            startListening = {
+                val recognizer = speechRecognizer
+                if (recognizer == null) {
+                    latestOnListeningStateChanged.value(false)
+                    latestOnError.value("Voice recognition unavailable on this device.")
+                } else {
+                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+                        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    }
+                    runCatching { recognizer.startListening(intent) }
+                        .onFailure { error ->
+                            latestOnListeningStateChanged.value(false)
+                            latestOnError.value("Unable to start voice input: ${error.message ?: "unknown error"}")
+                        }
+                }
+            },
+            stopListening = {
+                speechRecognizer?.let { recognizer ->
+                    runCatching { recognizer.stopListening() }
+                    latestOnListeningStateChanged.value(false)
+                }
+            }
+        )
+    }
+}
+
+private fun extractBestSpeechMatch(results: Bundle?): String? {
+    val firstResult = results
+        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+        ?.firstOrNull()
+        ?.trim()
+        .orEmpty()
+    return firstResult.takeUnless { it.isEmpty() }
+}
+
+private fun mapSpeechRecognizerError(errorCode: Int): String {
+    return when (errorCode) {
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required for voice search."
+        SpeechRecognizer.ERROR_NETWORK,
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Voice search failed due to a network issue."
+        SpeechRecognizer.ERROR_NO_MATCH,
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected. Try again."
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Voice recognizer is busy. Try again in a moment."
+        else -> "Voice search failed (error=$errorCode)."
     }
 }
 
@@ -1810,6 +2410,7 @@ private fun AppGridPageTile(
     apps: List<AppModel>,
     deferHydration: Boolean,
     isDeviceLocked: Boolean,
+    emptyStateLabel: String = "No launchable apps",
     onAppSelected: (AppModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1832,7 +2433,7 @@ private fun AppGridPageTile(
     if (apps.isEmpty()) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
             Text(
-                text = "No launchable apps",
+                text = emptyStateLabel,
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.7f)
             )

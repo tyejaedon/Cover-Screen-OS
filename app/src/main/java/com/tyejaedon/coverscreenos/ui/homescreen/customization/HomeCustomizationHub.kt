@@ -99,6 +99,9 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
     var themePreferencePreview by remember(settings.themePreference) {
         mutableStateOf(settings.themePreference)
     }
+    var searchInputModePreview by remember(settings.searchInputMode) {
+        mutableStateOf(settings.searchInputMode)
+    }
 
     var activeDockSlotIndex by remember { mutableStateOf<Int?>(null) }
     var activePanel by remember { mutableStateOf(HomeCustomizationPanel.DOCK) }
@@ -161,6 +164,7 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                 activePanel = activePanel,
                 dockFilledCount = dockFilledCount,
                 wallpaperSummary = wallpaperSummary,
+                searchInputMode = searchInputModePreview,
                 themePreference = themePreferencePreview,
                 onPanelSelected = { selectedPanel -> activePanel = selectedPanel },
                 onResetRequested = { showResetConfirmDialog = true }
@@ -188,6 +192,13 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                 dockPackagePreview = normalizedDock
                 scope.launch {
                     settingsStore.setDockPackages(normalizedDock)
+                }
+            },
+            searchInputMode = searchInputModePreview,
+            onSearchInputModeSelected = { selectedMode ->
+                searchInputModePreview = selectedMode
+                scope.launch {
+                    settingsStore.setSearchInputMode(selectedMode)
                 }
             },
             themePreference = themePreferencePreview,
@@ -286,7 +297,8 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                             wallpaperDimAmount = wallpaperDimPreview,
                             wallpaperBlurRadiusDp = wallpaperBlurPreview,
                             isDockVisible = settings.isDockVisible,
-                            themePreference = themePreferencePreview
+                            themePreference = themePreferencePreview,
+                            searchInputMode = searchInputModePreview
                         )
 
                         showResetConfirmDialog = false
@@ -323,6 +335,7 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                                 wallpaperBlurPreview = launcherSnapshotBeforeReset.wallpaperBlurRadiusDp
                                     .coerceIn(MIN_WALLPAPER_BLUR_RADIUS_DP, MAX_WALLPAPER_BLUR_RADIUS_DP)
                                 themePreferencePreview = launcherSnapshotBeforeReset.themePreference
+                                searchInputModePreview = launcherSnapshotBeforeReset.searchInputMode
                             }
                         }
                     }

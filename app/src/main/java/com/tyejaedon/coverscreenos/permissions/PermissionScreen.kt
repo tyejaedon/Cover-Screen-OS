@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -65,6 +66,9 @@ fun PermissionScreen(
     var hasGalleryMediaPermission by remember {
         mutableStateOf(AppPermissionHelper.hasGalleryMediaPermissions(context))
     }
+    var hasMicrophonePermission by remember {
+        mutableStateOf(AppPermissionHelper.hasMicrophonePermission(context))
+    }
     var isForegroundServiceRunning by remember {
         mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning())
     }
@@ -77,6 +81,7 @@ fun PermissionScreen(
         hasNotificationListenerPermission = AppPermissionHelper.isNotificationListenerEnabled(context)
         hasBatteryOptimizationExemption = AppPermissionHelper.isBatteryOptimizationDisabled(context)
         hasGalleryMediaPermission = AppPermissionHelper.hasGalleryMediaPermissions(context)
+        hasMicrophonePermission = AppPermissionHelper.hasMicrophonePermission(context)
         isForegroundServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning()
     }
 
@@ -118,6 +123,12 @@ fun PermissionScreen(
 
     val requestGalleryMediaPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        refreshPermissionState()
+    }
+
+    val requestMicrophonePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
     ) {
         refreshPermissionState()
     }
@@ -251,6 +262,17 @@ fun PermissionScreen(
                     requestGalleryMediaPermissionLauncher.launch(
                         AppPermissionHelper.galleryMediaPermissionsToRequest()
                     )
+                }
+            )
+
+            PermissionRequirementCard(
+                title = "Microphone access (optional)",
+                details = "Optional: enables voice-to-text search fallback for the cover-screen app drawer.",
+                granted = hasMicrophonePermission,
+                actionLabel = "Grant microphone permission",
+                icon = Icons.Filled.Mic,
+                onAction = {
+                    requestMicrophonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 }
             )
 

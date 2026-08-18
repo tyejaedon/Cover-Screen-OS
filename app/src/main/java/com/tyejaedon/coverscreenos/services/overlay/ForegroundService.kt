@@ -627,18 +627,18 @@ class ForegroundService : Service() {
             return
         }
 
-        if (coverDisplayHelper.getDisplayLockStatus()) {
-            logResumeDecision(reason = reason, decision = "resume_locked")
-            completeSuppressionAndRetargetOnce(reason = "resume_after_app_launch_locked:$reason")
-            return
-        }
-
         if (shouldKeepOverlaySuppressedForIncomingCall()) {
             logResumeDecision(
                 reason = reason,
                 decision = "hold_incoming_call",
                 detail = "incomingCallPackage=$incomingCallPassthroughPackage callNotificationActive=$callNotificationActive"
             )
+            return
+        }
+
+        if (coverDisplayHelper.getDisplayLockStatus()) {
+            logResumeDecision(reason = reason, decision = "resume_locked")
+            completeSuppressionAndRetargetOnce(reason = "resume_after_app_launch_locked:$reason")
             return
         }
 

@@ -51,6 +51,11 @@ enum class ThemePreference {
 	DARK
 }
 
+enum class SearchInputMode {
+	T9,
+	SYSTEM_IME
+}
+
 private val Context.coverLauncherSettingsDataStore by preferencesDataStore(name = "cover_launcher_settings")
 
 private object LauncherPreferencesKeys {
@@ -60,6 +65,7 @@ private object LauncherPreferencesKeys {
 	val wallpaperBlurRadiusDp = floatPreferencesKey("wallpaper_blur_radius_dp")
 	val dockVisible = booleanPreferencesKey("dock_visible")
 	val themePreference = stringPreferencesKey("theme_preference")
+	val searchInputMode = stringPreferencesKey("search_input_mode")
 	val dockSlots: List<Preferences.Key<String>> = List(COVER_DOCK_SLOT_COUNT) { slot ->
 		stringPreferencesKey("dock_slot_$slot")
 	}
@@ -72,7 +78,8 @@ data class LauncherSettings(
 	val wallpaperDimAmount: Float = DEFAULT_WALLPAPER_DIM_AMOUNT,
 	val wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP,
 	val isDockVisible: Boolean = true,
-	val themePreference: ThemePreference = ThemePreference.SYSTEM
+	val themePreference: ThemePreference = ThemePreference.SYSTEM,
+	val searchInputMode: SearchInputMode = SearchInputMode.T9
 )
 
 private const val SETTINGS_STORE_LOG_TAG = "LauncherSettingsStore"
@@ -126,7 +133,10 @@ class LauncherSettingsStore(
 					isDockVisible = preferences[LauncherPreferencesKeys.dockVisible] ?: true,
 					themePreference = preferences[LauncherPreferencesKeys.themePreference]
 						?.let { value -> ThemePreference.entries.firstOrNull { it.name == value } }
-						?: ThemePreference.SYSTEM
+						?: ThemePreference.SYSTEM,
+					searchInputMode = preferences[LauncherPreferencesKeys.searchInputMode]
+						?.let { value -> SearchInputMode.entries.firstOrNull { it.name == value } }
+						?: SearchInputMode.T9
 				)
 			}.getOrElse { error ->
 				Log.w(SETTINGS_STORE_LOG_TAG, "Failed to map settings. Falling back to defaults.", error)
@@ -194,6 +204,7 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = normalizedWallpaperBlur
 				preferences[LauncherPreferencesKeys.dockVisible] = settings.isDockVisible
 				preferences[LauncherPreferencesKeys.themePreference] = settings.themePreference.name
+				preferences[LauncherPreferencesKeys.searchInputMode] = settings.searchInputMode.name
 			}
 		}
 	}
@@ -249,6 +260,14 @@ class LauncherSettingsStore(
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
 				preferences[LauncherPreferencesKeys.themePreference] = themePreference.name
+			}
+		}
+	}
+
+	suspend fun setSearchInputMode(searchInputMode: SearchInputMode) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences[LauncherPreferencesKeys.searchInputMode] = searchInputMode.name
 			}
 		}
 	}

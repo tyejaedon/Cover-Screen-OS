@@ -10,7 +10,9 @@ import android.view.Gravity
 import android.view.View
 import android.view.Display
 import android.view.WindowManager
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -27,12 +29,14 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
+import com.tyejaedon.coverscreenos.datastore.SearchInputMode
 import com.tyejaedon.coverscreenos.receivers.LockStatusReceiver
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.ui.CoverAppGridOverlay
 import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 internal class OverlayWindowController(
     private val context: Context,
@@ -48,6 +52,7 @@ internal class OverlayWindowController(
     private var overlayLifecycleOwner: OverlayViewLifecycleOwner? = null
     private var overlayLayoutParams: WindowManager.LayoutParams? = null
     private var isLaunchSuppressed: Boolean = false
+    private var deferredImeInteractionEnabled: Boolean? = null
 
     fun showOverlay(
         targetDisplay: Display? = null,
@@ -79,12 +84,17 @@ internal class OverlayWindowController(
                 setViewTreeSavedStateRegistryOwner(overlayLifecycleOwner)
                 setContent {
                     val composeContext = LocalContext.current
+                    val composeScope = rememberCoroutineScope()
                     val isDeviceLocked = deviceLockState
                         ?.collectAsStateWithLifecycle(initialValue = false)
                         ?.value
                         ?: false
                     val launcherSettings by launcherSettingsStore.settings
                         .collectAsStateWithLifecycle(initialValue = LauncherSettings())
+
+                    LaunchedEffect(launcherSettings.searchInputMode) {
+                        setImeInteractionEnabled(launcherSettings.searchInputMode == SearchInputMode.SYSTEM_IME)
+                    }
 
                     CoverOSTheme(themePreference = launcherSettings.themePreference) {
                         CoverAppGridOverlay(
@@ -112,7 +122,13 @@ internal class OverlayWindowController(
                             wallpaperUri = launcherSettings.wallpaperUri,
                             wallpaperScaleMode = launcherSettings.wallpaperScaleMode,
                             wallpaperDimAmount = launcherSettings.wallpaperDimAmount,
-                            wallpaperBlurRadiusDp = launcherSettings.wallpaperBlurRadiusDp
+                            wallpaperBlurRadiusDp = launcherSettings.wallpaperBlurRadiusDp,
+                            searchInputMode = launcherSettings.searchInputMode,
+                            onSearchInputModeChanged = { searchInputMode ->
+                                composeScope.launch {
+                                    launcherSettingsStore.setSearchInputMode(searchInputMode)
+                                }
+                            }
                         )
                     }
                 }
@@ -130,6 +146,9 @@ internal class OverlayWindowController(
             }
 
             overlayWindowManager?.addView(composeView, overlayLayoutParams)
+            deferredImeInteractionEnabled?.let { enabled ->
+                setImeInteractionEnabled(enabled)
+            }
             activeDisplayId = overlayWindowContext?.display?.displayId ?: targetDisplay?.displayId ?: Display.DEFAULT_DISPLAY
             setLaunchSuppressed(false)
             return true
@@ -162,6 +181,7 @@ internal class OverlayWindowController(
             overlayLayoutParams = null
             activeDisplayId = null
             isLaunchSuppressed = false
+            deferredImeInteractionEnabled = null
         }
     }
 
@@ -180,6 +200,47 @@ internal class OverlayWindowController(
     fun getActiveDisplayId(): Int? = activeDisplayId
 
     fun isOverlayAttached(): Boolean = composeView != null
+
+    private fun setImeInteractionEnabled(enabled: Boolean) {
+        val view = composeView
+        val manager = overlayWindowManager
+        val params = overlayLayoutParams
+        if (view == null || manager == null || params == null) {
+            deferredImeInteractionEnabled = enabled
+            return
+        }
+        deferredImeInteractionEnabled = null
+
+        val desiredFlags = if (enabled) {
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        } else {
+            params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        }
+        val desiredSoftInputMode = if (enabled) {
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        } else {
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+        }
+
+        val shouldUpdateLayout = params.flags != desiredFlags || params.softInputMode != desiredSoftInputMode
+        if (!shouldUpdateLayout) return
+
+        params.flags = desiredFlags
+        params.softInputMode = desiredSoftInputMode
+        view.isFocusable = enabled
+        view.isFocusableInTouchMode = enabled
+
+        runCatching {
+            manager.updateViewLayout(view, params)
+            if (enabled) {
+                view.requestFocus()
+            } else {
+                view.clearFocus()
+            }
+        }.onFailure { error ->
+            Log.w("OverlayWindowController", "Unable to update IME interaction mode: ${error.message}")
+        }
+    }
 
     private fun setLaunchSuppressed(suppressed: Boolean) {
         val view = composeView ?: return

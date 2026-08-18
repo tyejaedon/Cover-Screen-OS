@@ -1,10 +1,12 @@
 package com.tyejaedon.coverscreenos.ui.homescreen.customization
 
 import androidx.compose.runtime.Composable
+import com.tyejaedon.coverscreenos.datastore.SearchInputMode
 import com.tyejaedon.coverscreenos.datastore.ThemePreference
 import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
 import com.tyejaedon.coverscreenos.ui.settings.AppearanceCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.DockCustomizationCard
+import com.tyejaedon.coverscreenos.ui.settings.InputCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.WallpaperCustomizationCard
 
 @Composable
@@ -16,6 +18,8 @@ internal fun HomeCustomizationPanelContent(
     onReorderCommitted: (List<String?>) -> Unit,
     onPickSlot: (Int) -> Unit,
     onClearSlot: (Int) -> Unit,
+    searchInputMode: SearchInputMode,
+    onSearchInputModeSelected: (SearchInputMode) -> Unit,
     themePreference: ThemePreference,
     onThemePreferenceSelected: (ThemePreference) -> Unit,
     wallpaperUri: String?,
@@ -46,6 +50,13 @@ internal fun HomeCustomizationPanelContent(
         AppearanceCustomizationCard(
             themePreference = themePreference,
             onThemePreferenceSelected = onThemePreferenceSelected
+        )
+    }
+
+    if (activePanel == HomeCustomizationPanel.INPUT) {
+        InputCustomizationCard(
+            searchInputMode = searchInputMode,
+            onSearchInputModeSelected = onSearchInputModeSelected
         )
     }
 
