@@ -33,6 +33,8 @@ import android.view.inputmethod.EditorInfo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -86,9 +89,12 @@ import com.tyejaedon.coverscreenos.ui.keyboard.CoverCompactQwertyKeyboard
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.tyejaedon.coverscreenos.services.CallPackageMatchers
 import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.TextBuffer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 private const val TAG = "CoverInputInjection"
 private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
@@ -221,6 +227,31 @@ object CoverInputSessionManager {
     private var activeAccessibilityService: CoverInputAccessibilityService? = null
     private var overlayManager: CoverKeyboardOverlayManager? = null
 
+    /**
+     * Adapter that translates a [BufferDelta] into a minimal injection call
+     * on the currently-bound accessibility service. Kept as a field so tests
+     * can swap in a [TextInjectionTarget] fake without touching the object's
+     * public API.
+     */
+    private var injectionTarget: TextInjectionTarget? = null
+
+    /**
+     * Composing-aware in-memory buffer. Keeps the overlay's view of the
+     * field in a form that survives delta computation and can carry
+     * composing regions from T9 multi-tap / prediction candidates through
+     * to the injection layer without collapsing them on every keystroke.
+     */
+    private var textBuffer: TextBuffer = TextBuffer.Empty
+
+    /**
+     * Serializes concurrent `applyDelta` invocations. Rapid taps from the
+     * keypad and asynchronous echo signals from
+     * [CoverInputAccessibilityService.handleTextChangedEvent] can otherwise
+     * interleave, producing race conditions where the injected text lags
+     * the buffer or overwrites a still-in-flight edit.
+     */
+    private val injectionLock = ReentrantLock()
+
     private var lastInjectedText: String? = null
     private var lastInjectionTimestamp: Long = 0L
 
@@ -236,6 +267,7 @@ object CoverInputSessionManager {
     fun bindService(service: CoverInputAccessibilityService) {
         activeAccessibilityService = service
         overlayManager = CoverKeyboardOverlayManager(service.applicationContext)
+        injectionTarget = AccessibilityServiceInjectionTarget(service)
     }
 
     fun unbindService() {
@@ -243,6 +275,25 @@ object CoverInputSessionManager {
         overlayManager?.destroy()
         overlayManager = null
         activeAccessibilityService = null
+        injectionTarget = null
+    }
+
+    /**
+     * Test-only seam. Substitutes the accessibility-service-backed
+     * [TextInjectionTarget] with a fake so `applyDelta` behaviour can be
+     * asserted without spinning up the platform accessibility framework.
+     *
+     * Callers are responsible for calling [clearInjectionTargetForTest]
+     * before another test rebinds the real service.
+     */
+    internal fun setInjectionTargetForTest(target: TextInjectionTarget) {
+        injectionTarget = target
+    }
+
+    internal fun clearInjectionTargetForTest() {
+        injectionTarget = null
+        textBuffer = TextBuffer.Empty
+        _sessionState.value = CoverInputSessionState()
     }
 
     fun onFieldFocused(metadata: CoverFieldMetadata) {
@@ -274,6 +325,11 @@ object CoverInputSessionManager {
             metadata = metadata,
             lastStatusMessage = "Attached to ${cleanAppLabel(metadata.packageName)}"
         )
+        textBuffer = TextBuffer(
+            text = metadata.initialText,
+            selection = metadata.initialText.length..metadata.initialText.length,
+            composing = null
+        )
 
         overlayManager?.showOverlay()
     }
@@ -293,38 +349,69 @@ object CoverInputSessionManager {
     }
 
     fun appendText(text: String) {
-        val current = _sessionState.value.buffer
-        val pos = _sessionState.value.cursorPosition.coerceIn(0, current.length)
-        val newBuffer = StringBuilder(current).insert(pos, text).toString()
-        val newPos = pos + text.length
-
-        updateBufferAndInject(newBuffer, newPos)
+        applyDelta(TextDelta.Insert(text))
     }
 
     fun replacePreviousChar(char: Char) {
-        val current = _sessionState.value.buffer
-        val pos = _sessionState.value.cursorPosition.coerceIn(0, current.length)
-        if (pos == 0) {
-            appendText(char.toString())
-            return
-        }
-
-        val newBuffer = StringBuilder(current).replace(pos - 1, pos, char.toString()).toString()
-        updateBufferAndInject(newBuffer, pos)
+        applyDelta(TextDelta.ReplacePreviousChar(char))
     }
 
     fun deleteBackward() {
-        val current = _sessionState.value.buffer
-        val pos = _sessionState.value.cursorPosition.coerceIn(0, current.length)
-        if (pos <= 0 || current.isEmpty()) return
-
-        val newBuffer = StringBuilder(current).delete(pos - 1, pos).toString()
-        val newPos = pos - 1
-        updateBufferAndInject(newBuffer, newPos)
+        applyDelta(TextDelta.Backspace())
     }
 
     fun clearBuffer() {
-        updateBufferAndInject("", 0)
+        applyDelta(TextDelta.Clear)
+    }
+
+    /**
+     * Single sink for every text mutation coming out of the keypads. Reads
+     * the current [TextBuffer], applies [delta] to produce a new buffer,
+     * computes the minimal [BufferDelta] against the old buffer, and forwards
+     * that delta to the injection layer.
+     *
+     * Serialized by [injectionLock] so rapid keypad taps queue rather than
+     * race. The lock is a plain [ReentrantLock] rather than a coroutine
+     * mutex because every call site is a synchronous Compose callback and
+     * we do not want to introduce a coroutine boundary between key-up and
+     * text visibility.
+     */
+    fun applyDelta(delta: TextDelta) {
+        injectionLock.withLock {
+            val before = textBuffer
+            val after = when (delta) {
+                is TextDelta.Insert -> before.applyDelta(delta.text)
+                is TextDelta.ReplacePreviousChar -> {
+                    val caret = before.selection.first
+                    if (caret == 0 || before.hasSelection) {
+                        before.applyDelta(delta.char.toString())
+                    } else {
+                        before
+                            .withSelection(caret - 1, caret)
+                            .applyDelta(delta.char.toString())
+                    }
+                }
+                is TextDelta.Backspace -> before.backspace(delta.count)
+                TextDelta.Clear -> TextBuffer.Empty
+                is TextDelta.Commit -> before.commit(delta.text)
+            }
+
+            // Fast path: buffer unchanged (e.g. backspace at position 0).
+            if (after === before || (after.text == before.text && after.selection == before.selection && after.composing == before.composing)) {
+                return@withLock
+            }
+
+            textBuffer = after
+            val newCaret = after.selection.first
+            _sessionState.value = _sessionState.value.copy(
+                buffer = after.text,
+                cursorPosition = newCaret,
+                lastStatusMessage = "Typing...",
+                isSuccessFeedback = false
+            )
+
+            performDeltaInjection(before.text, after.text, newCaret)
+        }
     }
 
     fun switchMode(mode: CoverKeyboardMode) {
@@ -349,8 +436,17 @@ object CoverInputSessionManager {
 
     fun commitAndFinish() {
         val state = _sessionState.value
-        performDirectInjection(state.buffer)
-        activeAccessibilityService?.dispatchActionDone()
+        // A commit is the final delta of the session: it ensures the target
+        // is in sync with the overlay's buffer even if some intermediate
+        // deltas failed (e.g. a transient InputConnection unavailability).
+        injectionLock.withLock {
+            performDeltaInjection(
+                oldText = lastInjectedText ?: state.buffer,
+                newText = state.buffer,
+                newCaret = state.cursorPosition
+            )
+        }
+        injectionTarget?.dispatchDone() ?: activeAccessibilityService?.dispatchActionDone()
 
         _sessionState.value = state.copy(
             lastStatusMessage = "Injected successfully",
@@ -373,6 +469,7 @@ object CoverInputSessionManager {
         activeAccessibilityService?.cancelPendingFocusLossVerification()
         overlayManager?.hideOverlay()
         _sessionState.value = CoverInputSessionState(isActive = false)
+        textBuffer = TextBuffer.Empty
         activeAccessibilityService?.restoreSoftKeyboardMode()
     }
 
@@ -381,27 +478,22 @@ object CoverInputSessionManager {
         return elapsed < INJECTION_ECHO_IGNORE_WINDOW_MS && text == lastInjectedText
     }
 
-    private fun updateBufferAndInject(newBuffer: String, newCursorPos: Int) {
-        _sessionState.value = _sessionState.value.copy(
-            buffer = newBuffer,
-            cursorPosition = newCursorPos,
-            lastStatusMessage = "Typing...",
-            isSuccessFeedback = false
-        )
-        performDirectInjection(newBuffer)
-    }
-
-    private fun performDirectInjection(text: String) {
-        lastInjectedText = text
+    private fun performDeltaInjection(oldText: String, newText: String, newCaret: Int) {
+        lastInjectedText = newText
         lastInjectionTimestamp = SystemClock.elapsedRealtime()
 
-        val service = activeAccessibilityService
-        if (service == null) {
-            Log.w(TAG, "Cannot inject text: AccessibilityService not bound")
+        val target = injectionTarget
+        if (target == null) {
+            Log.w(TAG, "Cannot inject text: injection target not bound")
             return
         }
 
-        val method = service.syncTextToFocusedField(text)
+        val delta = BufferDelta.compute(old = oldText, new = newText, newCaret = newCaret)
+        if (delta.isNoOp) {
+            // Caret-only movement, or no real content change. No injection required.
+            return
+        }
+        val method = target.applyDelta(delta)
         _sessionState.value = _sessionState.value.copy(
             isSuccessFeedback = method != InjectionMethod.NONE,
             lastStatusMessage = when (method) {
@@ -428,6 +520,26 @@ object CoverInputSessionManager {
             packageName.isEmpty() -> "Cover App"
             else -> packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
         }
+    }
+}
+
+/**
+ * Production [TextInjectionTarget] backed by a live
+ * [CoverInputAccessibilityService]. Prefers the delta-aware
+ * [CoverInputAccessibilityService.applyDeltaToFocusedField] path so most
+ * keystrokes travel through `InputConnection.commitText` on the injected
+ * substring only — avoiding the full-buffer `ACTION_SET_TEXT` rewrite that
+ * used to fire onchange handlers in Chrome / WebView / React Native /
+ * M-Pesa on every keystroke and break password-manager autofill mid-type.
+ */
+internal class AccessibilityServiceInjectionTarget(
+    private val service: CoverInputAccessibilityService
+) : TextInjectionTarget {
+    override fun applyDelta(delta: BufferDelta): InjectionMethod =
+        service.applyDeltaToFocusedField(delta)
+
+    override fun dispatchDone() {
+        service.dispatchActionDone()
     }
 }
 
@@ -729,6 +841,136 @@ class CoverInputAccessibilityService : AccessibilityService() {
         }
         Log.d(TAG, "injectTextIntoFocusedNode result=$ok len=${text.length} pkg=${node.packageName}")
         return ok
+    }
+
+    /**
+     * Apply a minimal [BufferDelta] to the focused editor. Preferred over
+     * [syncTextToFocusedField] because it avoids the full-buffer rewrite
+     * that fires onchange handlers on every keystroke.
+     *
+     * Injection channels tried in order:
+     *
+     *  1. **InputConnection** (`IME_INPUT_CONNECTION`): reads the target's
+     *     live selection via [android.view.inputmethod.InputConnection.getSurroundingText]
+     *     to reconcile any drift the app made under us, then issues a
+     *     `setSelection` + `deleteSurroundingText` + `commitText` of the
+     *     delta only. Zero full-buffer traffic when the target and overlay
+     *     agree.
+     *  2. **ACTION_SET_TEXT** (`ACTION_SET_TEXT`): virtual-hierarchy fallback.
+     *     Reads `getTextSelectionStart/End` from the cached node to snap the
+     *     caret to the delta position, then writes the full new buffer
+     *     (accessibility offers no delta primitive) via
+     *     [injectTextIntoFocusedNode]. This is still the "flicker" path, but
+     *     it only fires when InputConnection is unavailable — no worse than
+     *     today, and the caret is at least kept in sync.
+     *  3. **Clipboard paste** (`ACTION_PASTE_CLIPBOARD`): last resort,
+     *     unchanged.
+     *
+     * Callers must hold [CoverInputSessionManager.injectionLock].
+     */
+    internal fun applyDeltaToFocusedField(delta: BufferDelta): InjectionMethod {
+        if (delta.isNoOp) return InjectionMethod.NONE
+
+        if (injectDeltaViaInputConnection(delta)) return InjectionMethod.IME_INPUT_CONNECTION
+
+        // Fallback for virtual hierarchies (Flutter/RN/WebView/M-Pesa) that
+        // don't expose a working InputConnection but do accept ACTION_SET_TEXT.
+        // Skip the write if the target already reflects the new text — this
+        // saves a full ACTION_SET_TEXT round trip when the delta was already
+        // applied via a11y echo (rare but observable on Samsung One UI).
+        val cachedNode = targetFocusedNode
+        val currentTargetText = runCatching {
+            if (cachedNode != null && cachedNode.refresh()) cachedNode.text?.toString() else null
+        }.getOrNull()
+        if (currentTargetText != null && currentTargetText == delta.new) {
+            // Text already matches; just move caret.
+            setSelectionOnCachedNode(delta.newCaret)
+            return InjectionMethod.ACTION_SET_TEXT
+        }
+        if (injectTextIntoFocusedNode(delta.new)) {
+            setSelectionOnCachedNode(delta.newCaret)
+            return InjectionMethod.ACTION_SET_TEXT
+        }
+        if (injectViaClipboard(delta.new)) return InjectionMethod.ACTION_PASTE_CLIPBOARD
+        return InjectionMethod.NONE
+    }
+
+    /**
+     * Push [delta] through the target's [android.view.inputmethod.InputConnection]
+     * using `setSelection` + `deleteSurroundingText` + `commitText` on the
+     * delta substring only.
+     *
+     * Reconciles overlay expectations with the target's live selection by
+     * reading `getSurroundingText` first: if the app or user has moved the
+     * caret since our last write, we anchor the delta to the *target's*
+     * current position rather than blindly assuming our cached one is
+     * still authoritative.
+     */
+    private fun injectDeltaViaInputConnection(delta: BufferDelta): Boolean {
+        val connection = runCatching { inputMethod?.currentInputConnection }
+            .getOrNull() ?: return false
+        return runCatching {
+            // Try to align the target's caret to `delta.replaceStart`. Use the
+            // live surrounding-text extent when available so we don't fight
+            // the app over cursor position.
+            val surrounding = runCatching {
+                connection.getSurroundingText(
+                    INPUT_CONNECTION_CLEAR_SPAN,
+                    INPUT_CONNECTION_CLEAR_SPAN,
+                    0
+                )
+            }.getOrNull()
+
+            val targetLen = surrounding?.text?.length
+            val start = delta.replaceStart.coerceAtLeast(0)
+                .let { s -> if (targetLen != null) s.coerceAtMost(targetLen) else s }
+            val end = delta.replaceEnd.coerceAtLeast(start)
+                .let { e -> if (targetLen != null) e.coerceAtMost(targetLen) else e }
+
+            // Place caret at the start of the range, then delete the range,
+            // then commit the insert. commitText with newCursorPosition = 1
+            // leaves the caret after the inserted substring — matching
+            // delta.newCaret when insert.length == end - start + (delta.insert.length).
+            connection.setSelection(start, end)
+            if (end > start) {
+                // deleteSurroundingText deletes chars *around* the caret; since
+                // we just selected [start, end], delete the selection by
+                // committing an empty string first is safer than trying to
+                // interpret surrounding semantics with a range selection.
+                connection.commitText("", 1, null)
+            }
+            if (delta.insert.isNotEmpty()) {
+                connection.commitText(delta.insert, 1, null)
+            }
+            // Fine-tune caret to exactly the requested position — commitText
+            // above lands us at `start + insert.length` which may not equal
+            // delta.newCaret when the delta represents a caret-only move
+            // baked into an edit.
+            if (delta.newCaret != start + delta.insert.length) {
+                runCatching { connection.setSelection(delta.newCaret, delta.newCaret) }
+            }
+            true
+        }.getOrElse { err ->
+            Log.w(TAG, "injectDeltaViaInputConnection failed: ${err.message}")
+            false
+        }.also { ok ->
+            Log.d(
+                TAG,
+                "injectDeltaViaInputConnection result=$ok removed=${delta.removedLength} " +
+                    "insertLen=${delta.insert.length} newCaret=${delta.newCaret}"
+            )
+        }
+    }
+
+    private fun setSelectionOnCachedNode(caret: Int) {
+        val node = targetFocusedNode ?: return
+        runCatching {
+            val args = Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, caret)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, caret)
+            }
+            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
+        }
     }
 
     /**
@@ -1617,7 +1859,8 @@ private fun CoverNumericPinKeypad(
                     .weight(0.85f)
                     .height(44.dp),
                 backgroundColor = Color(0xFF2A2A30),
-                onClick = onBackspace
+                onClick = onBackspace,
+                repeating = true
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Backspace,
@@ -1780,7 +2023,8 @@ private fun CoverT9MultiTapKeypad(
                 onClick = {
                     lastTapDigit = null
                     onBackspace()
-                }
+                },
+                repeating = true
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Backspace,
@@ -1809,13 +2053,65 @@ private fun KeypadButton(
     modifier: Modifier = Modifier,
     backgroundColor: Color = Color(0xFF1F1F24),
     onClick: () -> Unit,
+    repeating: Boolean = false,
+    repeatInitialDelayMillis: Long = 400L,
+    repeatIntervalMillis: Long = 55L,
     content: @Composable () -> Unit
 ) {
+    if (!repeating) {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(backgroundColor)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            content()
+        }
+        return
+    }
+
+    // Hold-to-repeat path: fires `onClick` once on down, then every
+    // [repeatIntervalMillis] after an initial [repeatInitialDelayMillis]
+    // delay, until the finger releases. Matches system-IME backspace
+    // behaviour (Samsung Keyboard uses ~50-60 ms cadence after ~400 ms
+    // hold).
+    val callback = androidx.compose.runtime.rememberUpdatedState(onClick)
+    var isPressed by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(repeatInitialDelayMillis, repeatIntervalMillis) {
+        androidx.compose.runtime.snapshotFlow { isPressed }
+            .collect { pressed ->
+                if (!pressed) return@collect
+                kotlinx.coroutines.delay(repeatInitialDelayMillis)
+                while (isPressed) {
+                    callback.value.invoke()
+                    kotlinx.coroutines.delay(repeatIntervalMillis)
+                }
+            }
+    }
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
             .background(backgroundColor)
-            .clickable(onClick = onClick),
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    isPressed = true
+                    // Fire the first click immediately on down so a quick tap
+                    // still deletes one character before the repeat cadence
+                    // kicks in.
+                    callback.value.invoke()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.changes.none { change -> change.pressed }) {
+                            isPressed = false
+                            break
+                        }
+                    }
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
         content()
