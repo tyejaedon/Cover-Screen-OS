@@ -10,6 +10,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.os.IBinder
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Display
@@ -18,8 +19,10 @@ import androidx.core.app.ServiceCompat
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
+import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.services.CallPackageMatchers
+import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,7 +42,14 @@ class ForegroundService : Service() {
         private const val APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS = 120L
         private const val APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS = 2_500L
         private const val APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT = 1
-        private const val APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS = 45_000L
+        // Effectively disable the "auto-reclaim after N seconds of no interaction"
+        // behavior. Previously this was 45s, which meant that while the user was
+        // watching a movie (no touch input for 45s) the cover launcher overlay
+        // would slam itself back on top of the running app. The overlay now only
+        // returns when the user actively navigates back to the launcher (detected
+        // via the accessibility service reclaim signal) or when the display is
+        // relocked, not on an idle timer.
+        private const val APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS = Long.MAX_VALUE
         private const val APP_LAUNCH_RESUME_MIN_LAUNCHER_MS = 300L
         private const val TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS = 120L
         private const val TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS = 700L
@@ -48,6 +58,9 @@ class ForegroundService : Service() {
         private const val INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS = 5_000L
         private const val OVERLAY_RECLAIM_MIN_INTERVAL_MS = 80L
         private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
+        private const val OVERLAY_TRANSITION_LOG_TAG = "CoverOverlayTransition"
+        private const val OVERLAY_MARKER_HELD_HIDDEN = "marker=held_hidden"
+        private const val OVERLAY_MARKER_REMOVED_STALE = "marker=removed_stale"
 
         private val TRANSIENT_SYSTEM_UI_PREFIXES = arrayOf(
             "com.android.systemui",
@@ -139,6 +152,7 @@ class ForegroundService : Service() {
         transientExitFailsafeMinSuppressionMs = TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS,
         transientExitPatternWindowMs = TRANSIENT_EXIT_PATTERN_WINDOW_MS
     )
+    private val overlayAttachmentPolicy = OverlayAttachmentPolicy()
 
     private var overlayRequested = false
     private var isDisplayListenerRegistered = false
@@ -332,6 +346,11 @@ class ForegroundService : Service() {
                 overlayRequested = true
                 coverDisplayHelper.startLockStatusMonitoring()
                 registerDisplayListenerIfNeeded()
+
+                // Rehydrate call suppression state after service restarts so active calls
+                // do not depend on a future listener state-change callback.
+                CoverNotificationListenerService.replayCallNotificationStateToForegroundService()
+
                 scheduleRetarget(reason = "service_start", immediate = true)
             }
         }
@@ -390,7 +409,7 @@ class ForegroundService : Service() {
             return
         }
 
-        serviceScope.launch {
+        runOnMainThread {
             suppressOverlayForReason(packageName = normalizedPackageName, reason = OverlaySuppressionReason.INCOMING_CALL)
         }
     }
@@ -407,7 +426,7 @@ class ForegroundService : Service() {
             normalizedPackageName?.let { trackIncomingCallPassthrough(it) }
 
             if (!isOverlaySuppressedForAppLaunch || suppressionReason != OverlaySuppressionReason.INCOMING_CALL) {
-                serviceScope.launch {
+                runOnMainThread {
                     suppressOverlayForReason(
                         packageName = normalizedPackageName ?: "incoming_call_notification",
                         reason = OverlaySuppressionReason.INCOMING_CALL
@@ -418,10 +437,18 @@ class ForegroundService : Service() {
         }
 
         if (isOverlaySuppressedForAppLaunch && suppressionReason == OverlaySuppressionReason.INCOMING_CALL) {
-            serviceScope.launch {
+            runOnMainThread {
                 maybeResumeOverlayAfterAppLaunch(reason = "call_notification_ended")
             }
         }
+    }
+
+    private inline fun runOnMainThread(crossinline block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+            return
+        }
+        serviceScope.launch { block() }
     }
 
     private fun ensureForegroundSession(): Boolean {
@@ -475,18 +502,41 @@ class ForegroundService : Service() {
         }
 
         val activeId = overlayWindowController.getActiveDisplayId()
-        val currentlyOnCover = overlayWindowController.isOverlayAttached() && activeId != null && activeId != Display.DEFAULT_DISPLAY
+        val isOverlayAttached = overlayWindowController.isOverlayAttached()
+        val activeDisplayIsValid = activeId
+            ?.let { displayManager.getDisplay(it) }
+            ?.isValid == true
+        val shouldHoldSuppressedOverlay = overlayAttachmentPolicy.shouldHoldSuppressedOnCurrentDisplay(
+            isOverlayAttached = isOverlayAttached,
+            activeDisplayId = activeId,
+            isActiveDisplayStillValid = activeDisplayIsValid
+        )
 
-        if (currentlyOnCover) {
+        if (shouldHoldSuppressedOverlay) {
             overlayWindowController.suppressOverlayForLaunch()
             isOverlayActive = false
-            logDebug { "overlay reason=$reason holding_hidden_on_cover activeId=$activeId displays=${coverDisplayHelper.describeDisplays()}" }
+            Log.i(
+                OVERLAY_TRANSITION_LOG_TAG,
+                "$OVERLAY_MARKER_HELD_HIDDEN reason=$reason activeId=$activeId activeDisplayValid=$activeDisplayIsValid active=${coverDisplayHelper.describeDisplayState(activeId)} displays=${coverDisplayHelper.describeDisplays()}"
+            )
+            logDebug {
+                "overlay reason=$reason holding_hidden_on_cover activeId=$activeId activeDisplayValid=$activeDisplayIsValid displays=${coverDisplayHelper.describeDisplays()}"
+            }
             return
         }
 
-        if (overlayWindowController.isOverlayAttached()) overlayWindowController.removeOverlay()
+        val removedStaleOverlayState = isOverlayAttached || activeId != null
+        if (removedStaleOverlayState) {
+            overlayWindowController.removeOverlay()
+            Log.i(
+                OVERLAY_TRANSITION_LOG_TAG,
+                "$OVERLAY_MARKER_REMOVED_STALE reason=$reason activeId=$activeId activeDisplayValid=$activeDisplayIsValid attached=$isOverlayAttached"
+            )
+        }
         isOverlayActive = false
-        logDebug { "overlay reason=$reason no_cover_available attached=false displays=${coverDisplayHelper.describeDisplays()}" }
+        logDebug {
+            "overlay reason=$reason no_cover_available overlayStateCleared=true activeId=$activeId activeDisplayValid=$activeDisplayIsValid displays=${coverDisplayHelper.describeDisplays()}"
+        }
     }
 
     private fun attachOverlayToTarget(targetDisplay: Display, reason: String) {
@@ -627,18 +677,18 @@ class ForegroundService : Service() {
             return
         }
 
-        if (coverDisplayHelper.getDisplayLockStatus()) {
-            logResumeDecision(reason = reason, decision = "resume_locked")
-            completeSuppressionAndRetargetOnce(reason = "resume_after_app_launch_locked:$reason")
-            return
-        }
-
         if (shouldKeepOverlaySuppressedForIncomingCall()) {
             logResumeDecision(
                 reason = reason,
                 decision = "hold_incoming_call",
                 detail = "incomingCallPackage=$incomingCallPassthroughPackage callNotificationActive=$callNotificationActive"
             )
+            return
+        }
+
+        if (coverDisplayHelper.getDisplayLockStatus()) {
+            logResumeDecision(reason = reason, decision = "resume_locked")
+            completeSuppressionAndRetargetOnce(reason = "resume_after_app_launch_locked:$reason")
             return
         }
 
@@ -733,12 +783,12 @@ class ForegroundService : Service() {
     }
 
     private fun resolveForegroundPackageForResume(): String? {
-        val foregroundPackage = CoverAccessibilityService.currentForegroundPackage()?.trim()?.takeUnless { it.isEmpty() }
+        val foregroundPackage = CoverInputAccessibilityService.currentForegroundPackage()?.trim()?.takeUnless { it.isEmpty() }
             ?: run {
                 logResumeDecision(reason = "resolve", decision = "no_foreground_package")
                 return null
             }
-        val eventAgeMs = CoverAccessibilityService.currentForegroundPackageEventAgeMs()
+        val eventAgeMs = CoverInputAccessibilityService.currentForegroundPackageEventAgeMs()
         if (eventAgeMs > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) {
             if (isTransientSystemUiPackage(foregroundPackage) && isTransientForegroundSafeForResume(foregroundPackage)) {
                 logResumeDecision(
@@ -790,8 +840,8 @@ class ForegroundService : Service() {
     private fun isIncomingCallPackage(packageName: String): Boolean = CallPackageMatchers.isIncomingCallPackage(packageName)
 
     private fun resolveRawForegroundPackageForCallGuard(): String? {
-        val foregroundPackage = CoverAccessibilityService.currentForegroundPackage()?.trim()?.takeUnless { it.isEmpty() } ?: return null
-        if (CoverAccessibilityService.currentForegroundPackageEventAgeMs() > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) return null
+        val foregroundPackage = CoverInputAccessibilityService.currentForegroundPackage()?.trim()?.takeUnless { it.isEmpty() } ?: return null
+        if (CoverInputAccessibilityService.currentForegroundPackageEventAgeMs() > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) return null
         return foregroundPackage
     }
 

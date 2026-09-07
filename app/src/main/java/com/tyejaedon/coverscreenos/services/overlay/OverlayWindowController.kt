@@ -11,6 +11,7 @@ import android.view.View
 import android.view.Display
 import android.view.WindowManager
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -29,10 +30,11 @@ import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.receivers.LockStatusReceiver
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
-import com.tyejaedon.coverscreenos.ui.CoverAppGridOverlay
+import com.tyejaedon.coverscreenos.ui.launcher.CoverAppGridOverlay
 import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 internal class OverlayWindowController(
     private val context: Context,
@@ -48,6 +50,7 @@ internal class OverlayWindowController(
     private var overlayLifecycleOwner: OverlayViewLifecycleOwner? = null
     private var overlayLayoutParams: WindowManager.LayoutParams? = null
     private var isLaunchSuppressed: Boolean = false
+    private var deferredLaunchSuppressed: Boolean? = null
 
     fun showOverlay(
         targetDisplay: Display? = null,
@@ -55,8 +58,11 @@ internal class OverlayWindowController(
         deviceLockState: StateFlow<Boolean>? = null
     ): Boolean {
         val desiredDisplayId = targetDisplay?.displayId ?: Display.DEFAULT_DISPLAY
+        val isExistingOverlayReusable = composeView?.isAttachedToWindow == true &&
+            !forceReattach &&
+            activeDisplayId == desiredDisplayId
 
-        if (composeView != null && !forceReattach && activeDisplayId == desiredDisplayId) {
+        if (isExistingOverlayReusable) {
             setLaunchSuppressed(false)
             return true
         }
@@ -77,8 +83,18 @@ internal class OverlayWindowController(
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
                 setViewTreeLifecycleOwner(overlayLifecycleOwner)
                 setViewTreeSavedStateRegistryOwner(overlayLifecycleOwner)
+                addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                    override fun onViewAttachedToWindow(v: View) {
+                        deferredLaunchSuppressed?.let { suppressed ->
+                            setLaunchSuppressed(suppressed)
+                        }
+                    }
+
+                    override fun onViewDetachedFromWindow(v: View) = Unit
+                })
                 setContent {
                     val composeContext = LocalContext.current
+                    val overlayScope = rememberCoroutineScope()
                     val isDeviceLocked = deviceLockState
                         ?.collectAsStateWithLifecycle(initialValue = false)
                         ?.value
@@ -104,6 +120,12 @@ internal class OverlayWindowController(
                                 }
 
                                 val launched = CoverAppLauncher.launchAppOnCoverScreen(composeContext, appModel)
+                                if (!launched) {
+                                    Log.w(
+                                        "OverlayWindowController",
+                                        "Launch dispatch failed package=$packageName; overlay remains visible"
+                                    )
+                                }
                                 coordinator?.completeLaunch(packageName = packageName, launchDispatched = launched)
                             },
                             isDeviceLocked = isDeviceLocked,
@@ -112,7 +134,20 @@ internal class OverlayWindowController(
                             wallpaperUri = launcherSettings.wallpaperUri,
                             wallpaperScaleMode = launcherSettings.wallpaperScaleMode,
                             wallpaperDimAmount = launcherSettings.wallpaperDimAmount,
-                            wallpaperBlurRadiusDp = launcherSettings.wallpaperBlurRadiusDp
+                            wallpaperBlurRadiusDp = launcherSettings.wallpaperBlurRadiusDp,
+                            keyboardStrategy = launcherSettings.keyboardStrategy,
+                            onKeyboardStrategyChanged = { nextStrategy ->
+                                overlayScope.launch {
+                                    runCatching {
+                                        launcherSettingsStore.setKeyboardStrategy(nextStrategy)
+                                    }.onFailure { error ->
+                                        Log.w(
+                                            "OverlayWindowController",
+                                            "Unable to persist keyboard strategy=$nextStrategy: ${error.message}"
+                                        )
+                                    }
+                                }
+                            }
                         )
                     }
                 }
@@ -162,6 +197,7 @@ internal class OverlayWindowController(
             overlayLayoutParams = null
             activeDisplayId = null
             isLaunchSuppressed = false
+            deferredLaunchSuppressed = null
         }
     }
 
@@ -179,12 +215,18 @@ internal class OverlayWindowController(
 
     fun getActiveDisplayId(): Int? = activeDisplayId
 
-    fun isOverlayAttached(): Boolean = composeView != null
+    fun isOverlayAttached(): Boolean = composeView?.isAttachedToWindow == true
+
 
     private fun setLaunchSuppressed(suppressed: Boolean) {
         val view = composeView ?: return
         val manager = overlayWindowManager ?: return
         val params = overlayLayoutParams ?: return
+        if (!view.isAttachedToWindow) {
+            deferredLaunchSuppressed = suppressed
+            return
+        }
+        deferredLaunchSuppressed = null
 
         if (isLaunchSuppressed == suppressed) return
 

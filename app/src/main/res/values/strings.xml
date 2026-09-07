@@ -3,4 +3,6 @@
     <string name="accessibility_service_description">Lets Cover Screen OS react to navigation and window changes on the cover display.</string>
     <string name="overlay_window_title">Cover Screen OS</string>
     <string name="overlay_window_subtitle">Overlay active</string>
+    <string name="cover_t9_ime_name">CoverScreenOS T9 Keyboard</string>
+    <string name="cover_t9_ime_subtype_en">English (T9)</string>
 </resources>

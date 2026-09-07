@@ -51,6 +51,7 @@ enum class ThemePreference {
 	DARK
 }
 
+
 private val Context.coverLauncherSettingsDataStore by preferencesDataStore(name = "cover_launcher_settings")
 
 private object LauncherPreferencesKeys {
@@ -60,6 +61,7 @@ private object LauncherPreferencesKeys {
 	val wallpaperBlurRadiusDp = floatPreferencesKey("wallpaper_blur_radius_dp")
 	val dockVisible = booleanPreferencesKey("dock_visible")
 	val themePreference = stringPreferencesKey("theme_preference")
+	val keyboardStrategy = stringPreferencesKey("keyboard_strategy")
 	val dockSlots: List<Preferences.Key<String>> = List(COVER_DOCK_SLOT_COUNT) { slot ->
 		stringPreferencesKey("dock_slot_$slot")
 	}
@@ -72,7 +74,8 @@ data class LauncherSettings(
 	val wallpaperDimAmount: Float = DEFAULT_WALLPAPER_DIM_AMOUNT,
 	val wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP,
 	val isDockVisible: Boolean = true,
-	val themePreference: ThemePreference = ThemePreference.SYSTEM
+	val themePreference: ThemePreference = ThemePreference.SYSTEM,
+	val keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY
 )
 
 private const val SETTINGS_STORE_LOG_TAG = "LauncherSettingsStore"
@@ -126,7 +129,10 @@ class LauncherSettingsStore(
 					isDockVisible = preferences[LauncherPreferencesKeys.dockVisible] ?: true,
 					themePreference = preferences[LauncherPreferencesKeys.themePreference]
 						?.let { value -> ThemePreference.entries.firstOrNull { it.name == value } }
-						?: ThemePreference.SYSTEM
+						?: ThemePreference.SYSTEM,
+					keyboardStrategy = KeyboardStrategy.fromStorageValue(
+						preferences[LauncherPreferencesKeys.keyboardStrategy]
+					)
 				)
 			}.getOrElse { error ->
 				Log.w(SETTINGS_STORE_LOG_TAG, "Failed to map settings. Falling back to defaults.", error)
@@ -194,6 +200,7 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = normalizedWallpaperBlur
 				preferences[LauncherPreferencesKeys.dockVisible] = settings.isDockVisible
 				preferences[LauncherPreferencesKeys.themePreference] = settings.themePreference.name
+				preferences[LauncherPreferencesKeys.keyboardStrategy] = settings.keyboardStrategy.name
 			}
 		}
 	}
@@ -252,6 +259,15 @@ class LauncherSettingsStore(
 			}
 		}
 	}
+
+	suspend fun setKeyboardStrategy(keyboardStrategy: KeyboardStrategy) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences[LauncherPreferencesKeys.keyboardStrategy] = keyboardStrategy.name
+			}
+		}
+	}
+
 
 	suspend fun moveDockPackage(fromIndex: Int, toIndex: Int) {
 		require(fromIndex in 0 until COVER_DOCK_SLOT_COUNT) {
@@ -523,6 +539,7 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = DEFAULT_WALLPAPER_BLUR_RADIUS_DP
 				preferences[LauncherPreferencesKeys.dockVisible] = true
 				// Theme preference is intentionally preserved during layout reset.
+				preferences[LauncherPreferencesKeys.keyboardStrategy] = DEFAULT_KEYBOARD_STRATEGY.name
 			}
 
 			deleteManagedWallpaperFiles()

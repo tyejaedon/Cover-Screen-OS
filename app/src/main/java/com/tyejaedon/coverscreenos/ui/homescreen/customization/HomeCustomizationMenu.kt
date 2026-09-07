@@ -3,6 +3,7 @@ package com.tyejaedon.coverscreenos.ui.homescreen.customization
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Restore
 import com.tyejaedon.coverscreenos.datastore.COVER_DOCK_SLOT_COUNT
@@ -39,6 +40,14 @@ internal fun buildHomeCustomizationMenuItems(
             icon = Icons.Filled.Image,
             selected = activePanel == HomeCustomizationPanel.WALLPAPER,
             onClick = { onPanelSelected(HomeCustomizationPanel.WALLPAPER) }
+        ),
+        SettingsMenuItem(
+            key = "input",
+            title = "Input",
+            summary = "Accessibility overlay keyboard",
+            icon = Icons.Filled.Keyboard,
+            selected = activePanel == HomeCustomizationPanel.INPUT,
+            onClick = { onPanelSelected(HomeCustomizationPanel.INPUT) }
         ),
         SettingsMenuItem(
             key = "appearance",

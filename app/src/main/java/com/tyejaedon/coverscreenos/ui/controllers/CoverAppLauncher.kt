@@ -10,6 +10,7 @@ import android.hardware.display.DisplayManager
 import android.util.Log
 import android.view.Display
 import com.tyejaedon.coverscreenos.models.AppModel
+import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
 import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
 
 object CoverAppLauncher {
@@ -24,7 +25,28 @@ object CoverAppLauncher {
         val launchOptions = ActivityOptions.makeBasic().apply {
             this.launchDisplayId = launchDisplayId
         }.toBundle()
-        context.startActivity(launchIntent, launchOptions)
+
+        // Prefer the accessibility service as the launch origin. The overlay window is owned by a
+        // Service, so a direct startActivity() from it is silently dropped by background-activity-
+        // launch (BAL) enforcement - no exception is raised and the app simply never appears.
+        // A connected AccessibilityService is BAL-exempt, so it can dispatch the launch reliably.
+        val dispatchedViaAccessibility = CoverInputAccessibilityService.startActivityFromAccessibilityService(
+            launchIntent = launchIntent,
+            launchOptions = launchOptions
+        )
+
+        if (dispatchedViaAccessibility) {
+            logDebug("Launch dispatched via accessibility service displayId=$launchDisplayId")
+        } else {
+            if (!CoverInputAccessibilityService.isConnected()) {
+                logWarning(
+                    "Accessibility service not connected; falling back to direct startActivity. " +
+                        "Launch may be blocked by background-activity-launch policy."
+                )
+            }
+            context.startActivity(launchIntent, launchOptions)
+            logDebug("Launch dispatched via direct startActivity displayId=$launchDisplayId")
+        }
     }
 
     /**
@@ -73,7 +95,10 @@ object CoverAppLauncher {
         activityLaunchExecutor: ActivityLaunchExecutor,
         skipUnlockChallenge: Boolean = false
     ): Boolean {
-        logDebug("Launch requested package=$packageName displayId=$displayId")
+        logDebug(
+            "Launch requested package=$packageName displayId=$displayId " +
+                "accessibilityConnected=${CoverInputAccessibilityService.isConnected()}"
+        )
         if (!skipUnlockChallenge && isDeviceLocked(context)) {
             logDebug("Device locked; delegating to unlock bridge package=$packageName")
             val bridgeStarted = UnlockBridgeActivity.startUnlockRequest(
@@ -97,7 +122,15 @@ object CoverAppLauncher {
             context = context,
             packageName = packageName,
             launchIntent = launchIntent
-        ) ?: return false
+        )
+        if (launchActivityInfo == null) {
+            logWarning(
+                "Launch blocked because no activity info resolved for package $packageName " +
+                    "(component=${launchIntent.component?.flattenToShortString()}). " +
+                    "This is usually package-visibility filtering."
+            )
+            return false
+        }
 
         if (!launchActivityInfo.enabled) {
             logWarning("Launch blocked because activity is disabled for package $packageName")
@@ -121,11 +154,15 @@ object CoverAppLauncher {
         val launchDisplayId = resolveLaunchDisplayId(context = context, displayId = displayId)
 
         return try {
-            // Suppress the overlay UI so the launched cover app receives input focus immediately
+            // Order matters: dispatch the launch *before* hiding the overlay.
+            // A visible SYSTEM_ALERT_WINDOW overlay is itself one of the background-activity-launch
+            // exemptions, so tearing it down first would remove the very privilege the launch needs
+            // when the accessibility fallback path is in use.
+            activityLaunchExecutor.launch(context, launchIntent, launchDisplayId)
+
+            // Suppress the overlay UI so the launched cover app receives input focus.
             val hideIntent = ForegroundService.createHideOverlayIntent(context, packageName)
             context.startService(hideIntent)
-
-            activityLaunchExecutor.launch(context, launchIntent, launchDisplayId)
             true
         } catch (error: ActivityNotFoundException) {
             logWarning("Launch target missing for $packageName on display $launchDisplayId: ${error.message}")

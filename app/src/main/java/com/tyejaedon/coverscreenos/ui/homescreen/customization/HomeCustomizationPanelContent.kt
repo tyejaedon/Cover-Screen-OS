@@ -1,10 +1,12 @@
 package com.tyejaedon.coverscreenos.ui.homescreen.customization
 
 import androidx.compose.runtime.Composable
+import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
 import com.tyejaedon.coverscreenos.datastore.ThemePreference
 import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
 import com.tyejaedon.coverscreenos.ui.settings.AppearanceCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.DockCustomizationCard
+import com.tyejaedon.coverscreenos.ui.settings.InputCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.WallpaperCustomizationCard
 
 @Composable
@@ -18,6 +20,11 @@ internal fun HomeCustomizationPanelContent(
     onClearSlot: (Int) -> Unit,
     themePreference: ThemePreference,
     onThemePreferenceSelected: (ThemePreference) -> Unit,
+    keyboardStrategy: KeyboardStrategy,
+    onKeyboardStrategySelected: (KeyboardStrategy) -> Unit,
+    onOpenKeyboardPicker: () -> Unit,
+    onOpenKeyboardSettings: () -> Unit,
+    capabilityRefreshNonce: Int,
     wallpaperUri: String?,
     wallpaperScaleMode: WallpaperScaleMode,
     dimAmount: Float,
@@ -49,6 +56,16 @@ internal fun HomeCustomizationPanelContent(
         )
     }
 
+    if (activePanel == HomeCustomizationPanel.INPUT) {
+        InputCustomizationCard(
+            keyboardStrategy = keyboardStrategy,
+            onKeyboardStrategySelected = onKeyboardStrategySelected,
+            onOpenKeyboardPicker = onOpenKeyboardPicker,
+            onOpenKeyboardSettings = onOpenKeyboardSettings,
+            capabilityRefreshNonce = capabilityRefreshNonce
+        )
+    }
+
     if (activePanel == HomeCustomizationPanel.WALLPAPER) {
         WallpaperCustomizationCard(
             wallpaperUri = wallpaperUri,
@@ -66,4 +83,3 @@ internal fun HomeCustomizationPanelContent(
         )
     }
 }
-

@@ -1,6 +1,9 @@
 package com.tyejaedon.coverscreenos.ui.homescreen.customization
 
+import android.content.Intent
+import android.provider.Settings
 import android.util.Log
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -25,7 +29,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.getSystemService
 import com.tyejaedon.coverscreenos.datastore.COVER_DOCK_SLOT_COUNT
+import com.tyejaedon.coverscreenos.datastore.DEFAULT_KEYBOARD_STRATEGY
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_SCALE_MODE
@@ -99,6 +105,10 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
     var themePreferencePreview by remember(settings.themePreference) {
         mutableStateOf(settings.themePreference)
     }
+    var keyboardStrategyPreview by remember(settings.keyboardStrategy) {
+        mutableStateOf(settings.keyboardStrategy)
+    }
+    var keyboardCapabilityRefreshNonce by remember { mutableIntStateOf(0) }
 
     var activeDockSlotIndex by remember { mutableStateOf<Int?>(null) }
     var activePanel by remember { mutableStateOf(HomeCustomizationPanel.DOCK) }
@@ -197,6 +207,40 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                     settingsStore.setThemePreference(selectedPreference)
                 }
             },
+            keyboardStrategy = keyboardStrategyPreview,
+            onKeyboardStrategySelected = { selectedStrategy ->
+                keyboardStrategyPreview = selectedStrategy
+                scope.launch {
+                    settingsStore.setKeyboardStrategy(selectedStrategy)
+                }
+            },
+            onOpenKeyboardPicker = {
+                runCatching {
+                    val inputMethodManager = appContext.getSystemService<InputMethodManager>()
+                    inputMethodManager?.showInputMethodPicker()
+                }.onFailure { error ->
+                    Log.w(CUSTOMIZATION_HUB_LOG_TAG, "Unable to open IME picker: ${error.message}")
+                    scope.launch {
+                        snackbarHostState.showSnackbar("Unable to open keyboard picker on this device.")
+                    }
+                }
+                keyboardCapabilityRefreshNonce += 1
+            },
+            onOpenKeyboardSettings = {
+                runCatching {
+                    val settingsIntent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    appContext.startActivity(settingsIntent)
+                }.onFailure { error ->
+                    Log.w(CUSTOMIZATION_HUB_LOG_TAG, "Unable to open IME settings: ${error.message}")
+                    scope.launch {
+                        snackbarHostState.showSnackbar("Unable to open keyboard settings on this device.")
+                    }
+                }
+                keyboardCapabilityRefreshNonce += 1
+            },
+            capabilityRefreshNonce = keyboardCapabilityRefreshNonce,
             wallpaperUri = settings.wallpaperUri,
             wallpaperScaleMode = wallpaperScaleModePreview,
             dimAmount = wallpaperDimPreview,
@@ -286,7 +330,8 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                             wallpaperDimAmount = wallpaperDimPreview,
                             wallpaperBlurRadiusDp = wallpaperBlurPreview,
                             isDockVisible = settings.isDockVisible,
-                            themePreference = themePreferencePreview
+                            themePreference = themePreferencePreview,
+                            keyboardStrategy = keyboardStrategyPreview
                         )
 
                         showResetConfirmDialog = false
@@ -295,6 +340,7 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                         wallpaperScaleModePreview = DEFAULT_WALLPAPER_SCALE_MODE
                         wallpaperDimPreview = DEFAULT_WALLPAPER_DIM_AMOUNT
                         wallpaperBlurPreview = DEFAULT_WALLPAPER_BLUR_RADIUS_DP
+                        keyboardStrategyPreview = DEFAULT_KEYBOARD_STRATEGY
                         scope.launch {
                             settingsStore.resetLauncherLayout()
 
@@ -323,6 +369,7 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                                 wallpaperBlurPreview = launcherSnapshotBeforeReset.wallpaperBlurRadiusDp
                                     .coerceIn(MIN_WALLPAPER_BLUR_RADIUS_DP, MAX_WALLPAPER_BLUR_RADIUS_DP)
                                 themePreferencePreview = launcherSnapshotBeforeReset.themePreference
+                                keyboardStrategyPreview = launcherSnapshotBeforeReset.keyboardStrategy
                             }
                         }
                     }

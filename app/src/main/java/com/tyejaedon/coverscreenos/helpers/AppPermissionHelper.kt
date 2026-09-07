@@ -9,10 +9,11 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.inputmethod.InputMethodManager
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
-import com.tyejaedon.coverscreenos.services.overlay.CoverAccessibilityService
+import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
 
 object AppPermissionHelper {
 
@@ -43,8 +44,12 @@ object AppPermissionHelper {
         }
     }
 
+    fun hasMicrophonePermission(context: Context): Boolean {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    }
+
     fun isAccessibilityServiceEnabled(context: Context): Boolean {
-        return isAccessibilityServiceEnabled(context, CoverAccessibilityService::class.java)
+        return isAccessibilityServiceEnabled(context, CoverInputAccessibilityService::class.java)
     }
 
     fun isNotificationListenerEnabled(context: Context): Boolean {
@@ -92,6 +97,19 @@ object AppPermissionHelper {
         return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
     }
 
+    fun createInputMethodSettingsIntent(): Intent {
+        return Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
+    }
+
+    fun showInputMethodPicker(context: Context): Boolean {
+        val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            ?: return false
+        return runCatching {
+            inputMethodManager.showInputMethodPicker()
+            true
+        }.getOrDefault(false)
+    }
+
     fun createAppDetailsSettingsIntent(context: Context): Intent {
         return Intent(
             Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -104,9 +122,38 @@ object AppPermissionHelper {
         return powerManager.isIgnoringBatteryOptimizations(context.packageName)
     }
 
+    /**
+     * Builds a battery-optimization intent that is actually resolvable on this device.
+     *
+     * [Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS] is a *list* screen and accepts no
+     * data URI - attaching `package:<pkg>` to it makes it unresolvable on several OEM builds
+     * (notably Samsung), which previously crashed the app with `ActivityNotFoundException`.
+     *
+     * Preference order:
+     *  1. [Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS] + `package:` data - the direct
+     *     per-app allow dialog (backed by the REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission).
+     *  2. [Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS] with *no* data - the system list.
+     *  3. App details settings - always present, used as the guaranteed last resort so the
+     *     button still does something useful even if resolution is filtered.
+     */
     fun createBatteryOptimizationSettingsIntent(context: Context): Intent {
-        return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
-            data = "package:${context.packageName}".toUri()
-        }
+        val appDetailsFallbackIntent = createAppDetailsSettingsIntent(context)
+        val preferredIntents = listOf(
+            Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                "package:${context.packageName}".toUri()
+            ),
+            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        )
+
+        return preferredIntents.firstOrNull { intent -> intent.canBeResolved(context) }
+            ?: appDetailsFallbackIntent
+    }
+
+    /** True when at least one activity on the device can handle [this] intent. */
+    fun Intent.canBeResolved(context: Context): Boolean {
+        return runCatching {
+            context.packageManager.resolveActivity(this, PackageManager.MATCH_DEFAULT_ONLY) != null
+        }.getOrDefault(false)
     }
 }
