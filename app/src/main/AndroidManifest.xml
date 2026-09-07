@@ -45,7 +45,7 @@
         </service>
 
         <service
-            android:name=".services.overlay.CoverAccessibilityService"
+            android:name=".overlay.input.CoverInputAccessibilityService"
             android:enabled="true"
             android:exported="true"
             android:label="@string/app_name"
