@@ -1,5 +1,6 @@
 package com.tyejaedon.coverscreenos.ui.controllers
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -9,6 +10,7 @@ import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricPrompt
 import android.util.Log
 import android.view.Display
+import android.view.WindowManager
 import androidx.fragment.app.FragmentActivity
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -86,6 +88,11 @@ class UnlockBridgeActivity : FragmentActivity() {
 
         setShowWhenLocked(true)
         setTurnScreenOn(true)
+        // FLAG_DISMISS_KEYGUARD is a legacy no-op on modern Android for secure keyguards, but
+        // pairs with requestDismissKeyguard() below to cover older code paths and non-secure
+        // keyguard configurations. requestDismissKeyguard() is the authoritative call.
+        @Suppress("DEPRECATION")
+        window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
 
         val request = parseRequest(intent)
         if (request == null) {
@@ -138,9 +145,13 @@ class UnlockBridgeActivity : FragmentActivity() {
             }
 
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                completeAndFinish(reason = "auth_succeeded") {
-                    dispatchLaunchAfterUnlock(request)
-                }
+                // Biometric success alone does not guarantee the keyguard is dismissed
+                // (particularly for launches routed through the cover display). We must
+                // explicitly ask KeyguardManager to dismiss the keyguard before dispatching
+                // the target activity, otherwise the direct startActivity fallback is silently
+                // suppressed by background-activity-launch policy behind the lockscreen and
+                // the caller loops on the same tap forever.
+                dismissKeyguardAndLaunch(request)
             }
 
             override fun onAuthenticationFailed() {
@@ -161,15 +172,68 @@ class UnlockBridgeActivity : FragmentActivity() {
     }
 
     private fun dispatchLaunchAfterUnlock(request: UnlockLaunchRequest) {
+        // Deliberately use the Activity context (not applicationContext). This Activity is still
+        // focused and resumed at this point, which grants it the privilege to start activities.
+        // Using applicationContext here would discard that privilege and the launch would be
+        // silently dropped by background-activity-launch enforcement.
         val launched = CoverAppLauncher.launchPackageOnDisplayAfterUnlock(
-            context = applicationContext,
+            context = this,
             packageName = request.packageName,
             displayId = request.displayId
         )
 
         if (launched) {
             Log.d(LOG_TAG, "Launch dispatched after unlock requestId=${request.requestId} package=${request.packageName}")
+        } else {
+            Log.w(LOG_TAG, "Launch failed after unlock requestId=${request.requestId} package=${request.packageName}")
+        }
+    }
+
+    private fun dismissKeyguardAndLaunch(request: UnlockLaunchRequest) {
+        val keyguardManager = getSystemService(KeyguardManager::class.java)
+        if (keyguardManager == null) {
+            Log.w(LOG_TAG, "KeyguardManager unavailable; dispatching launch without explicit dismiss requestId=${request.requestId}")
+            completeAndFinish(reason = "auth_succeeded_no_keyguard_manager") {
+                dispatchLaunchAfterUnlock(request)
+            }
             return
+        }
+
+        if (!keyguardManager.isKeyguardLocked) {
+            // Keyguard was already down (biometric may have dismissed it) — proceed directly.
+            completeAndFinish(reason = "auth_succeeded_already_unlocked") {
+                dispatchLaunchAfterUnlock(request)
+            }
+            return
+        }
+
+        val dismissCallback = object : KeyguardManager.KeyguardDismissCallback() {
+            override fun onDismissSucceeded() {
+                Log.d(LOG_TAG, "Keyguard dismissed after biometric success requestId=${request.requestId}")
+                completeAndFinish(reason = "auth_succeeded_keyguard_dismissed") {
+                    dispatchLaunchAfterUnlock(request)
+                }
+            }
+
+            override fun onDismissCancelled() {
+                Log.d(LOG_TAG, "Keyguard dismiss cancelled requestId=${request.requestId}")
+                completeAndFinish(reason = "keyguard_dismiss_cancelled")
+            }
+
+            override fun onDismissError() {
+                Log.w(LOG_TAG, "Keyguard dismiss error requestId=${request.requestId}")
+                completeAndFinish(reason = "keyguard_dismiss_error")
+            }
+        }
+
+        runCatching {
+            keyguardManager.requestDismissKeyguard(this, dismissCallback)
+        }.onFailure { error ->
+            Log.w(LOG_TAG, "requestDismissKeyguard threw requestId=${request.requestId}: ${error.message}")
+            completeAndFinish(reason = "keyguard_dismiss_threw") {
+                // Best-effort: still try the launch — worst case it no-ops and the user retries.
+                dispatchLaunchAfterUnlock(request)
+            }
         }
     }
 

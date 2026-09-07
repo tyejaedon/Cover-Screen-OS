@@ -155,7 +155,7 @@ class CoverAppLauncherTest {
     }
 
     @Test
-    fun `launchPackageOnDisplay starts hide-overlay service before launch dispatch`() {
+    fun `launchPackageOnDisplay dispatches launch before hiding the overlay`() {
         val launchIntent = mockk<Intent>()
         val launchEvents = mutableListOf<String>()
         val launchExecutor = CoverAppLauncher.ActivityLaunchExecutor { _, _, _ ->
@@ -177,7 +177,10 @@ class CoverAppLauncherTest {
         )
 
         assertTrue(launched)
-        assertEquals(listOf("hide", "launch"), launchEvents)
+        // The launch must be dispatched first: tearing the overlay down beforehand can
+        // remove the visible SYSTEM_ALERT_WINDOW that grants the background-activity-launch
+        // exemption, leaving the launch to be silently discarded by the system.
+        assertEquals(listOf("launch", "hide"), launchEvents)
     }
 
     @Test
