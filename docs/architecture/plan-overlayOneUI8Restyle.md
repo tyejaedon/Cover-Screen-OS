@@ -328,14 +328,14 @@ Repeat for each of the 4 wallpaper luminances.
 
 ## 11. Estimated Effort
 
-| Phase | Eng-days |
-|:-----:|:--------:|
-| A — design system module | 3 |
-| B — notif + dock | 2 |
-| C — media | 3 |
-| D — search + status | 2 |
-| E — grid + cleanup | 2 |
-| **Total** | **~12** |
+|          Phase           | Eng-days |
+|:------------------------:|:--------:|
+| A — design system module |    3     |
+|     B — notif + dock     |    2     |
+|        C — media         |    3     |
+|   D — search + status    |    2     |
+|    E — grid + cleanup    |    2     |
+|        **Total**         | **~12**  |
 
 Excludes buffer for palette-lib evaluation and Samsung device-specific
 tuning (Flip 5 vs Flip 6 wallpaper decoding path differs).

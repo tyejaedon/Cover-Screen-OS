@@ -32,15 +32,15 @@ progressive disclosure for advanced controls.
 
 ## 3. Problems With the Current Design
 
-| # | Problem | Symptom | HCI principle violated |
-|---|---------|---------|------------------------|
-| 1 | Single scroll column mixes 4 unrelated concerns (readiness, service, banners, customization). | User can't build a stable mental model of "where do I do X". | **Gestalt proximity** — unrelated items visually adjacent. |
-| 2 | Every action is a full-width Material `Button` label. | 12+ identical buttons scroll under thumb. | **Hick's law** — too many equally-weighted choices. |
-| 3 | Readiness card takes ~40 % of first viewport. | Returning users scroll past every session. | **Recognition over recall** — no persistent status indicator. |
-| 4 | Customization is nested inside a boolean-toggled sub-view (`showCustomizationHub`). | Deep-linking a specific setting requires composable state gymnastics. | **Visibility of system state / addressability**. |
-| 5 | No icons — every affordance is text. | Dense wall of labels, slow scan. | **Recognition** — icons accelerate visual parsing by ~30 % (Norman). |
-| 6 | Permissions request UI overtakes the whole activity until every permission granted. | Users who deferred one permission cannot see anything else. | **User control & freedom**. |
-| 7 | Navigation is composable booleans + Intents. | No back-stack, no deep-links, no restore-instance-state on config change. | **Consistency & standards** — Android nav conventions. |
+| # | Problem                                                                                       | Symptom                                                                   | HCI principle violated                                               |
+|---|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|----------------------------------------------------------------------|
+| 1 | Single scroll column mixes 4 unrelated concerns (readiness, service, banners, customization). | User can't build a stable mental model of "where do I do X".              | **Gestalt proximity** — unrelated items visually adjacent.           |
+| 2 | Every action is a full-width Material `Button` label.                                         | 12+ identical buttons scroll under thumb.                                 | **Hick's law** — too many equally-weighted choices.                  |
+| 3 | Readiness card takes ~40 % of first viewport.                                                 | Returning users scroll past every session.                                | **Recognition over recall** — no persistent status indicator.        |
+| 4 | Customization is nested inside a boolean-toggled sub-view (`showCustomizationHub`).           | Deep-linking a specific setting requires composable state gymnastics.     | **Visibility of system state / addressability**.                     |
+| 5 | No icons — every affordance is text.                                                          | Dense wall of labels, slow scan.                                          | **Recognition** — icons accelerate visual parsing by ~30 % (Norman). |
+| 6 | Permissions request UI overtakes the whole activity until every permission granted.           | Users who deferred one permission cannot see anything else.               | **User control & freedom**.                                          |
+| 7 | Navigation is composable booleans + Intents.                                                  | No back-stack, no deep-links, no restore-instance-state on config change. | **Consistency & standards** — Android nav conventions.               |
 
 ## 4. Design Principles
 
@@ -361,15 +361,15 @@ For each new screen, code review must confirm:
 
 ## 13. Estimated Effort
 
-| Phase | Eng-days |
-|:-----:|:--------:|
-| A — nav shell | 2 |
-| B — dashboard + status chip | 3 |
-| C — customize nested graph | 4 |
-| D — permissions tab | 2 |
-| E — flag flip + deprecation move | 1 |
-| F — delete legacy (deferred, 2 releases later) | 1 |
-| **Total (through Phase E)** | **~12** |
+|                     Phase                      | Eng-days |
+|:----------------------------------------------:|:--------:|
+|                 A — nav shell                  |    2     |
+|          B — dashboard + status chip           |    3     |
+|           C — customize nested graph           |    4     |
+|              D — permissions tab               |    2     |
+|        E — flag flip + deprecation move        |    1     |
+| F — delete legacy (deferred, 2 releases later) |    1     |
+|          **Total (through Phase E)**           | **~12**  |
 
 Excludes buffer for screenshot baseline curation and TalkBack QA.
 
