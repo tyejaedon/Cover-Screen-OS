@@ -15,6 +15,12 @@ class CoverDisplayHelper(private val context: Context) {
 
     private companion object {
         private const val LOCK_STATUS_POLL_INTERVAL_MS = 10_000L
+        private val USABLE_COVER_STATES = intArrayOf(
+            Display.STATE_ON,
+            Display.STATE_VR,
+            Display.STATE_ON_SUSPEND,
+            Display.STATE_DOZE
+        )
     }
 
     private val displayManager: DisplayManager by lazy {
@@ -90,14 +96,37 @@ class CoverDisplayHelper(private val context: Context) {
     }
 
     private fun Display.isUsableCoverDisplay(): Boolean {
-        return displayId != Display.DEFAULT_DISPLAY && isValid && state == Display.STATE_ON
+        // A cover display remains usable across the transient power states a foldable
+        // reports while the main panel is changing (STATE_DOZE, STATE_ON_SUSPEND,
+        // STATE_VR). Requiring strict STATE_ON caused getCoverDisplay() to briefly
+        // return null on every `display_changed:0` tick even when the cover panel
+        // was still valid, forcing the overlay into a needless held_hidden cycle.
+        return displayId != Display.DEFAULT_DISPLAY && isValid && state in USABLE_COVER_STATES
     }
 
     fun describeDisplays(): String {
         return displayManager.displays.joinToString(prefix = "[", postfix = "]") { display ->
-            "id=${display.displayId},state=${display.state},valid=${display.isValid}"
+            "id=${display.displayId},state=${display.state}(${stateName(display.state)}),valid=${display.isValid}"
         }
     }
+
+    fun describeDisplayState(displayId: Int?): String {
+        val id = displayId ?: return "state=none"
+        val display = runCatching { displayManager.getDisplay(id) }.getOrNull() ?: return "id=$id,missing"
+        return "id=$id,state=${display.state}(${stateName(display.state)}),valid=${display.isValid}"
+    }
+
+    private fun stateName(state: Int): String = when (state) {
+        Display.STATE_OFF -> "OFF"
+        Display.STATE_ON -> "ON"
+        Display.STATE_DOZE -> "DOZE"
+        Display.STATE_DOZE_SUSPEND -> "DOZE_SUSPEND"
+        Display.STATE_VR -> "VR"
+        Display.STATE_ON_SUSPEND -> "ON_SUSPEND"
+        Display.STATE_UNKNOWN -> "UNKNOWN"
+        else -> "UNMAPPED_$state"
+    }
+
 
     private fun startLockStatusPolling() {
         if (lockStatusPoller != null) return

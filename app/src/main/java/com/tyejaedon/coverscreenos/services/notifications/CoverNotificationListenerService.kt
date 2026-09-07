@@ -69,6 +69,14 @@ class CoverNotificationListenerService : NotificationListenerService() {
             return activeNotificationModels.asStateFlow()
         }
 
+        fun replayCallNotificationStateToForegroundService() {
+            val (isActive, packageName) = lastCallNotificationState
+            ForegroundService.updateCallNotificationState(
+                isActive = isActive,
+                packageName = packageName
+            )
+        }
+
         fun dismissNotificationFromOverlay(notificationKey: String): Boolean {
             val service = activeService ?: return false
             return runCatching {

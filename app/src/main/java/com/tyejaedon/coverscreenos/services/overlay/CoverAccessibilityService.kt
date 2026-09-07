@@ -82,6 +82,14 @@ class CoverAccessibilityService : AccessibilityService() {
             .takeUnless { it.isNullOrEmpty() }
             ?: return
 
+        // Never let window events emitted by our own TYPE_APPLICATION_OVERLAY
+        // surfaces (cover launcher / keyboard / media panel) refresh the
+        // shared foreground-package state read by ForegroundService's resume
+        // poller. Doing so would treat every keyboard attach on the cover
+        // display as "user is back on our launcher", un-suppressing the cover
+        // launcher overlay on top of the app the user just launched.
+        if (foregroundPackage == this.packageName) return
+
         val nowElapsedMs = SystemClock.elapsedRealtime()
         val isSameForegroundPackage = latestForegroundPackage == foregroundPackage
         val shouldRefreshForegroundTimestamp = !isSameForegroundPackage ||
