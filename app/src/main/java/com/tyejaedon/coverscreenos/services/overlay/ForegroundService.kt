@@ -23,6 +23,7 @@ import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.services.CallPackageMatchers
 import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
+import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -137,6 +138,9 @@ class ForegroundService : Service() {
     private lateinit var launchCoordinator: CoverLaunchCoordinator
     private lateinit var coverDisplayHelper: CoverDisplayHelper
     private lateinit var displayManager: DisplayManager
+    private lateinit var appRepository: PackageManagerAppScannerRepository
+    private lateinit var launcherSettingsStore: LauncherSettingsStore
+    private var launcherOverlayHost: LauncherOverlayHost? = null
 
     private val suppressionState = OverlaySuppressionState()
     private val reclaimPolicy = OverlayReclaimPolicy(
@@ -297,8 +301,8 @@ class ForegroundService : Service() {
             onLaunchFailed = ::restoreOverlayAfterLaunchFailure,
             debugThrowOnThreadViolation = isDebuggableBuild()
         )
-        val appRepository = PackageManagerAppScannerRepository(this)
-        val launcherSettingsStore = LauncherSettingsStore(this)
+        appRepository = PackageManagerAppScannerRepository(this)
+        launcherSettingsStore = LauncherSettingsStore(this)
         overlayWindowController = OverlayWindowController(
             context = this,
             launchCoordinator = launchCoordinator,
@@ -307,6 +311,36 @@ class ForegroundService : Service() {
         )
         coverDisplayHelper = CoverDisplayHelper(this)
         displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
+
+        // Phase 2 handoff: give CoverAccessibilityService the pieces it will
+        // need in Phase 3 to host the launcher surface. No view work happens
+        // here today; the AS just holds the reference. Attaching once here
+        // (rather than on every showOverlay call) means the host survives AS
+        // disable/enable cycles without needing us to restart.
+        val appContext = applicationContext
+        val host = LauncherOverlayHost(
+            appRepository = appRepository,
+            launcherSettingsStore = launcherSettingsStore,
+            launchCoordinator = launchCoordinator,
+            deviceLockState = coverDisplayHelper.isDeviceLocked,
+            onAppSelected = { appModel ->
+                val packageName = appModel.packageName
+                val ready = launchCoordinator.beginLaunch(packageName)
+                if (!ready) {
+                    Log.w(LOG_TAG, "LauncherOverlayHost.onAppSelected rejected package=$packageName")
+                    false
+                } else {
+                    val launched = CoverAppLauncher.launchAppOnCoverScreen(appContext, appModel)
+                    launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
+                    launched
+                }
+            },
+            persistKeyboardStrategy = { strategy ->
+                launcherSettingsStore.setKeyboardStrategy(strategy)
+            }
+        )
+        launcherOverlayHost = host
+        CoverAccessibilityService.attachLauncherHost(host)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -363,6 +397,12 @@ class ForegroundService : Service() {
         if (activeServiceRef?.get() === this) {
             activeServiceRef?.clear()
             activeServiceRef = null
+        }
+        // Release the launcher host handoff first so the AS drops its
+        // reference even if teardown below throws.
+        if (launcherOverlayHost != null) {
+            CoverAccessibilityService.detachLauncherHost()
+            launcherOverlayHost = null
         }
         serviceScope.cancel() // Instantly terminates all polling and delays
         teardownOverlayRuntime()
