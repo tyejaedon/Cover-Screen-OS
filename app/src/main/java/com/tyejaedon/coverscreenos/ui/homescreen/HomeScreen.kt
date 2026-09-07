@@ -1,7 +1,11 @@
 package com.tyejaedon.coverscreenos.ui.homescreen
 
 import android.Manifest
+import android.content.Intent
+import android.util.Log
+import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +44,8 @@ import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
 import com.tyejaedon.coverscreenos.ui.theme.coverTopLevelSafeInsets
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.seconds
+
+private const val HOME_SCREEN_LOG_TAG = "HomeScreen"
 
 @Composable
 fun HomeScreen(modifier: Modifier = Modifier) {
@@ -89,6 +95,30 @@ fun HomeScreen(modifier: Modifier = Modifier) {
     }
     var serviceRunning by remember(refreshTicker) {
         mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning())
+    }
+    var settingsLaunchError by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * Launches a system settings screen defensively. OEM builds (and work profiles) can omit
+     * individual settings activities, and an unhandled [ActivityNotFoundException] from
+     * [ActivityResultLauncher.launch] would otherwise crash the whole app.
+     */
+    fun launchSettingsSafely(
+        launcher: ManagedActivityResultLauncher<Intent, ActivityResult>,
+        intent: Intent?,
+        unavailableMessage: String
+    ) {
+        if (intent == null) {
+            settingsLaunchError = unavailableMessage
+            return
+        }
+
+        runCatching { launcher.launch(intent) }
+            .onSuccess { settingsLaunchError = null }
+            .onFailure { error ->
+                Log.w(HOME_SCREEN_LOG_TAG, "Unable to open settings intent=${intent.action}", error)
+                settingsLaunchError = unavailableMessage
+            }
     }
 
     fun refreshStatus() {
@@ -161,22 +191,34 @@ fun HomeScreen(modifier: Modifier = Modifier) {
                     },
                     onEnableOverlay = {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        openOverlaySettingsLauncher.launch(AppPermissionHelper.createOverlaySettingsIntent(context))
+                        launchSettingsSafely(
+                            launcher = openOverlaySettingsLauncher,
+                            intent = AppPermissionHelper.createOverlaySettingsIntent(context),
+                            unavailableMessage = "Display-over-other-apps settings are unavailable on this device."
+                        )
                     },
                     onEnableAccessibility = {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        openAccessibilitySettingsLauncher.launch(AppPermissionHelper.createAccessibilitySettingsIntent())
+                        launchSettingsSafely(
+                            launcher = openAccessibilitySettingsLauncher,
+                            intent = AppPermissionHelper.createAccessibilitySettingsIntent(),
+                            unavailableMessage = "Accessibility settings are unavailable on this device."
+                        )
                     },
                     onEnableNotificationListener = {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        openNotificationListenerSettingsLauncher.launch(
-                            AppPermissionHelper.createNotificationListenerSettingsIntent()
+                        launchSettingsSafely(
+                            launcher = openNotificationListenerSettingsLauncher,
+                            intent = AppPermissionHelper.createNotificationListenerSettingsIntent(),
+                            unavailableMessage = "Notification access settings are unavailable on this device."
                         )
                     },
                     onDisableBatteryOptimization = {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        openBatteryOptimizationSettingsLauncher.launch(
-                            AppPermissionHelper.createBatteryOptimizationSettingsIntent(context)
+                        launchSettingsSafely(
+                            launcher = openBatteryOptimizationSettingsLauncher,
+                            intent = AppPermissionHelper.createBatteryOptimizationSettingsIntent(context),
+                            unavailableMessage = "Battery optimization settings are unavailable on this device."
                         )
                     },
                     onStartService = {
@@ -189,6 +231,15 @@ fun HomeScreen(modifier: Modifier = Modifier) {
                         refreshStatus()
                     }
                 )
+
+                settingsLaunchError?.let { errorMessage ->
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
 
                 HomeRuntimeControls()
 

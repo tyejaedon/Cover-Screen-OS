@@ -1,7 +1,11 @@
 package com.tyejaedon.coverscreenos.permissions
 
 import android.Manifest
+import android.content.Intent
+import android.util.Log
+import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +46,8 @@ private data class PermissionRequirementUiModel(
     val icon: ImageVector,
     val onAction: () -> Unit
 )
+
+private const val PERMISSION_SCREEN_LOG_TAG = "PermissionScreen"
 
 @Composable
 fun PermissionScreen(
@@ -138,6 +144,25 @@ fun PermissionScreen(
         hasAccessibilityPermission &&
         hasNotificationListenerPermission
 
+    /**
+     * Launches a system settings screen defensively. Some OEM/enterprise builds omit individual
+     * settings activities, and an unhandled [android.content.ActivityNotFoundException] from
+     * `launch` would otherwise crash the app instead of just failing the one action.
+     */
+    fun launchSettingsSafely(
+        launcher: ManagedActivityResultLauncher<Intent, ActivityResult>,
+        intent: Intent?
+    ) {
+        if (intent == null) {
+            Log.w(PERMISSION_SCREEN_LOG_TAG, "No resolvable settings activity for requested action.")
+            return
+        }
+
+        runCatching { launcher.launch(intent) }.onFailure { error ->
+            Log.w(PERMISSION_SCREEN_LOG_TAG, "Unable to open settings intent=${intent.action}", error)
+        }
+    }
+
     LaunchedEffect(allPermissionsGranted) {
         if (allPermissionsGranted && !hasTriggeredGrantedCallback) {
             hasTriggeredGrantedCallback = true
@@ -168,7 +193,10 @@ fun PermissionScreen(
             actionLabel = "Open overlay settings",
             icon = Icons.Filled.Layers,
             onAction = {
-                openOverlaySettingsLauncher.launch(AppPermissionHelper.createOverlaySettingsIntent(context))
+                launchSettingsSafely(
+                    launcher = openOverlaySettingsLauncher,
+                    intent = AppPermissionHelper.createOverlaySettingsIntent(context)
+                )
             }
         ),
         PermissionRequirementUiModel(
@@ -178,7 +206,10 @@ fun PermissionScreen(
             actionLabel = "Open accessibility settings",
             icon = Icons.Filled.Accessibility,
             onAction = {
-                openAccessibilitySettingsLauncher.launch(AppPermissionHelper.createAccessibilitySettingsIntent())
+                launchSettingsSafely(
+                    launcher = openAccessibilitySettingsLauncher,
+                    intent = AppPermissionHelper.createAccessibilitySettingsIntent()
+                )
             }
         ),
         PermissionRequirementUiModel(
@@ -188,8 +219,9 @@ fun PermissionScreen(
             actionLabel = "Open notification access settings",
             icon = Icons.Filled.Notifications,
             onAction = {
-                openNotificationListenerSettingsLauncher.launch(
-                    AppPermissionHelper.createNotificationListenerSettingsIntent()
+                launchSettingsSafely(
+                    launcher = openNotificationListenerSettingsLauncher,
+                    intent = AppPermissionHelper.createNotificationListenerSettingsIntent()
                 )
             }
         ),
@@ -200,8 +232,9 @@ fun PermissionScreen(
             actionLabel = "Open battery optimization settings",
             icon = Icons.Filled.BatterySaver,
             onAction = {
-                openBatteryOptimizationLauncher.launch(
-                    AppPermissionHelper.createBatteryOptimizationSettingsIntent(context)
+                launchSettingsSafely(
+                    launcher = openBatteryOptimizationLauncher,
+                    intent = AppPermissionHelper.createBatteryOptimizationSettingsIntent(context)
                 )
             }
         )
@@ -279,7 +312,10 @@ fun PermissionScreen(
 
             PermissionSupportActions(
                 onOpenAppSettings = {
-                    openAppSettingsLauncher.launch(AppPermissionHelper.createAppDetailsSettingsIntent(context))
+                    launchSettingsSafely(
+                        launcher = openAppSettingsLauncher,
+                        intent = AppPermissionHelper.createAppDetailsSettingsIntent(context)
+                    )
                 },
                 onRefresh = { refreshPermissionState() }
             )
