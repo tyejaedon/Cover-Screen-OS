@@ -5,12 +5,20 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+ import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeUp
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.tyejaedon.coverscreenos.datastore.SearchInputMode
+import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
+import com.tyejaedon.coverscreenos.ui.launcher.CoverAppGridOverlay
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
@@ -26,11 +34,14 @@ class CoverAppGridOverlayInputModeInstrumentedTest {
 
     @Test
     fun `default T9 mode shows keypad and no IME-padding container`() {
-        launchOverlay(initialMode = SearchInputMode.T9)
+        launchOverlay(initialMode = KeyboardStrategy.T9)
+        navigateToSearchWidgetPage()
 
         composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_LABEL)
             .assertExists()
-            .assertTextContains("T9")
+            .assertTextContains("cover keyboard")
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_IME_PICKER_BUTTON)
+            .assertExists()
         composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT)
             .assertExists()
         composeRule.onNodeWithTag(
@@ -45,7 +56,8 @@ class CoverAppGridOverlayInputModeInstrumentedTest {
 
     @Test
     fun `switching to system IME updates mode and enables IME-padding container`() {
-        val inputModeState = launchOverlay(initialMode = SearchInputMode.T9)
+        val inputModeState = launchOverlay(initialMode = KeyboardStrategy.T9)
+        navigateToSearchWidgetPage()
 
         composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_TOGGLE_BUTTON)
             .assertExists()
@@ -53,7 +65,7 @@ class CoverAppGridOverlayInputModeInstrumentedTest {
 
         composeRule.waitForIdle()
         composeRule.runOnIdle {
-            assertEquals(SearchInputMode.SYSTEM_IME, inputModeState.value)
+            assertEquals(KeyboardStrategy.SYSTEM_IME, inputModeState.value)
         }
 
         composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_LABEL)
@@ -72,18 +84,19 @@ class CoverAppGridOverlayInputModeInstrumentedTest {
 
     @Test
     fun `switching back to T9 restores keypad and removes IME-padding container`() {
-        val inputModeState = launchOverlay(initialMode = SearchInputMode.T9)
+        val inputModeState = launchOverlay(initialMode = KeyboardStrategy.T9)
+        navigateToSearchWidgetPage()
 
         composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_TOGGLE_BUTTON).performClick()
         composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_TOGGLE_BUTTON).performClick()
 
         composeRule.waitForIdle()
         composeRule.runOnIdle {
-            assertEquals(SearchInputMode.T9, inputModeState.value)
+            assertEquals(KeyboardStrategy.T9, inputModeState.value)
         }
 
         composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_LABEL)
-            .assertTextContains("T9")
+            .assertTextContains("cover keyboard")
         composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT)
             .assertExists()
         composeRule.onNodeWithTag(
@@ -94,8 +107,75 @@ class CoverAppGridOverlayInputModeInstrumentedTest {
             .assertExists()
     }
 
-    private fun launchOverlay(initialMode: SearchInputMode): MutableState<SearchInputMode> {
-        val inputModeStateRef = AtomicReference<MutableState<SearchInputMode>>()
+    @Test
+    fun `widget tile blocks horizontal navigation until returning to lockscreen`() {
+        launchOverlay(initialMode = KeyboardStrategy.T9)
+        navigateToSearchWidgetPage()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_WIDGET_GRID_PAGE)
+            .performTouchInput { swipeLeft() }
+
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_WIDGET_GRID_PAGE)
+            .assertExists()
+
+        returnToLockscreenFromWidgetPage()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.OVERLAY_PAGER)
+            .performTouchInput { swipeRight() }
+
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.LOCKSCREEN_TILE_PAGE)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun `dismiss button hides T9 keypad so other widgets can be interacted with`() {
+        launchOverlay(initialMode = KeyboardStrategy.T9)
+        navigateToSearchWidgetPage()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT)
+            .assertExists()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_DISMISS_INPUT_BUTTON)
+            .assertExists()
+            .performClick()
+
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun `dismiss button clears system IME field focus`() {
+        launchOverlay(initialMode = KeyboardStrategy.SYSTEM_IME)
+        navigateToSearchWidgetPage()
+
+        composeRule.onNodeWithTag(
+            CoverSearchUiTestTags.SEARCH_SYSTEM_IME_FIELD,
+            useUnmergedTree = true
+        )
+            .assertExists()
+            .performClick()
+            .assertIsFocused()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_DISMISS_INPUT_BUTTON)
+            .assertExists()
+            .performClick()
+
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(
+            CoverSearchUiTestTags.SEARCH_SYSTEM_IME_FIELD,
+            useUnmergedTree = true
+        ).assertIsNotFocused()
+    }
+
+    private fun launchOverlay(initialMode: KeyboardStrategy): MutableState<KeyboardStrategy> {
+        val inputModeStateRef = AtomicReference<MutableState<KeyboardStrategy>>()
         val repository = PackageManagerAppScannerRepository(composeRule.activity.applicationContext)
 
         composeRule.setContent {
@@ -107,8 +187,8 @@ class CoverAppGridOverlayInputModeInstrumentedTest {
                     repository = repository,
                     onAppSelected = {},
                     isDeviceLocked = false,
-                    searchInputMode = inputModeState.value,
-                    onSearchInputModeChanged = { nextMode ->
+                    keyboardStrategy = inputModeState.value,
+                    onKeyboardStrategyChanged = { nextMode ->
                         inputModeState.value = nextMode
                     }
                 )
@@ -117,6 +197,22 @@ class CoverAppGridOverlayInputModeInstrumentedTest {
 
         composeRule.waitForIdle()
         return inputModeStateRef.get()
+    }
+
+    private fun navigateToSearchWidgetPage() {
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.LOCKSCREEN_TILE_PAGE)
+            .performTouchInput { swipeDown() }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_WIDGET_GRID_PAGE)
+            .assertExists()
+    }
+
+    private fun returnToLockscreenFromWidgetPage() {
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_WIDGET_GRID_PAGE)
+            .performTouchInput { swipeUp() }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.LOCKSCREEN_TILE_PAGE)
+            .assertExists()
     }
 }
 

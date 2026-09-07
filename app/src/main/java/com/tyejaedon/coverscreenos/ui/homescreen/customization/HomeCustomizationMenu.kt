@@ -7,7 +7,6 @@ import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Restore
 import com.tyejaedon.coverscreenos.datastore.COVER_DOCK_SLOT_COUNT
-import com.tyejaedon.coverscreenos.datastore.SearchInputMode
 import com.tyejaedon.coverscreenos.datastore.ThemePreference
 import com.tyejaedon.coverscreenos.ui.settings.SettingsMenuItem
 
@@ -15,7 +14,6 @@ internal fun buildHomeCustomizationMenuItems(
     activePanel: HomeCustomizationPanel,
     dockFilledCount: Int,
     wallpaperSummary: String,
-    searchInputMode: SearchInputMode,
     themePreference: ThemePreference,
     onPanelSelected: (HomeCustomizationPanel) -> Unit,
     onResetRequested: () -> Unit
@@ -24,11 +22,6 @@ internal fun buildHomeCustomizationMenuItems(
         ThemePreference.SYSTEM -> "Follow system"
         ThemePreference.LIGHT -> "Always light"
         ThemePreference.DARK -> "Always dark"
-    }
-
-    val inputSummary = when (searchInputMode) {
-        SearchInputMode.T9 -> "Default: T9 keypad"
-        SearchInputMode.SYSTEM_IME -> "Default: system keyboard"
     }
 
     return listOf(
@@ -51,7 +44,7 @@ internal fun buildHomeCustomizationMenuItems(
         SettingsMenuItem(
             key = "input",
             title = "Input",
-            summary = inputSummary,
+            summary = "Accessibility overlay keyboard",
             icon = Icons.Filled.Keyboard,
             selected = activePanel == HomeCustomizationPanel.INPUT,
             onClick = { onPanelSelected(HomeCustomizationPanel.INPUT) }

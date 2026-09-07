@@ -1,7 +1,7 @@
 package com.tyejaedon.coverscreenos.ui.homescreen.customization
 
 import androidx.compose.runtime.Composable
-import com.tyejaedon.coverscreenos.datastore.SearchInputMode
+import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
 import com.tyejaedon.coverscreenos.datastore.ThemePreference
 import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
 import com.tyejaedon.coverscreenos.ui.settings.AppearanceCustomizationCard
@@ -18,10 +18,13 @@ internal fun HomeCustomizationPanelContent(
     onReorderCommitted: (List<String?>) -> Unit,
     onPickSlot: (Int) -> Unit,
     onClearSlot: (Int) -> Unit,
-    searchInputMode: SearchInputMode,
-    onSearchInputModeSelected: (SearchInputMode) -> Unit,
     themePreference: ThemePreference,
     onThemePreferenceSelected: (ThemePreference) -> Unit,
+    keyboardStrategy: KeyboardStrategy,
+    onKeyboardStrategySelected: (KeyboardStrategy) -> Unit,
+    onOpenKeyboardPicker: () -> Unit,
+    onOpenKeyboardSettings: () -> Unit,
+    capabilityRefreshNonce: Int,
     wallpaperUri: String?,
     wallpaperScaleMode: WallpaperScaleMode,
     dimAmount: Float,
@@ -55,8 +58,11 @@ internal fun HomeCustomizationPanelContent(
 
     if (activePanel == HomeCustomizationPanel.INPUT) {
         InputCustomizationCard(
-            searchInputMode = searchInputMode,
-            onSearchInputModeSelected = onSearchInputModeSelected
+            keyboardStrategy = keyboardStrategy,
+            onKeyboardStrategySelected = onKeyboardStrategySelected,
+            onOpenKeyboardPicker = onOpenKeyboardPicker,
+            onOpenKeyboardSettings = onOpenKeyboardSettings,
+            capabilityRefreshNonce = capabilityRefreshNonce
         )
     }
 
@@ -77,4 +83,3 @@ internal fun HomeCustomizationPanelContent(
         )
     }
 }
-

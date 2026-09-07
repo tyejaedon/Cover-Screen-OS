@@ -51,10 +51,6 @@ enum class ThemePreference {
 	DARK
 }
 
-enum class SearchInputMode {
-	T9,
-	SYSTEM_IME
-}
 
 private val Context.coverLauncherSettingsDataStore by preferencesDataStore(name = "cover_launcher_settings")
 
@@ -65,7 +61,7 @@ private object LauncherPreferencesKeys {
 	val wallpaperBlurRadiusDp = floatPreferencesKey("wallpaper_blur_radius_dp")
 	val dockVisible = booleanPreferencesKey("dock_visible")
 	val themePreference = stringPreferencesKey("theme_preference")
-	val searchInputMode = stringPreferencesKey("search_input_mode")
+	val keyboardStrategy = stringPreferencesKey("keyboard_strategy")
 	val dockSlots: List<Preferences.Key<String>> = List(COVER_DOCK_SLOT_COUNT) { slot ->
 		stringPreferencesKey("dock_slot_$slot")
 	}
@@ -79,7 +75,7 @@ data class LauncherSettings(
 	val wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP,
 	val isDockVisible: Boolean = true,
 	val themePreference: ThemePreference = ThemePreference.SYSTEM,
-	val searchInputMode: SearchInputMode = SearchInputMode.T9
+	val keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY
 )
 
 private const val SETTINGS_STORE_LOG_TAG = "LauncherSettingsStore"
@@ -134,9 +130,9 @@ class LauncherSettingsStore(
 					themePreference = preferences[LauncherPreferencesKeys.themePreference]
 						?.let { value -> ThemePreference.entries.firstOrNull { it.name == value } }
 						?: ThemePreference.SYSTEM,
-					searchInputMode = preferences[LauncherPreferencesKeys.searchInputMode]
-						?.let { value -> SearchInputMode.entries.firstOrNull { it.name == value } }
-						?: SearchInputMode.T9
+					keyboardStrategy = KeyboardStrategy.fromStorageValue(
+						preferences[LauncherPreferencesKeys.keyboardStrategy]
+					)
 				)
 			}.getOrElse { error ->
 				Log.w(SETTINGS_STORE_LOG_TAG, "Failed to map settings. Falling back to defaults.", error)
@@ -204,7 +200,7 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = normalizedWallpaperBlur
 				preferences[LauncherPreferencesKeys.dockVisible] = settings.isDockVisible
 				preferences[LauncherPreferencesKeys.themePreference] = settings.themePreference.name
-				preferences[LauncherPreferencesKeys.searchInputMode] = settings.searchInputMode.name
+				preferences[LauncherPreferencesKeys.keyboardStrategy] = settings.keyboardStrategy.name
 			}
 		}
 	}
@@ -264,13 +260,14 @@ class LauncherSettingsStore(
 		}
 	}
 
-	suspend fun setSearchInputMode(searchInputMode: SearchInputMode) {
+	suspend fun setKeyboardStrategy(keyboardStrategy: KeyboardStrategy) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
-				preferences[LauncherPreferencesKeys.searchInputMode] = searchInputMode.name
+				preferences[LauncherPreferencesKeys.keyboardStrategy] = keyboardStrategy.name
 			}
 		}
 	}
+
 
 	suspend fun moveDockPackage(fromIndex: Int, toIndex: Int) {
 		require(fromIndex in 0 until COVER_DOCK_SLOT_COUNT) {
@@ -542,6 +539,7 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = DEFAULT_WALLPAPER_BLUR_RADIUS_DP
 				preferences[LauncherPreferencesKeys.dockVisible] = true
 				// Theme preference is intentionally preserved during layout reset.
+				preferences[LauncherPreferencesKeys.keyboardStrategy] = DEFAULT_KEYBOARD_STRATEGY.name
 			}
 
 			deleteManagedWallpaperFiles()

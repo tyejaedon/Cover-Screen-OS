@@ -20,6 +20,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
 
 private val CoverScreenHorizontalPadding = 8.dp
 private val CoverScreenVerticalPadding = 8.dp
@@ -86,3 +90,25 @@ fun Modifier.coverGlassSurface(
         borderWidth = borderWidth
     )
 }
+
+/**
+ * Frosted-glass backdrop blur that samples from a shared [HazeState] (typically the
+ * wallpaper layer). Use behind text or small cards to guarantee legibility against
+ * arbitrary wallpapers without hiding the wallpaper entirely.
+ */
+fun Modifier.coverBackdropBlur(
+    hazeState: HazeState,
+    shape: Shape = RoundedCornerShape(CoverOSCornerRadiusSmall),
+    tint: Color = Color.Black.copy(alpha = 0.38f),
+    blurRadius: Dp = 20.dp,
+    noiseFactor: Float = 0.04f
+): Modifier = this
+    .clip(shape)
+    .hazeEffect(
+        state = hazeState,
+        style = HazeStyle(
+            tints = listOf(HazeTint(tint)),
+            blurRadius = blurRadius,
+            noiseFactor = noiseFactor
+        )
+    )
