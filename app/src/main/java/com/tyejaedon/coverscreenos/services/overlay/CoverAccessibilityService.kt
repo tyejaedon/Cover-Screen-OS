@@ -3,11 +3,13 @@ package com.tyejaedon.coverscreenos.services.overlay
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityGestureEvent
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import com.tyejaedon.coverscreenos.services.CallPackageMatchers
+import java.lang.ref.WeakReference
 
 @SuppressLint("AccessibilityPolicy")
 class CoverAccessibilityService : AccessibilityService() {
@@ -47,6 +49,60 @@ class CoverAccessibilityService : AccessibilityService() {
             if (eventElapsedMs <= 0L) return Long.MAX_VALUE
             return (nowElapsedMs - eventElapsedMs).coerceAtLeast(0L)
         }
+
+        // ---- Launcher host static handoff --------------------------------
+        //
+        // Mirrors the CoverInputSessionManager.bindService / unbindService
+        // pattern used by CoverScreenInputInjectionEngine so that
+        // ForegroundService can hand a LauncherOverlayHost to whichever
+        // CoverAccessibilityService instance the system happens to have
+        // running — including across AS disable/enable cycles when the
+        // instance is destroyed and later recreated.
+        //
+        // Invariants:
+        //  - `pendingHost` survives AS re-creation. Callers set it once via
+        //    attachLauncherHost(...) and it is re-applied to each fresh AS
+        //    instance from onServiceConnected().
+        //  - detachLauncherHost() clears BOTH pending and any live instance.
+        //  - The AS instance mirrors the pending value into its own
+        //    `launcherHost` field for read access.
+        //
+        // Phase 2 scope: state plumbing only. No view work.
+
+        @Volatile
+        private var activeServiceRef: WeakReference<CoverAccessibilityService>? = null
+
+        @Volatile
+        private var pendingLauncherHost: LauncherOverlayHost? = null
+
+        /**
+         * Attach a [LauncherOverlayHost] to the accessibility service. Safe
+         * to call before the AS is connected — the host is stashed and
+         * re-applied on the next `onServiceConnected`. Replacing an existing
+         * host is allowed and takes effect immediately on the live instance.
+         */
+        fun attachLauncherHost(host: LauncherOverlayHost) {
+            pendingLauncherHost = host
+            activeServiceRef?.get()?.installLauncherHost(host)
+        }
+
+        /**
+         * Release any attached [LauncherOverlayHost]. Clears both the
+         * pending handoff and the currently-connected instance's reference.
+         */
+        fun detachLauncherHost() {
+            pendingLauncherHost = null
+            activeServiceRef?.get()?.releaseLauncherHost()
+        }
+
+        /**
+         * Currently-installed host on the live AS instance, or `null` if
+         * no AS is connected. Prefer this over reading [pendingLauncherHost]
+         * — a non-null pending value with no live AS means the host has not
+         * yet been installed anywhere.
+         */
+        fun currentLauncherHost(): LauncherOverlayHost? =
+            activeServiceRef?.get()?.launcherHost
     }
 
     private inline fun logDebug(message: () -> String) {
@@ -64,9 +120,55 @@ class CoverAccessibilityService : AccessibilityService() {
     private var lastKnownUserAppPackage: String? = null
     private var lastKnownUserAppElapsedMs: Long = 0L
 
+    /**
+     * Currently-installed launcher host, or `null` if no
+     * [LauncherOverlayHost] has been attached. Read via
+     * [CoverAccessibilityService.currentLauncherHost].
+     */
+    @Volatile
+    internal var launcherHost: LauncherOverlayHost? = null
+        private set
+
     override fun onServiceConnected() {
         super.onServiceConnected()
-        logDebug { "Service connected" }
+        activeServiceRef = WeakReference(this)
+        // Re-apply any host that was attached while the service was
+        // between instances (AS disabled/enabled, app updated, etc.).
+        pendingLauncherHost?.let { installLauncherHost(it) }
+        logDebug { "Service connected; launcherHost=${if (launcherHost != null) "attached" else "none"}" }
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        // Live instance is going away. Clear our reference and the static
+        // pointer — but keep `pendingLauncherHost` intact so the next
+        // `onServiceConnected` re-installs it. That is what allows the AS
+        // to be toggled off then back on in system settings without
+        // forcing a ForegroundService restart.
+        releaseLauncherHost()
+        if (activeServiceRef?.get() === this) {
+            activeServiceRef?.clear()
+            activeServiceRef = null
+        }
+        return super.onUnbind(intent)
+    }
+
+    override fun onDestroy() {
+        releaseLauncherHost()
+        if (activeServiceRef?.get() === this) {
+            activeServiceRef?.clear()
+            activeServiceRef = null
+        }
+        super.onDestroy()
+    }
+
+    /** Phase 2: pure state mirror. Phase 3 will attach the compose surface here. */
+    internal fun installLauncherHost(host: LauncherOverlayHost) {
+        launcherHost = host
+    }
+
+    /** Phase 2: pure state release. Phase 3 will detach the compose surface here. */
+    internal fun releaseLauncherHost() {
+        launcherHost = null
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
