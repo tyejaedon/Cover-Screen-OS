@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import androidx.core.net.toUri
+import com.tyejaedon.coverscreenos.services.overlay.OverlayHostMode
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -62,6 +63,7 @@ private object LauncherPreferencesKeys {
 	val dockVisible = booleanPreferencesKey("dock_visible")
 	val themePreference = stringPreferencesKey("theme_preference")
 	val keyboardStrategy = stringPreferencesKey("keyboard_strategy")
+	val overlayHostMode = stringPreferencesKey("overlay_host_mode")
 	val dockSlots: List<Preferences.Key<String>> = List(COVER_DOCK_SLOT_COUNT) { slot ->
 		stringPreferencesKey("dock_slot_$slot")
 	}
@@ -75,7 +77,8 @@ data class LauncherSettings(
 	val wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP,
 	val isDockVisible: Boolean = true,
 	val themePreference: ThemePreference = ThemePreference.SYSTEM,
-	val keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY
+	val keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
+	val overlayHostMode: OverlayHostMode = OverlayHostMode.DEFAULT
 )
 
 private const val SETTINGS_STORE_LOG_TAG = "LauncherSettingsStore"
@@ -132,6 +135,9 @@ class LauncherSettingsStore(
 						?: ThemePreference.SYSTEM,
 					keyboardStrategy = KeyboardStrategy.fromStorageValue(
 						preferences[LauncherPreferencesKeys.keyboardStrategy]
+					),
+					overlayHostMode = OverlayHostMode.fromStorageValue(
+						preferences[LauncherPreferencesKeys.overlayHostMode]
 					)
 				)
 			}.getOrElse { error ->
@@ -201,6 +207,7 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.dockVisible] = settings.isDockVisible
 				preferences[LauncherPreferencesKeys.themePreference] = settings.themePreference.name
 				preferences[LauncherPreferencesKeys.keyboardStrategy] = settings.keyboardStrategy.name
+				preferences[LauncherPreferencesKeys.overlayHostMode] = settings.overlayHostMode.name
 			}
 		}
 	}
@@ -264,6 +271,23 @@ class LauncherSettingsStore(
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
 				preferences[LauncherPreferencesKeys.keyboardStrategy] = keyboardStrategy.name
+			}
+		}
+	}
+
+	/**
+	 * Persist the launcher overlay hosting strategy (Phase 3 of the
+	 * `TYPE_ACCESSIBILITY_OVERLAY` migration — see
+	 * `docs/architecture/Overlay-architecture-shift-plan.md`).
+	 *
+	 * The next dispatch through [com.tyejaedon.coverscreenos.services.overlay.OverlayWindowController]
+	 * observes the change via the settings [Flow] and switches
+	 * host implementations without restarting the foreground service.
+	 */
+	suspend fun setOverlayHostMode(overlayHostMode: OverlayHostMode) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences[LauncherPreferencesKeys.overlayHostMode] = overlayHostMode.name
 			}
 		}
 	}
@@ -540,6 +564,9 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.dockVisible] = true
 				// Theme preference is intentionally preserved during layout reset.
 				preferences[LauncherPreferencesKeys.keyboardStrategy] = DEFAULT_KEYBOARD_STRATEGY.name
+				// Overlay host mode is a debug/developer toggle — intentionally
+				// preserved across layout resets so QA doesn't get bounced back
+				// onto the legacy path mid-dogfood.
 			}
 
 			deleteManagedWallpaperFiles()

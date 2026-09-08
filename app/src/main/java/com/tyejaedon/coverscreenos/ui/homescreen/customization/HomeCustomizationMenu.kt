@@ -1,6 +1,7 @@
 package com.tyejaedon.coverscreenos.ui.homescreen.customization
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Keyboard
@@ -8,6 +9,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Restore
 import com.tyejaedon.coverscreenos.datastore.COVER_DOCK_SLOT_COUNT
 import com.tyejaedon.coverscreenos.datastore.ThemePreference
+import com.tyejaedon.coverscreenos.services.overlay.OverlayHostMode
 import com.tyejaedon.coverscreenos.ui.settings.SettingsMenuItem
 
 internal fun buildHomeCustomizationMenuItems(
@@ -15,6 +17,7 @@ internal fun buildHomeCustomizationMenuItems(
     dockFilledCount: Int,
     wallpaperSummary: String,
     themePreference: ThemePreference,
+    overlayHostMode: OverlayHostMode,
     onPanelSelected: (HomeCustomizationPanel) -> Unit,
     onResetRequested: () -> Unit
 ): List<SettingsMenuItem> {
@@ -22,6 +25,10 @@ internal fun buildHomeCustomizationMenuItems(
         ThemePreference.SYSTEM -> "Follow system"
         ThemePreference.LIGHT -> "Always light"
         ThemePreference.DARK -> "Always dark"
+    }
+    val overlayHostModeSummary = when (overlayHostMode) {
+        OverlayHostMode.ACCESSIBILITY -> "Accessibility overlay (TYPE_ACCESSIBILITY_OVERLAY)"
+        OverlayHostMode.LEGACY_WINDOW -> "Legacy window (TYPE_APPLICATION_OVERLAY)"
     }
 
     return listOf(
@@ -56,6 +63,14 @@ internal fun buildHomeCustomizationMenuItems(
             icon = Icons.Filled.DarkMode,
             selected = activePanel == HomeCustomizationPanel.APPEARANCE,
             onClick = { onPanelSelected(HomeCustomizationPanel.APPEARANCE) }
+        ),
+        SettingsMenuItem(
+            key = "developer",
+            title = "Developer",
+            summary = overlayHostModeSummary,
+            icon = Icons.Filled.BugReport,
+            selected = activePanel == HomeCustomizationPanel.DEVELOPER,
+            onClick = { onPanelSelected(HomeCustomizationPanel.DEVELOPER) }
         ),
         SettingsMenuItem(
             key = "reset",

@@ -6,15 +6,26 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.SystemClock
 import android.util.Log
+import android.view.Display
 import android.view.KeyEvent
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tyejaedon.coverscreenos.datastore.LauncherSettings
+import com.tyejaedon.coverscreenos.overlay.surface.CoverComposeSurface
 import com.tyejaedon.coverscreenos.services.CallPackageMatchers
+import com.tyejaedon.coverscreenos.ui.launcher.CoverAppGridOverlay
+import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import java.lang.ref.WeakReference
+import kotlinx.coroutines.launch
 
 @SuppressLint("AccessibilityPolicy")
 class CoverAccessibilityService : AccessibilityService() {
     companion object {
         private const val LOG_TAG = "CoverAccessibility"
+        private const val LAUNCHER_SURFACE_LOG_TAG = "CoverA11yLauncher"
         private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
         private const val GESTURE_DEBOUNCE_MS = 550L
         private const val ACTION_THROTTLE_MS = 300L
@@ -103,6 +114,36 @@ class CoverAccessibilityService : AccessibilityService() {
          */
         fun currentLauncherHost(): LauncherOverlayHost? =
             activeServiceRef?.get()?.launcherHost
+
+        // ---- Launcher hosting bridges ------------------------------------
+        //
+        // Phase 3 additions consumed by [AccessibilityOverlayHost]. Each
+        // no-ops (returns `false` / `null` / does nothing) when the AS
+        // isn't currently bound so the [OverlayWindowController] façade
+        // can dispatch through the strategy without special-casing the
+        // "no live AS instance" state.
+
+        /** @see CoverAccessibilityService.showLauncher */
+        fun showLauncherOnActiveService(display: Display, forceReattach: Boolean): Boolean =
+            activeServiceRef?.get()?.showLauncher(display, forceReattach) ?: false
+
+        /** @see CoverAccessibilityService.hideLauncher */
+        fun hideLauncherOnActiveService(reason: String) {
+            activeServiceRef?.get()?.hideLauncher(reason)
+        }
+
+        /** @see CoverAccessibilityService.setLauncherTouchable */
+        fun setLauncherTouchableOnActiveService(touchable: Boolean) {
+            activeServiceRef?.get()?.setLauncherTouchable(touchable)
+        }
+
+        /** @see CoverAccessibilityService.launcherActiveDisplayId */
+        fun launcherActiveDisplayIdOnActiveService(): Int? =
+            activeServiceRef?.get()?.launcherActiveDisplayId()
+
+        /** @see CoverAccessibilityService.isLauncherAttached */
+        fun isLauncherAttachedOnActiveService(): Boolean =
+            activeServiceRef?.get()?.isLauncherAttached() == true
     }
 
     private inline fun logDebug(message: () -> String) {
@@ -128,6 +169,14 @@ class CoverAccessibilityService : AccessibilityService() {
     @Volatile
     internal var launcherHost: LauncherOverlayHost? = null
         private set
+
+    /**
+     * Phase 3: `TYPE_ACCESSIBILITY_OVERLAY` compose surface owned by
+     * this AS instance. Non-null while [showLauncher] has successfully
+     * attached the launcher grid to a display. Cleared by
+     * [hideLauncher], [releaseLauncherHost], [onUnbind], and [onDestroy].
+     */
+    private var launcherSurface: CoverComposeSurface? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -161,14 +210,157 @@ class CoverAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    /** Phase 2: pure state mirror. Phase 3 will attach the compose surface here. */
+    /**
+     * Install a [LauncherOverlayHost] on this live instance.
+     *
+     * If a **different** host is already installed and a
+     * [launcherSurface] is live, the previous surface is torn down
+     * first — its Compose tree subscribed to the outgoing host's
+     * flows and would otherwise render stale data on the next frame.
+     * A caller re-installing the same host instance is a no-op on
+     * the surface (used by the AS-reconnect path via
+     * [onServiceConnected]).
+     */
     internal fun installLauncherHost(host: LauncherOverlayHost) {
+        if (launcherHost != null && launcherHost !== host) {
+            detachLauncherSurface(reason = "install_launcher_host_replaced")
+        }
         launcherHost = host
     }
 
-    /** Phase 2: pure state release. Phase 3 will detach the compose surface here. */
+    /** Phase 2: pure state release. Phase 3 also tears down the compose surface. */
     internal fun releaseLauncherHost() {
+        // Tear down any Phase-3 hosted launcher surface first so
+        // subsequent host handoffs start clean. Safe to call while
+        // nothing is attached.
+        detachLauncherSurface(reason = "release_launcher_host")
         launcherHost = null
+    }
+
+    // ---- Phase 3: launcher hosting API -----------------------------------
+    //
+    // See `docs/architecture/Overlay-architecture-shift-plan.md` §5.2 / §7.
+    // Invoked via [AccessibilityOverlayHost] when the runtime
+    // [OverlayHostMode] resolves to [OverlayHostMode.ACCESSIBILITY].
+
+    /**
+     * Build and attach a [CoverComposeSurface] hosting [CoverAppGridOverlay]
+     * on [display] via `TYPE_ACCESSIBILITY_OVERLAY`. No-op returning
+     * `false` when no [LauncherOverlayHost] has been installed —
+     * production code guarantees the [ForegroundService] performs the
+     * handoff on `onCreate` before requesting any show, but tests
+     * exercise the un-hosted branch to prove the guard.
+     *
+     * Idempotent for the same display: repeated calls without
+     * [forceReattach] simply re-enable touch on the existing surface
+     * and return `true`.
+     */
+    fun showLauncher(display: Display, forceReattach: Boolean): Boolean {
+        val host = launcherHost ?: run {
+            logDebug { "showLauncher no-op: no LauncherOverlayHost attached" }
+            return false
+        }
+
+        val existingSurface = launcherSurface
+        if (existingSurface != null &&
+            existingSurface.isAttached() &&
+            !forceReattach &&
+            existingSurface.activeDisplayId() == display.displayId
+        ) {
+            existingSurface.setTouchable(true)
+            return true
+        }
+
+        // Different display OR force reattach OR stale surface — tear down
+        // whatever we have before building a fresh one.
+        detachLauncherSurface(reason = "show_launcher_reattach")
+
+        val surface = CoverComposeSurface(
+            hostContext = this,
+            windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            logTag = LAUNCHER_SURFACE_LOG_TAG
+        )
+        val attached = surface.attach(display) {
+            val overlayScope = rememberCoroutineScope()
+            val isDeviceLocked by host.deviceLockState
+                .collectAsStateWithLifecycle(initialValue = false)
+            val launcherSettings by host.settings
+                .collectAsStateWithLifecycle(initialValue = LauncherSettings())
+
+            CoverOSTheme(themePreference = launcherSettings.themePreference) {
+                CoverAppGridOverlay(
+                    repository = host.appRepository,
+                    onAppSelected = { appModel -> host.onAppSelected(appModel) },
+                    isDeviceLocked = isDeviceLocked,
+                    dockPackageSlots = launcherSettings.dockPackages,
+                    isDockVisible = launcherSettings.isDockVisible,
+                    wallpaperUri = launcherSettings.wallpaperUri,
+                    wallpaperScaleMode = launcherSettings.wallpaperScaleMode,
+                    wallpaperDimAmount = launcherSettings.wallpaperDimAmount,
+                    wallpaperBlurRadiusDp = launcherSettings.wallpaperBlurRadiusDp,
+                    keyboardStrategy = launcherSettings.keyboardStrategy,
+                    onKeyboardStrategyChanged = { nextStrategy ->
+                        overlayScope.launch {
+                            runCatching {
+                                host.persistKeyboardStrategy(nextStrategy)
+                            }.onFailure { error ->
+                                Log.w(
+                                    LAUNCHER_SURFACE_LOG_TAG,
+                                    "Unable to persist keyboard strategy=$nextStrategy: ${error.message}"
+                                )
+                            }
+                        }
+                    }
+                )
+            }
+        }
+
+        if (!attached) {
+            Log.w(LAUNCHER_SURFACE_LOG_TAG, "Failed to attach launcher surface to display=${display.displayId}")
+            return false
+        }
+
+        surface.setTouchable(true)
+        launcherSurface = surface
+        return true
+    }
+
+    /**
+     * Detach the launcher surface if attached. [reason] is recorded for
+     * logging and matches the vocabulary used by
+     * [ForegroundService]'s transition markers ("reclaim", "remove_overlay",
+     * "controller_destroy", …).
+     */
+    fun hideLauncher(reason: String) {
+        detachLauncherSurface(reason = reason)
+    }
+
+    /**
+     * Apply the same suppression UX used by the legacy path
+     * ([WindowManagerOverlayHost.suppressOverlayForLaunch]):
+     * `FLAG_NOT_TOUCHABLE` + `alpha = 0f`. Kept as an instance method so
+     * [AccessibilityOverlayHost.suppressOverlayForLaunch] doesn't need to
+     * know about [CoverComposeSurface].
+     */
+    fun setLauncherTouchable(touchable: Boolean) {
+        launcherSurface?.setTouchable(touchable)
+    }
+
+    fun launcherActiveDisplayId(): Int? = launcherSurface?.activeDisplayId()
+
+    fun isLauncherAttached(): Boolean = launcherSurface?.isAttached() == true
+
+    private fun detachLauncherSurface(reason: String) {
+        val surface = launcherSurface ?: return
+        launcherSurface = null
+        runCatching { surface.detach() }
+            .onFailure { error ->
+                Log.w(
+                    LAUNCHER_SURFACE_LOG_TAG,
+                    "Detach failed reason=$reason: ${error.message}"
+                )
+            }
+        logDebug { "Launcher surface detached reason=$reason" }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

@@ -16,20 +16,37 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
-import org.robolectric.RobolectricTestRunner
+import org.robolectric.ParameterizedRobolectricTestRunner
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowLog
 
-@RunWith(RobolectricTestRunner::class)
+/**
+ * Attach / retarget decision tests for [ForegroundService], parameterized
+ * over [OverlayHostMode] (Phase 3 of the accessibility-overlay
+ * migration — see `docs/architecture/Overlay-architecture-shift-plan.md` §8.1).
+ *
+ * The [OverlayWindowController] is mocked, so the test proves the
+ * façade selection is independent of the host implementation: for
+ * every hostMode value the same decision matrix (`showOverlay` /
+ * `suppressOverlayForLaunch` / `removeOverlay`) must hold.
+ */
+@RunWith(ParameterizedRobolectricTestRunner::class)
 @Config(sdk = [34])
-class ForegroundServiceAttachOrRetargetOverlayRobolectricTest {
+class ForegroundServiceAttachOrRetargetOverlayRobolectricTest(
+    private val overlayHostMode: OverlayHostMode
+) {
 
     private companion object {
         private const val FOREGROUND_LOG_TAG = "CoverForegroundService"
         private const val TRANSITION_LOG_TAG = "CoverOverlayTransition"
         private const val HELD_HIDDEN_MARKER = "marker=held_hidden"
         private const val REMOVED_STALE_MARKER = "marker=removed_stale"
+
+        @JvmStatic
+        @ParameterizedRobolectricTestRunner.Parameters(name = "overlayHostMode={0}")
+        fun overlayHostModes(): Iterable<Array<Any>> = OverlayHostMode.entries
+            .map { arrayOf<Any>(it) }
     }
 
     private lateinit var serviceController: ServiceController<ForegroundService>
@@ -43,6 +60,7 @@ class ForegroundServiceAttachOrRetargetOverlayRobolectricTest {
 
         serviceController = Robolectric.buildService(ForegroundService::class.java).create()
         service = serviceController.get()
+        setPrivateField("currentOverlayHostMode", overlayHostMode)
     }
 
     @After
