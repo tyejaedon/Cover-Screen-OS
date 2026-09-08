@@ -1,159 +1,109 @@
 package com.tyejaedon.coverscreenos.services.overlay
 
 import android.content.Context
-import android.hardware.display.DisplayManager
 import android.util.Log
 import android.view.Display
-import android.view.WindowManager
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
-import com.tyejaedon.coverscreenos.overlay.surface.CoverComposeSurface
-import com.tyejaedon.coverscreenos.receivers.LockStatusReceiver
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
-import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
-import com.tyejaedon.coverscreenos.ui.launcher.CoverAppGridOverlay
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 
 /**
- * Legacy launcher overlay controller. Delegates all view work to
- * [CoverComposeSurface] — see `docs/architecture/Overlay-architecture-shift-plan.md`.
+ * Launcher overlay façade. Selects between [WindowManagerOverlayHost]
+ * (`TYPE_APPLICATION_OVERLAY`, legacy) and [AccessibilityOverlayHost]
+ * (`TYPE_ACCESSIBILITY_OVERLAY`, target) at runtime based on the
+ * [OverlayHostMode] value provided by [modeProvider].
  *
- * Public API is intentionally byte-compatible with prior versions so
- * `ForegroundService` and existing Robolectric tests continue to compile
- * against a stable seam.
+ * Public API is intentionally byte-compatible with the pre-Phase-3
+ * controller so `ForegroundService` and existing Robolectric tests
+ * (`ForegroundServiceAttachOrRetargetOverlayRobolectricTest`) continue
+ * to compile against a stable seam.
+ *
+ * See `docs/architecture/Overlay-architecture-shift-plan.md` §5.3.
  */
 internal class OverlayWindowController(
-    private val context: Context,
-    private val appRepository: PackageManagerAppScannerRepository,
-    private val launcherSettingsStore: LauncherSettingsStore,
-    private val launchCoordinator: CoverLaunchCoordinator? = null
+    context: Context,
+    appRepository: PackageManagerAppScannerRepository,
+    launcherSettingsStore: LauncherSettingsStore,
+    launchCoordinator: CoverLaunchCoordinator? = null,
+    /**
+     * Resolves the currently-active [OverlayHostMode] on each façade
+     * dispatch. In production this is backed by a coroutine collecting
+     * `LauncherSettingsStore.settings.map { it.overlayHostMode }`; in
+     * tests it defaults to [OverlayHostMode.DEFAULT] to preserve
+     * legacy behavior.
+     */
+    private val modeProvider: () -> OverlayHostMode = { OverlayHostMode.DEFAULT }
 ) {
 
-    private val surface = CoverComposeSurface(
-        hostContext = context,
-        windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        logTag = LOG_TAG
+    private val legacyHost: OverlayHost = WindowManagerOverlayHost(
+        context = context,
+        appRepository = appRepository,
+        launcherSettingsStore = launcherSettingsStore,
+        launchCoordinator = launchCoordinator
     )
+
+    private val accessibilityHost: OverlayHost = AccessibilityOverlayHost()
+
+    @Volatile
+    private var lastResolvedMode: OverlayHostMode? = null
 
     fun showOverlay(
         targetDisplay: Display? = null,
         forceReattach: Boolean = false,
         deviceLockState: StateFlow<Boolean>? = null
-    ): Boolean {
-        val display = targetDisplay ?: resolveDefaultDisplay() ?: run {
-            Log.e(LOG_TAG, "No display available to attach overlay")
-            return false
-        }
-        val desiredDisplayId = display.displayId
-
-        val isExistingOverlayReusable = surface.isAttached() &&
-            !forceReattach &&
-            surface.activeDisplayId() == desiredDisplayId
-
-        if (isExistingOverlayReusable) {
-            surface.setTouchable(true)
-            return true
-        }
-
-        if (surface.isAttached()) {
-            surface.detach()
-        }
-
-        val attached = surface.attach(display) {
-            val composeContext = LocalContext.current
-            val overlayScope = rememberCoroutineScope()
-            val isDeviceLocked = deviceLockState
-                ?.collectAsStateWithLifecycle(initialValue = false)
-                ?.value
-                ?: false
-            val launcherSettings by launcherSettingsStore.settings
-                .collectAsStateWithLifecycle(initialValue = LauncherSettings())
-
-            CoverOSTheme(themePreference = launcherSettings.themePreference) {
-                CoverAppGridOverlay(
-                    repository = appRepository,
-                    onAppSelected = { appModel ->
-                        val packageName = appModel.packageName
-                        Log.d(
-                            LOG_TAG,
-                            "App tap received package=$packageName locked=${LockStatusReceiver.currentLockStatus(composeContext)}"
-                        )
-                        val coordinator = launchCoordinator
-                        val readyToLaunch = coordinator?.beginLaunch(packageName) ?: true
-
-                        if (!readyToLaunch) {
-                            Log.w(LOG_TAG, "Launch coordination rejected package=$packageName")
-                            return@CoverAppGridOverlay
-                        }
-
-                        val launched = CoverAppLauncher.launchAppOnCoverScreen(composeContext, appModel)
-                        if (!launched) {
-                            Log.w(
-                                LOG_TAG,
-                                "Launch dispatch failed package=$packageName; overlay remains visible"
-                            )
-                        }
-                        coordinator?.completeLaunch(packageName = packageName, launchDispatched = launched)
-                    },
-                    isDeviceLocked = isDeviceLocked,
-                    dockPackageSlots = launcherSettings.dockPackages,
-                    isDockVisible = launcherSettings.isDockVisible,
-                    wallpaperUri = launcherSettings.wallpaperUri,
-                    wallpaperScaleMode = launcherSettings.wallpaperScaleMode,
-                    wallpaperDimAmount = launcherSettings.wallpaperDimAmount,
-                    wallpaperBlurRadiusDp = launcherSettings.wallpaperBlurRadiusDp,
-                    keyboardStrategy = launcherSettings.keyboardStrategy,
-                    onKeyboardStrategyChanged = { nextStrategy ->
-                        overlayScope.launch {
-                            runCatching {
-                                launcherSettingsStore.setKeyboardStrategy(nextStrategy)
-                            }.onFailure { error ->
-                                Log.w(
-                                    LOG_TAG,
-                                    "Unable to persist keyboard strategy=$nextStrategy: ${error.message}"
-                                )
-                            }
-                        }
-                    }
-                )
-            }
-        }
-
-        if (attached) {
-            surface.setTouchable(true)
-        }
-        return attached
-    }
+    ): Boolean = activeHost().showOverlay(targetDisplay, forceReattach, deviceLockState)
 
     fun removeOverlay() {
-        surface.detach()
+        activeHost().removeOverlay()
     }
 
     fun hideOverlay() {
-        suppressOverlayForLaunch()
+        activeHost().hideOverlay()
     }
 
     fun suppressOverlayForLaunch() {
-        surface.setTouchable(false)
+        activeHost().suppressOverlayForLaunch()
     }
 
     fun destroy() {
-        surface.detach()
+        // Tear down both hosts regardless of the currently-active
+        // mode. The legacy host might still be attached from before a
+        // switch, and vice versa.
+        runCatching { legacyHost.destroy() }
+        runCatching { accessibilityHost.destroy() }
     }
 
-    fun getActiveDisplayId(): Int? = surface.activeDisplayId()
+    fun getActiveDisplayId(): Int? = activeHost().getActiveDisplayId()
 
-    fun isOverlayAttached(): Boolean = surface.isAttached()
+    fun isOverlayAttached(): Boolean = activeHost().isOverlayAttached()
 
-    private fun resolveDefaultDisplay(): Display? {
-        val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
-        return displayManager?.getDisplay(Display.DEFAULT_DISPLAY)
+    /**
+     * Resolves the current host, tearing down the previously-active
+     * one whenever [modeProvider] reports a switch. Detach on switch
+     * is best-effort — a next `showOverlay` on the new host reattaches
+     * cleanly.
+     */
+    private fun activeHost(): OverlayHost {
+        val requested = modeProvider()
+        val previous = lastResolvedMode
+        if (previous != null && previous != requested) {
+            val previousHost = hostFor(previous)
+            runCatching { previousHost.removeOverlay() }
+                .onFailure { error ->
+                    Log.w(
+                        LOG_TAG,
+                        "Failed to detach previous host mode=$previous during switch to $requested: ${error.message}"
+                    )
+                }
+            Log.i(LOG_TAG, "Overlay host mode switched previous=$previous next=$requested")
+        }
+        lastResolvedMode = requested
+        return hostFor(requested)
+    }
+
+    private fun hostFor(mode: OverlayHostMode): OverlayHost = when (mode) {
+        OverlayHostMode.LEGACY_WINDOW -> legacyHost
+        OverlayHostMode.ACCESSIBILITY -> accessibilityHost
     }
 
     private companion object {

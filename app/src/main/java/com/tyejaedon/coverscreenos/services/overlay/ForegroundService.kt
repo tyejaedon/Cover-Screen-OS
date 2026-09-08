@@ -30,6 +30,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.lang.ref.WeakReference
@@ -141,6 +143,18 @@ class ForegroundService : Service() {
     private lateinit var appRepository: PackageManagerAppScannerRepository
     private lateinit var launcherSettingsStore: LauncherSettingsStore
     private var launcherOverlayHost: LauncherOverlayHost? = null
+
+    /**
+     * Latest [OverlayHostMode] observed on the settings [Flow]. Read on
+     * every [OverlayWindowController] dispatch via the `modeProvider`
+     * lambda handed to the controller in [onCreate]. Defaults to
+     * [OverlayHostMode.DEFAULT] so the very first attach that lands
+     * before the settings collector has emitted still routes through
+     * the legacy [WindowManagerOverlayHost].
+     */
+    @Volatile
+    private var currentOverlayHostMode: OverlayHostMode = OverlayHostMode.DEFAULT
+    private var overlayHostModeCollectorJob: Job? = null
 
     private val suppressionState = OverlaySuppressionState()
     private val reclaimPolicy = OverlayReclaimPolicy(
@@ -307,8 +321,21 @@ class ForegroundService : Service() {
             context = this,
             launchCoordinator = launchCoordinator,
             appRepository = appRepository,
-            launcherSettingsStore = launcherSettingsStore
+            launcherSettingsStore = launcherSettingsStore,
+            modeProvider = { currentOverlayHostMode }
         )
+        // Observe overlayHostMode changes so the OverlayWindowController
+        // façade routes to the currently-selected host without needing a
+        // service restart. `distinctUntilChanged` ensures a single write
+        // to the volatile field per real transition; the façade tears
+        // down the previous host on the next dispatch (§5.3 plan).
+        overlayHostModeCollectorJob?.cancel()
+        overlayHostModeCollectorJob = serviceScope.launch {
+            launcherSettingsStore.settings
+                .map { it.overlayHostMode }
+                .distinctUntilChanged()
+                .collect { mode -> currentOverlayHostMode = mode }
+        }
         coverDisplayHelper = CoverDisplayHelper(this)
         displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
 
@@ -404,6 +431,8 @@ class ForegroundService : Service() {
             CoverAccessibilityService.detachLauncherHost()
             launcherOverlayHost = null
         }
+        overlayHostModeCollectorJob?.cancel()
+        overlayHostModeCollectorJob = null
         serviceScope.cancel() // Instantly terminates all polling and delays
         teardownOverlayRuntime()
         stopForegroundIfStarted()
