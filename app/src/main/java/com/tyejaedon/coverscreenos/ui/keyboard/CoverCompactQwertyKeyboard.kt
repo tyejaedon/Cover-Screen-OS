@@ -2,6 +2,8 @@ package com.tyejaedon.coverscreenos.ui.keyboard
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -122,7 +125,8 @@ internal fun CoverCompactQwertyKeyboard(
                     .weight(1.2f)
                     .height(36.dp),
                 backgroundColor = Color(0xFF2A2A30),
-                onClick = onBackspace
+                onClick = onBackspace,
+                repeating = true
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Backspace,
@@ -180,13 +184,61 @@ private fun CoverKeypadButton(
     modifier: Modifier = Modifier,
     backgroundColor: Color = Color(0xFF1F1F24),
     onClick: () -> Unit,
+    repeating: Boolean = false,
+    repeatInitialDelayMillis: Long = 400L,
+    repeatIntervalMillis: Long = 55L,
     content: @Composable () -> Unit
 ) {
+    if (!repeating) {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(backgroundColor)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            content()
+        }
+        return
+    }
+
+    // Hold-to-repeat path — mirrors KeypadButton in
+    // CoverScreenInputInjectionEngine.kt. Fires onClick immediately on
+    // down, then every [repeatIntervalMillis] after a
+    // [repeatInitialDelayMillis] hold, until the finger releases.
+    val callback = androidx.compose.runtime.rememberUpdatedState(onClick)
+    var isPressed by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(repeatInitialDelayMillis, repeatIntervalMillis) {
+        androidx.compose.runtime.snapshotFlow { isPressed }
+            .collect { pressed ->
+                if (!pressed) return@collect
+                kotlinx.coroutines.delay(repeatInitialDelayMillis)
+                while (isPressed) {
+                    callback.value.invoke()
+                    kotlinx.coroutines.delay(repeatIntervalMillis)
+                }
+            }
+    }
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
             .background(backgroundColor)
-            .clickable(onClick = onClick),
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    isPressed = true
+                    callback.value.invoke()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.changes.none { change -> change.pressed }) {
+                            isPressed = false
+                            break
+                        }
+                    }
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
         content()
