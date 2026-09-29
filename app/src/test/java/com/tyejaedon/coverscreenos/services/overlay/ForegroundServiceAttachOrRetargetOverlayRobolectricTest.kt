@@ -49,11 +49,13 @@ class ForegroundServiceAttachOrRetargetOverlayRobolectricTest {
 
         serviceController = Robolectric.buildService(ForegroundService::class.java).create()
         service = serviceController.get()
+        assertTrue(ForegroundService.runtime.value.serviceActive)
     }
 
     @After
     fun teardown() {
         serviceController.destroy()
+        assertFalse(ForegroundService.runtime.value.serviceActive)
         unmockkObject(ForegroundServiceHelper)
         ShadowLog.clear()
     }
@@ -82,6 +84,8 @@ class ForegroundServiceAttachOrRetargetOverlayRobolectricTest {
         verify(exactly = 1) { overlayWindowController.showOverlay(targetDisplay, false) }
         verify(exactly = 0) { overlayWindowController.suppressOverlayForLaunch() }
         verify(exactly = 0) { overlayWindowController.removeOverlay() }
+        assertTrue(ForegroundService.runtime.value.overlayActive)
+        assertTrue(ForegroundService.runtime.value.events.any { it.description == "Overlay attached" })
         assertFalse(hasTransitionMarker(HELD_HIDDEN_MARKER))
         assertFalse(hasTransitionMarker(REMOVED_STALE_MARKER))
     }

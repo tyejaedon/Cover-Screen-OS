@@ -242,6 +242,7 @@ class CoverAccessibilityService : AccessibilityService() {
             detachLauncherSurface(reason = "install_launcher_host_replaced")
         }
         launcherHost = host
+        ForegroundService.onLauncherHostChanged()
     }
 
     /** Phase 2: pure state release. Phase 3 also tears down the compose surface. */
@@ -251,6 +252,7 @@ class CoverAccessibilityService : AccessibilityService() {
         // nothing is attached.
         detachLauncherSurface(reason = "release_launcher_host")
         launcherHost = null
+        ForegroundService.onLauncherHostChanged()
     }
 
     // ---- Phase 3: launcher hosting API -----------------------------------

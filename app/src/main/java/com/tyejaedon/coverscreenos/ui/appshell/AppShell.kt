@@ -25,7 +25,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -35,6 +37,11 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navDeepLink
 import com.tyejaedon.coverscreenos.R
+import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
+import com.tyejaedon.coverscreenos.permissions.PermissionScreen
+import com.tyejaedon.coverscreenos.ui.dashboard.DashboardScreen
+import com.tyejaedon.coverscreenos.ui.dashboard.DashboardStatusDetails
+import com.tyejaedon.coverscreenos.ui.dashboard.rememberDashboardState
 
 private data class HomeTab(val route: String, @StringRes val title: Int, val icon: ImageVector)
 
@@ -61,6 +68,8 @@ fun AppShell(
     topBarActions: @Composable () -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {}
 ) {
+    val context = LocalContext.current
+    val dashboardState = rememberDashboardState()
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
@@ -73,8 +82,13 @@ fun AppShell(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(stringResource(selectedTab.title)) },
-                    actions = { topBarActions() }
+                    title = {
+                        Text(stringResource(selectedTab.title), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    },
+                    actions = {
+                        topBarActions()
+                        TopBarStatusChip(dashboardState)
+                    }
                 )
             },
             bottomBar = {
@@ -114,7 +128,38 @@ fun AppShell(
                     startDestination = startDestination,
                     modifier = Modifier.weight(1f)
                 ) {
-                    homeTabs.forEach { tab ->
+                    composable(
+                        route = HomeRoutes.Dashboard,
+                        deepLinks = listOf(navDeepLink { uriPattern = HomeRoutes.deepLink(HomeRoutes.Dashboard) })
+                    ) {
+                        DashboardScreen(
+                            state = dashboardState,
+                            onPermissions = { navController.navigateToTab(HomeRoutes.Permissions) },
+                            onToggleService = {
+                                if (dashboardState.runtime.serviceActive) {
+                                    ForegroundServiceHelper.stopForegroundService(context)
+                                    true
+                                } else {
+                                    ForegroundServiceHelper.startForegroundService(context)
+                                }
+                            }
+                        )
+                    }
+                    composable(
+                        route = HomeRoutes.Permissions,
+                        deepLinks = listOf(navDeepLink { uriPattern = HomeRoutes.deepLink(HomeRoutes.Permissions) })
+                    ) {
+                        PermissionScreen(
+                            onPermissionsGranted = {},
+                            grantedContent = {
+                                Column(Modifier.fillMaxSize().padding(24.dp)) {
+                                    Text("Required permissions ready", style = MaterialTheme.typography.titleLarge)
+                                    DashboardStatusDetails(dashboardState)
+                                }
+                            }
+                        )
+                    }
+                    homeTabs.filter { it.route != HomeRoutes.Dashboard && it.route != HomeRoutes.Permissions }.forEach { tab ->
                         composable(
                             route = tab.route,
                             deepLinks = listOf(navDeepLink { uriPattern = HomeRoutes.deepLink(tab.route) })

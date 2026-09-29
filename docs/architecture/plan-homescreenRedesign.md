@@ -139,8 +139,11 @@ Layout (top → bottom):
 4. **Tips carousel** — dismissible; 3–5 rotating tips ("Set the dock",
    "Change wallpaper", "Enable haptics").
 
-Only one screen owns readiness. `HomeReadinessCard.kt` is deleted; its
-content moves to the `Permissions` tab (§5.5).
+The shared dashboard use-case owns the required-permission and runtime snapshot.
+`HomeReadinessCard.kt` remains on the flag-off legacy path until the
+Permissions tab migration (§5.5); the new shell reuses the existing permission
+flow in the meantime. The phone preview is a labeled mock, not a live cover
+surface or a source of overlay activity events.
 
 ### 5.4 Customize — nested tabs / list
 
@@ -385,4 +388,3 @@ Excludes buffer for screenshot baseline curation and TalkBack QA.
   built on the primitives already in `ui/keyboard/primitives/`.
 - **Companion Wear OS UI** — deep-link URIs act as a canonical action
   registry; a Wear tile can dispatch them via `RemoteAction`.
-
