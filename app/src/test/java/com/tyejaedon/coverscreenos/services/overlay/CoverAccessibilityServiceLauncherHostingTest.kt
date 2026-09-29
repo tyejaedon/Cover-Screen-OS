@@ -1,12 +1,16 @@
 package com.tyejaedon.coverscreenos.services.overlay
 
 import android.content.Context
+import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.view.Display
+import android.view.accessibility.AccessibilityEvent
+import com.tyejaedon.coverscreenos.MainActivity
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.models.AppModel
+import com.tyejaedon.coverscreenos.overlay.surface.CoverComposeSurface
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import io.mockk.every
 import io.mockk.mockk
@@ -216,6 +220,37 @@ class CoverAccessibilityServiceLauncherHostingTest {
         assertFalse(CoverAccessibilityService.isLauncherAttachedOnActiveService())
     }
 
+    @Test
+    fun `only cover-display events update launcher foreground signal`() {
+        val (_, service) = connectService()
+        val surface = mockk<CoverComposeSurface>(relaxed = true)
+        every { surface.activeDisplayId() } returns 5
+        CoverAccessibilityService::class.java.getDeclaredField("launcherSurface").apply {
+            isAccessible = true
+        }.set(service, surface)
+        val event = mockk<AccessibilityEvent>(relaxed = true)
+        every { event.eventType } returns AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        every { event.packageName } returns "com.example.app"
+
+        every { event.displayId } returns Display.DEFAULT_DISPLAY
+        service.onAccessibilityEvent(event)
+        assertNull(CoverAccessibilityService.currentForegroundPackage())
+
+        every { event.displayId } returns 5
+        service.onAccessibilityEvent(event)
+        assertEquals("com.example.app", CoverAccessibilityService.currentForegroundPackage())
+    }
+
+    @Test
+    fun `launcher accessibility service can dispatch activity launches without input service`() {
+        val intent = Intent(RuntimeEnvironment.getApplication(), MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        assertFalse(CoverAccessibilityService.startActivityFromLauncherService(intent, null))
+
+        connectService()
+        assertTrue(CoverAccessibilityService.startActivityFromLauncherService(intent, null))
+    }
+
     /**
      * A second [CoverAccessibilityService.showLauncher] call for the
      * same [Display] without `forceReattach` must reuse the currently
@@ -284,7 +319,7 @@ class CoverAccessibilityServiceLauncherHostingTest {
     /**
      * [CoverAccessibilityService.hideLauncher] must clear the surface
      * bookkeeping regardless of whether attach previously succeeded,
-     * so callers (the `AccessibilityOverlayHost` façade) can treat it
+     * so callers can treat it
      * as unconditional teardown.
      */
     @Test
@@ -362,4 +397,3 @@ class CoverAccessibilityServiceLauncherHostingTest {
         return dm.getDisplay(Display.DEFAULT_DISPLAY)
     }
 }
-

@@ -36,17 +36,27 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
+internal fun hasFullHomeReadiness(
+    notificationReady: Boolean,
+    accessibilityReady: Boolean,
+    inputAccessibilityReady: Boolean,
+    notificationListenerReady: Boolean,
+    batteryOptimizationReady: Boolean,
+    serviceRunning: Boolean
+): Boolean = notificationReady && accessibilityReady && inputAccessibilityReady &&
+    notificationListenerReady && batteryOptimizationReady && serviceRunning
+
 @Composable
 internal fun HomeReadinessCard(
     notificationReady: Boolean,
-    overlayReady: Boolean,
     accessibilityReady: Boolean,
+    inputAccessibilityReady: Boolean,
     notificationListenerReady: Boolean,
     batteryOptimizationReady: Boolean,
     serviceRunning: Boolean,
     onEnableNotifications: () -> Unit,
-    onEnableOverlay: () -> Unit,
     onEnableAccessibility: () -> Unit,
+    onEnableInputAccessibility: () -> Unit,
     onEnableNotificationListener: () -> Unit,
     onDisableBatteryOptimization: () -> Unit,
     onStartService: () -> Unit,
@@ -55,26 +65,37 @@ internal fun HomeReadinessCard(
 ) {
     val checksReadyCount = listOf(
         notificationReady,
-        overlayReady,
         accessibilityReady,
+        inputAccessibilityReady,
         notificationListenerReady,
         batteryOptimizationReady,
         serviceRunning
     ).count { it }
-    val isFullyReady = checksReadyCount == 6
+    val totalChecks = 6
+    val isFullyReady = hasFullHomeReadiness(
+        notificationReady = notificationReady,
+        accessibilityReady = accessibilityReady,
+        inputAccessibilityReady = inputAccessibilityReady,
+        notificationListenerReady = notificationListenerReady,
+        batteryOptimizationReady = batteryOptimizationReady,
+        serviceRunning = serviceRunning
+    )
+    val launcherReady = notificationReady && accessibilityReady &&
+        notificationListenerReady && batteryOptimizationReady && serviceRunning
     val statusLabel = when {
         isFullyReady -> "Ready"
+        launcherReady -> "Keyboard setup optional"
         checksReadyCount >= 2 -> "Action needed"
         else -> "Setup required"
     }
 
     val statusDescription = when {
         !notificationReady -> "Grant notification permission to allow reliable foreground-service operation."
-        !overlayReady -> "Enable Appear on top to allow the home screen overlay to appear."
-        !accessibilityReady -> "Enable Accessibility service so navigation events can be handled."
+        !accessibilityReady -> "Enable Cover Screen OS Launcher in Accessibility settings to host the launcher."
         !notificationListenerReady -> "Enable notification listener so cover notification controls can work."
         !batteryOptimizationReady -> "Disable battery optimization so OEM power management does not stop home screen runtime."
         !serviceRunning -> "Start the foreground service to activate home screen runtime."
+        !inputAccessibilityReady -> "Launcher ready. Enable the separate Cover Screen OS input service for the cover keyboard fallback."
         else -> "All setup checks are passing. Your home screen is active."
     }
 
@@ -105,14 +126,14 @@ internal fun HomeReadinessCard(
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
                     )
                     Text(
-                        text = "$checksReadyCount of 6 checks ready",
+                        text = "$checksReadyCount of $totalChecks checks ready",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 StatusChip(
                     label = statusLabel,
-                    ready = isFullyReady
+                    ready = launcherReady
                 )
             }
 
@@ -131,18 +152,18 @@ internal fun HomeReadinessCard(
                     onAction = onEnableNotifications
                 )
                 SetupCheckRow(
-                    title = "Appear on top",
-                    details = "Allows the home screen overlay UI to stay visible.",
-                    ready = overlayReady,
-                    actionLabel = "Enable",
-                    onAction = onEnableOverlay
-                )
-                SetupCheckRow(
-                    title = "Accessibility service",
-                    details = "Lets the home screen react to navigation and window changes.",
+                    title = "Cover Screen OS Launcher accessibility",
+                    details = "Hosts the cover launcher and handles navigation.",
                     ready = accessibilityReady,
                     actionLabel = "Enable",
                     onAction = onEnableAccessibility
+                )
+                SetupCheckRow(
+                    title = "Cover Screen OS input accessibility",
+                    details = "Recommended for cover keyboard fallback; separate from the launcher service.",
+                    ready = inputAccessibilityReady,
+                    actionLabel = "Enable",
+                    onAction = onEnableInputAccessibility
                 )
                 SetupCheckRow(
                     title = "Notification listener",
@@ -176,11 +197,11 @@ internal fun HomeReadinessCard(
                     onClick = {
                         when {
                             !notificationReady -> onEnableNotifications()
-                            !overlayReady -> onEnableOverlay()
                             !accessibilityReady -> onEnableAccessibility()
                             !notificationListenerReady -> onEnableNotificationListener()
                             !batteryOptimizationReady -> onDisableBatteryOptimization()
                             !serviceRunning -> onStartService()
+                            !inputAccessibilityReady -> onEnableInputAccessibility()
                             else -> onRefresh()
                         }
                     }
@@ -188,11 +209,11 @@ internal fun HomeReadinessCard(
                     Text(
                         when {
                             !notificationReady -> "Grant notifications"
-                            !overlayReady -> "Enable overlay"
                             !accessibilityReady -> "Enable accessibility"
                             !notificationListenerReady -> "Enable notif listener"
                             !batteryOptimizationReady -> "Disable battery optimization"
                             !serviceRunning -> "Start home screen"
+                            !inputAccessibilityReady -> "Enable keyboard input"
                             else -> "All checks ready"
                         },
                         maxLines = 1,
@@ -322,4 +343,3 @@ private fun StatusChip(label: String, ready: Boolean) {
         )
     }
 }
-

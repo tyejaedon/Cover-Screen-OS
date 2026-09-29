@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <input-method xmlns:android="http://schemas.android.com/apk/res/android"
-    android:settingsActivity="com.tyejaedon.coverscreenos.MainActivity"
+    android:settingsActivity="com.tyejaedon.coverscreenos.ime.CoverImeSettingsActivity"
     android:supportsSwitchingToNextInputMethod="true">
 
     <subtype
@@ -9,4 +9,3 @@
         android:isAsciiCapable="true"
         android:label="@string/cover_t9_ime_subtype_en" />
 </input-method>
-

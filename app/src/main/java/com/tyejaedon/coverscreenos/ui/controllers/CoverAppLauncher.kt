@@ -11,6 +11,7 @@ import android.util.Log
 import android.view.Display
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
+import com.tyejaedon.coverscreenos.services.overlay.CoverAccessibilityService
 import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
 
 object CoverAppLauncher {
@@ -26,10 +27,8 @@ object CoverAppLauncher {
             this.launchDisplayId = launchDisplayId
         }.toBundle()
 
-        // Prefer the accessibility service as the launch origin. The overlay window is owned by a
-        // Service, so a direct startActivity() from it is silently dropped by background-activity-
-        // launch (BAL) enforcement - no exception is raised and the app simply never appears.
-        // A connected AccessibilityService is BAL-exempt, so it can dispatch the launch reliably.
+        // A connected AccessibilityService is BAL-exempt; the input service may be disabled
+        // even while the launcher accessibility service is enabled.
         val dispatchedViaAccessibility = CoverInputAccessibilityService.startActivityFromAccessibilityService(
             launchIntent = launchIntent,
             launchOptions = launchOptions
@@ -37,6 +36,12 @@ object CoverAppLauncher {
 
         if (dispatchedViaAccessibility) {
             logDebug("Launch dispatched via accessibility service displayId=$launchDisplayId")
+        } else if (CoverAccessibilityService.startActivityFromLauncherService(
+                launchIntent = launchIntent,
+                launchOptions = launchOptions
+            )
+        ) {
+            logDebug("Launch dispatched via launcher accessibility service displayId=$launchDisplayId")
         } else {
             if (!CoverInputAccessibilityService.isConnected()) {
                 logWarning(
@@ -154,10 +159,7 @@ object CoverAppLauncher {
         val launchDisplayId = resolveLaunchDisplayId(context = context, displayId = displayId)
 
         return try {
-            // Order matters: dispatch the launch *before* hiding the overlay.
-            // A visible SYSTEM_ALERT_WINDOW overlay is itself one of the background-activity-launch
-            // exemptions, so tearing it down first would remove the very privilege the launch needs
-            // when the accessibility fallback path is in use.
+            // Dispatch before suppressing the launcher so the target takes focus cleanly.
             activityLaunchExecutor.launch(context, launchIntent, launchDisplayId)
 
             // Suppress the overlay UI so the launched cover app receives input focus.

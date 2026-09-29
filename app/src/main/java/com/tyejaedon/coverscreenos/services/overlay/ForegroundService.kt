@@ -30,8 +30,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.lang.ref.WeakReference
@@ -40,11 +38,10 @@ import kotlin.time.Duration.Companion.milliseconds
 class ForegroundService : Service() {
     companion object {
         private const val LOG_TAG = "CoverForegroundService"
-        private const val DISPLAY_CHANGE_DEBOUNCE_MS = 450L
         private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 60L
         private const val APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS = 120L
         private const val APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS = 2_500L
-        private const val APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT = 1
+        private const val APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT = 2
         // Effectively disable the "auto-reclaim after N seconds of no interaction"
         // behavior. Previously this was 45s, which meant that while the user was
         // watching a movie (no touch input for 45s) the cover launcher overlay
@@ -109,6 +106,14 @@ class ForegroundService : Service() {
             activeServiceRef?.get()?.requestOverlayReclaimInternal(reason)
         }
 
+        fun onLauncherAccessibilityConnected() {
+            activeServiceRef?.get()?.refreshLauncherAccessibilityHost()
+        }
+
+        fun onLauncherAccessibilityDisconnected() {
+            activeServiceRef?.get()?.refreshLauncherAccessibilityHost()
+        }
+
         fun requestIncomingCallPassthrough(packageName: String) {
             activeServiceRef?.get()?.requestIncomingCallPassthroughInternal(packageName)
         }
@@ -143,18 +148,6 @@ class ForegroundService : Service() {
     private lateinit var appRepository: PackageManagerAppScannerRepository
     private lateinit var launcherSettingsStore: LauncherSettingsStore
     private var launcherOverlayHost: LauncherOverlayHost? = null
-
-    /**
-     * Latest [OverlayHostMode] observed on the settings [Flow]. Read on
-     * every [OverlayWindowController] dispatch via the `modeProvider`
-     * lambda handed to the controller in [onCreate]. Defaults to
-     * [OverlayHostMode.DEFAULT] so the very first attach that lands
-     * before the settings collector has emitted still routes through
-     * the legacy [WindowManagerOverlayHost].
-     */
-    @Volatile
-    private var currentOverlayHostMode: OverlayHostMode = OverlayHostMode.DEFAULT
-    private var overlayHostModeCollectorJob: Job? = null
 
     private val suppressionState = OverlaySuppressionState()
     private val reclaimPolicy = OverlayReclaimPolicy(
@@ -274,7 +267,6 @@ class ForegroundService : Service() {
         set(value) {
             suppressionState.callNotificationLastSignalElapsedMs = value
         }
-    private var pendingRetargetReason: String? = null
     // Transient foreground state is managed by OverlayTransientSignalPolicy.
 
     private val displayListener = object : DisplayManager.DisplayListener {
@@ -317,33 +309,11 @@ class ForegroundService : Service() {
         )
         appRepository = PackageManagerAppScannerRepository(this)
         launcherSettingsStore = LauncherSettingsStore(this)
-        overlayWindowController = OverlayWindowController(
-            context = this,
-            launchCoordinator = launchCoordinator,
-            appRepository = appRepository,
-            launcherSettingsStore = launcherSettingsStore,
-            modeProvider = { currentOverlayHostMode }
-        )
-        // Observe overlayHostMode changes so the OverlayWindowController
-        // façade routes to the currently-selected host without needing a
-        // service restart. `distinctUntilChanged` ensures a single write
-        // to the volatile field per real transition; the façade tears
-        // down the previous host on the next dispatch (§5.3 plan).
-        overlayHostModeCollectorJob?.cancel()
-        overlayHostModeCollectorJob = serviceScope.launch {
-            launcherSettingsStore.settings
-                .map { it.overlayHostMode }
-                .distinctUntilChanged()
-                .collect { mode -> currentOverlayHostMode = mode }
-        }
+        overlayWindowController = OverlayWindowController()
         coverDisplayHelper = CoverDisplayHelper(this)
         displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
 
-        // Phase 2 handoff: give CoverAccessibilityService the pieces it will
-        // need in Phase 3 to host the launcher surface. No view work happens
-        // here today; the AS just holds the reference. Attaching once here
-        // (rather than on every showOverlay call) means the host survives AS
-        // disable/enable cycles without needing us to restart.
+        // Handoff survives accessibility-service disable/enable cycles.
         val appContext = applicationContext
         val host = LauncherOverlayHost(
             appRepository = appRepository,
@@ -412,7 +382,7 @@ class ForegroundService : Service() {
                 // do not depend on a future listener state-change callback.
                 CoverNotificationListenerService.replayCallNotificationStateToForegroundService()
 
-                scheduleRetarget(reason = "service_start", immediate = true)
+                scheduleRetarget(reason = "service_start")
             }
         }
         return START_STICKY
@@ -431,8 +401,6 @@ class ForegroundService : Service() {
             CoverAccessibilityService.detachLauncherHost()
             launcherOverlayHost = null
         }
-        overlayHostModeCollectorJob?.cancel()
-        overlayHostModeCollectorJob = null
         serviceScope.cancel() // Instantly terminates all polling and delays
         teardownOverlayRuntime()
         stopForegroundIfStarted()
@@ -464,8 +432,14 @@ class ForegroundService : Service() {
             if (isOverlaySuppressedForAppLaunch) {
                 maybeResumeOverlayAfterAppLaunch(reason = "reclaim:$normalizedReason")
             } else {
-                scheduleRetarget(reason = "foreground_reclaim:$normalizedReason", immediate = true)
+                scheduleRetarget(reason = "foreground_reclaim:$normalizedReason")
             }
+        }
+    }
+
+    private fun refreshLauncherAccessibilityHost() {
+        if (overlayRequested && !isOverlaySuppressedForAppLaunch) {
+            scheduleRetarget(reason = "launcher_accessibility_connection_changed")
         }
     }
 
@@ -554,7 +528,7 @@ class ForegroundService : Service() {
             stopServiceForMissingPrerequisites(reason = "display_${changeType}_$displayId")
             return
         }
-        scheduleRetarget(reason = "display_$changeType:$displayId", immediate = false)
+        scheduleRetarget(reason = "display_$changeType:$displayId")
     }
 
     private fun attachOrRetargetOverlay(reason: String) {
@@ -613,32 +587,19 @@ class ForegroundService : Service() {
         val activeId = overlayWindowController.getActiveDisplayId()
         val shouldForceRetarget = overlayWindowController.isOverlayAttached() && activeId != targetId
 
-        isOverlayActive = overlayWindowController.showOverlay(targetDisplay, shouldForceRetarget, coverDisplayHelper.isDeviceLocked)
+        isOverlayActive = overlayWindowController.showOverlay(targetDisplay, shouldForceRetarget)
         logDebug { "overlay reason=$reason targetId=$targetId activeId=${overlayWindowController.getActiveDisplayId()} forceRetarget=$shouldForceRetarget attached=$isOverlayActive displays=${coverDisplayHelper.describeDisplays()}" }
     }
 
-    private fun scheduleRetarget(reason: String, immediate: Boolean) {
-        if (pendingDisplayRetargetJob?.isActive == true && pendingRetargetReason == reason) {
-            return
-        }
-
-        pendingRetargetReason = reason
+    private fun scheduleRetarget(reason: String) {
         pendingDisplayRetargetJob?.cancel()
         pendingDisplayRetargetJob = serviceScope.launch {
-            if (!immediate) delay(DISPLAY_CHANGE_DEBOUNCE_MS.milliseconds)
             attachOrRetargetOverlay(reason)
-        }.also { job ->
-            job.invokeOnCompletion {
-                if (pendingRetargetReason == reason) {
-                    pendingRetargetReason = null
-                }
-            }
         }
     }
 
     private fun clearPendingDisplayWork() {
         pendingDisplayRetargetJob?.cancel()
-        pendingRetargetReason = null
     }
 
     private fun registerDisplayListenerIfNeeded() {
@@ -653,7 +614,8 @@ class ForegroundService : Service() {
         isDisplayListenerRegistered = false
     }
 
-    private fun hasRuntimePrerequisites(): Boolean = ForegroundServiceHelper.hasRequiredOverlayPermissions(this)
+    private fun hasRuntimePrerequisites(): Boolean =
+        ForegroundServiceHelper.hasCoreOverlayPermissions(this)
 
     private fun teardownOverlayRuntime() {
         clearAppLaunchSuppression()
@@ -848,16 +810,15 @@ class ForegroundService : Service() {
 
         completedSuppressionSessionId = activeSessionId
         clearAppLaunchSuppression()
-        scheduleRetarget(reason = reason, immediate = true)
+        scheduleRetarget(reason = reason)
     }
 
     private fun resolveForegroundPackageForResume(): String? {
-        val foregroundPackage = CoverInputAccessibilityService.currentForegroundPackage()?.trim()?.takeUnless { it.isEmpty() }
+        val (foregroundPackage, eventAgeMs) = latestForegroundSignal()
             ?: run {
                 logResumeDecision(reason = "resolve", decision = "no_foreground_package")
                 return null
             }
-        val eventAgeMs = CoverInputAccessibilityService.currentForegroundPackageEventAgeMs()
         if (eventAgeMs > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) {
             if (isTransientSystemUiPackage(foregroundPackage) && isTransientForegroundSafeForResume(foregroundPackage)) {
                 logResumeDecision(
@@ -885,6 +846,15 @@ class ForegroundService : Service() {
         return foregroundPackage
     }
 
+    private fun latestForegroundSignal(): Pair<String, Long>? = listOfNotNull(
+        CoverAccessibilityService.currentForegroundPackage()?.trim()
+            ?.takeUnless(String::isEmpty)
+            ?.let { it to CoverAccessibilityService.currentForegroundPackageEventAgeMs() },
+        CoverInputAccessibilityService.currentForegroundPackage()?.trim()
+            ?.takeUnless(String::isEmpty)
+            ?.let { it to CoverInputAccessibilityService.currentForegroundPackageEventAgeMs() }
+    ).minByOrNull { (_, ageMs) -> ageMs }
+
     private fun shouldResumeOverlayForPackage(packageName: String): Boolean {
         val launchedPackage = launchSuppressedPackageName?.trim()?.takeUnless { it.isEmpty() }
         return transientSignalPolicy.shouldResumeOverlayForPackage(
@@ -909,8 +879,8 @@ class ForegroundService : Service() {
     private fun isIncomingCallPackage(packageName: String): Boolean = CallPackageMatchers.isIncomingCallPackage(packageName)
 
     private fun resolveRawForegroundPackageForCallGuard(): String? {
-        val foregroundPackage = CoverInputAccessibilityService.currentForegroundPackage()?.trim()?.takeUnless { it.isEmpty() } ?: return null
-        if (CoverInputAccessibilityService.currentForegroundPackageEventAgeMs() > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) return null
+        val (foregroundPackage, eventAgeMs) = latestForegroundSignal() ?: return null
+        if (eventAgeMs > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) return null
         return foregroundPackage
     }
 

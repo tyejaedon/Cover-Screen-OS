@@ -177,9 +177,7 @@ class CoverAppLauncherTest {
         )
 
         assertTrue(launched)
-        // The launch must be dispatched first: tearing the overlay down beforehand can
-        // remove the visible SYSTEM_ALERT_WINDOW that grants the background-activity-launch
-        // exemption, leaving the launch to be silently discarded by the system.
+        // Dispatch before suppression so the launched app receives focus.
         assertEquals(listOf("launch", "hide"), launchEvents)
     }
 
@@ -279,7 +277,6 @@ class CoverAppLauncherTest {
         }
     }
 }
-
 
 
 

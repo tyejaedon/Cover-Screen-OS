@@ -5,6 +5,7 @@ import android.graphics.PixelFormat
 import android.util.Log
 import android.view.Display
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import androidx.annotation.VisibleForTesting
@@ -23,6 +24,21 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 
+internal data class CoverSurfaceWindowConfig(
+    val width: Int = WindowManager.LayoutParams.MATCH_PARENT,
+    val height: Int = WindowManager.LayoutParams.MATCH_PARENT,
+    val gravity: Int = Gravity.TOP or Gravity.START,
+    val extraFlags: Int = 0,
+    val windowAnimations: Int = 0,
+    val cutoutMode: Int = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+) {
+    fun flags(secure: Boolean): Int =
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            extraFlags or
+            (if (secure) WindowManager.LayoutParams.FLAG_SECURE else 0)
+}
+
 /**
  * Host-agnostic Compose overlay surface. Owns exactly one [ComposeView],
  * one [LifecycleOwner] / [SavedStateRegistryOwner] / [ViewModelStoreOwner],
@@ -33,8 +49,7 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
  * attach/detach cycles.
  *
  * @param hostContext the context of the owning host (Service / AccessibilityService).
- * @param windowType either [WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY]
- *   (legacy) or [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY] (target).
+ * @param windowType [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY]
  * @param logTag tag used for diagnostic logging.
  */
 internal class CoverComposeSurface(
@@ -46,12 +61,13 @@ internal class CoverComposeSurface(
     private var composeView: ComposeView? = null
     private var windowManager: WindowManager? = null
     private var windowContext: Context? = null
-    private var lifecycleOwner: SurfaceLifecycleOwner? = null
+    private var lifecycleOwner: CoverSurfaceLifecycleOwner? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var activeDisplayId: Int? = null
 
     private var isTouchable: Boolean = true
     private var deferredTouchable: Boolean? = null
+    private var secureRequested: Boolean = false
 
     /**
      * Attach a Compose subtree to the given [display]. Returns false and
@@ -59,10 +75,17 @@ internal class CoverComposeSurface(
      * platform rejects the token — the caller should treat this as a
      * hard failure. No silent fallback.
      */
-    fun attach(display: Display, content: @Composable () -> Unit): Boolean {
+    fun attach(
+        display: Display,
+        windowConfig: CoverSurfaceWindowConfig = CoverSurfaceWindowConfig(),
+        onOutsideTouch: (() -> Unit)? = null,
+        content: @Composable () -> Unit
+    ): Boolean {
         if (composeView != null) {
             Log.w(logTag, "attach called while already attached; detaching first")
+            val preserveSecure = secureRequested
             detach()
+            secureRequested = preserveSecure
         }
 
         val displayContext = hostContext.createDisplayContext(display)
@@ -83,7 +106,7 @@ internal class CoverComposeSurface(
             return false
         }
 
-        val owner = SurfaceLifecycleOwner()
+        val owner = CoverSurfaceLifecycleOwner()
 
         val view = ComposeView(builtWindowContext).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
@@ -98,20 +121,30 @@ internal class CoverComposeSurface(
                 }
                 override fun onViewDetachedFromWindow(v: View) = Unit
             })
+            if (onOutsideTouch != null) {
+                setOnTouchListener { touchedView, event ->
+                    if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                        touchedView.performClick()
+                        onOutsideTouch()
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
             setContent(content)
         }
 
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+            windowConfig.width,
+            windowConfig.height,
             windowType,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            windowConfig.flags(secureRequested),
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            gravity = windowConfig.gravity
+            windowAnimations = windowConfig.windowAnimations
+            layoutInDisplayCutoutMode = windowConfig.cutoutMode
         }
 
         return try {
@@ -172,12 +205,47 @@ internal class CoverComposeSurface(
         applyTouchable(touchable)
     }
 
+    fun setSecure(secure: Boolean): Boolean {
+        val view = composeView
+        if (view == null) {
+            secureRequested = secure
+            return true
+        }
+        val manager = windowManager
+        val params = layoutParams
+        if (manager == null || params == null) {
+            Log.e(logTag, "Unable to update secure flag: attached view has no window state")
+            return false
+        }
+        val previousFlags = params.flags
+        val updatedFlags = if (secure) {
+            previousFlags or WindowManager.LayoutParams.FLAG_SECURE
+        } else {
+            previousFlags and WindowManager.LayoutParams.FLAG_SECURE.inv()
+        }
+        if (previousFlags == updatedFlags) return true
+
+        params.flags = updatedFlags
+        return try {
+            manager.updateViewLayout(view, params)
+            secureRequested = secure
+            true
+        } catch (error: RuntimeException) {
+            params.flags = previousFlags
+            Log.e(logTag, "Unable to update secure window flag", error)
+            false
+        }
+    }
+
     fun activeDisplayId(): Int? = activeDisplayId
 
     fun isAttached(): Boolean = composeView?.isAttachedToWindow == true
 
     @VisibleForTesting
     internal fun lifecycleOwnerForTest(): LifecycleOwner? = lifecycleOwner
+
+    @VisibleForTesting
+    internal fun secureRequestedForTest(): Boolean = secureRequested
 
     private fun applyTouchable(touchable: Boolean) {
         val view = composeView ?: return
@@ -223,6 +291,7 @@ internal class CoverComposeSurface(
         activeDisplayId = null
         isTouchable = true
         deferredTouchable = null
+        secureRequested = false
     }
 
     /**
@@ -243,7 +312,7 @@ internal class CoverComposeSurface(
      * ON_CREATE. That is incorrect for AndroidX savedstate ≥ 1.2 — the check
      * shipped there enforces the ordering above.)
      */
-    internal class SurfaceLifecycleOwner :
+    internal class CoverSurfaceLifecycleOwner :
         LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
 
         private val registry = LifecycleRegistry(this)
@@ -282,4 +351,3 @@ internal class CoverComposeSurface(
         }
     }
 }
-

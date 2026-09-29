@@ -12,7 +12,7 @@ I don't have file-write tools in this mode, so here's the plan as a markdown doc
 
 ## 1. Goal
 
-Replace the current `SYSTEM_ALERT_WINDOW` / `TYPE_APPLICATION_OVERLAY` mechanism that [`OverlayWindowController`](app/src/main/java/com/tyejaedon/coverscreenos/services/overlay/OverlayWindowController.kt) uses to attach the launcher `ComposeView` to the cover display, with an `AccessibilityService`-owned `TYPE_ACCESSIBILITY_OVERLAY` window.
+Replace the former `SYSTEM_ALERT_WINDOW` / `TYPE_APPLICATION_OVERLAY` mechanism with an `AccessibilityService`-owned `TYPE_ACCESSIBILITY_OVERLAY` window. The rollout sections below document the migration history; Phase 4's legacy rollback is no longer available after Phase 5.
 
 Concretely:
 
@@ -206,7 +206,11 @@ Each phase is independently shippable and reversible.
 
 **Exit criteria.** Crash / ANR / user-report metrics from Phase 3 dogfood are green; support has a documented rollback (toggle `overlayHostMode = LEGACY_WINDOW` in the debug menu).
 
+During the transition release, legacy hosting and its permission remained available for rollback. Phase 5 removes that rollback; existing stored Legacy window selections are ignored. The launcher requires its own registered `CoverAccessibilityService`, distinct from the input accessibility service.
+
 ### Phase 5 — Delete legacy path & unify with input-injection overlay
+
+The final launcher path has no `overlayHostMode` setting, debug rollback switch, or `SYSTEM_ALERT_WINDOW` permission. Existing stored `LEGACY_WINDOW` preferences are ignored when settings are loaded, so upgraded installs select accessibility hosting. The launcher and input accessibility services remain distinct; users of the launcher must enable **Cover Screen OS Launcher** in Accessibility settings. The input overlay migration is tracked with the input service changes.
 
 - Remove `WindowManagerOverlayHost` and the `overlayHostMode` flag.
 - Delete `<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />` from `AndroidManifest.xml`.
@@ -332,13 +336,13 @@ Note: `windowType = TYPE_ACCESSIBILITY_OVERLAY` is the only substantive change v
 | Fold 6 / One UI 7      |                  |                        |                   |               |                  |
 | Pixel Fold / AOSP 15   |                  |                        |                   |               |                  |
 
-Repeat with legacy mode toggled ON for rollback verification.
+For upgraded installs, verify that a previously stored Legacy window selection does not bypass launcher accessibility setup.
 
 ## 9. Risks & Mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| Samsung One UI variant refuses `TYPE_ACCESSIBILITY_OVERLAY` on cover display token. | Feature flag rollback to `LEGACY_WINDOW`. `CoverComposeSurface.attach` returns false → controller reports failure. |
+| Samsung One UI variant refuses `TYPE_ACCESSIBILITY_OVERLAY` on cover display token. | `CoverComposeSurface.attach` logs and reports failure; investigate on device before rollout. There is no legacy fallback. |
 | AS process killed by system → both launcher **and** input overlay disappear. | AS is bound-critical for the app anyway. Add watchdog in `ForegroundService` that calls `showLauncher` on `AS.onServiceConnected`. |
 | `AS.onUnbind` runs asynchronously with Compose disposal. | `CoverComposeSurface.detach` synchronously calls `composeView.disposeComposition()` before `wm.removeView`. |
 | Play Store rejects expanded a11y usage. | Update a11y-use declaration; purpose is legitimate — rendering the launcher on a display third-party apps cannot otherwise reach. Have a written rationale ready. |

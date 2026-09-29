@@ -32,11 +32,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
+
+private val GrantedGreen = Color(0xFF2E7D32)
 
 @Composable
 internal fun PermissionHeaderCard(
@@ -45,7 +48,7 @@ internal fun PermissionHeaderCard(
     modifier: Modifier = Modifier
 ) {
     val allReady = grantedCount == totalCount
-    val accentColor = if (allReady) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+    val accentColor = if (allReady) GrantedGreen else MaterialTheme.colorScheme.primary
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -183,9 +186,10 @@ internal fun PermissionRequirementCard(
     granted: Boolean,
     actionLabel: String,
     icon: ImageVector,
-    onAction: () -> Unit
+    onAction: () -> Unit,
+    optional: Boolean = false
 ) {
-    val accentColor = if (granted) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+    val accentColor = if (granted) GrantedGreen else MaterialTheme.colorScheme.primary
     val containerColor = if (granted) {
         MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
     } else {
@@ -225,8 +229,8 @@ internal fun PermissionRequirementCard(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = icon,
-                            contentDescription = null,
+                            imageVector = if (granted) Icons.Filled.CheckCircle else icon,
+                            contentDescription = if (granted) "Granted" else null,
                             tint = accentColor
                         )
                     }
@@ -236,7 +240,7 @@ internal fun PermissionRequirementCard(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
-                PermissionStatusChip(granted = granted)
+                PermissionStatusChip(granted = granted, optional = optional)
             }
             Text(
                 text = details,
@@ -259,9 +263,9 @@ internal fun PermissionRequirementCard(
 }
 
 @Composable
-internal fun PermissionStatusChip(granted: Boolean) {
-    val label = if (granted) "Ready" else "Required"
-    val tint = if (granted) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+internal fun PermissionStatusChip(granted: Boolean, optional: Boolean = false) {
+    val label = if (granted) "Ready" else if (optional) "Optional" else "Required"
+    val tint = if (granted) GrantedGreen else MaterialTheme.colorScheme.primary
     val container = if (granted) {
         MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f)
     } else {
@@ -273,12 +277,21 @@ internal fun PermissionStatusChip(granted: Boolean) {
         color = container,
         border = BorderStroke(1.dp, tint.copy(alpha = 0.6f))
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = tint,
-            modifier = Modifier.coverScreenPadding(horizontal = 8.dp, vertical = 4.dp)
-        )
+        Row(
+            modifier = Modifier.coverScreenPadding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (granted) {
+                Icon(
+                    imageVector = Icons.Filled.CheckCircle,
+                    contentDescription = "Granted",
+                    tint = tint,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            Text(text = label, style = MaterialTheme.typography.labelSmall, color = tint)
+        }
     }
 }
 
@@ -368,4 +381,3 @@ internal fun PermissionInfoBanner(message: String) {
         }
     }
 }
-

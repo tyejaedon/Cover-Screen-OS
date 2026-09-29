@@ -40,21 +40,20 @@ The single piece of *shared* UI code is `CoverCompactQwertyKeyboard` in [CoverCo
 
 Focus detection → keyboard shows:
 1. `onAccessibilityEvent` filters to `event.displayId == COVER_DISPLAY_ID`.
-2. `handleFocusOrClickEvent` climbs the source node, opens a `FIELD_FOCUS_GRACE_MS = 750 ms` window (to swallow the WINDOW_STATE_CHANGED echo from our own overlay), calls `suppressHoneyBoardSoftKeyboard()` (`SHOW_MODE_HIDDEN`), builds `CoverFieldMetadata`, and calls `CoverInputSessionManager.onFieldFocused(metadata)`.
-3. `onFieldFocused` picks default mode: `NUMERIC_PIN` if numeric/phone/password, else `T9_MULTITAP` (note: the T9 chip is commented out, so users get T9 by default but can only switch to 123 or ABC).
-4. Overlay is attached via `WindowManager.addView` on the cover display context.
+2. `handleFocusOrClickEvent` resolves an editable node, calls `suppressHoneyBoardSoftKeyboard()` (`SHOW_MODE_HIDDEN`), reads its field metadata and IME action, then calls `CoverInputSessionManager.onFieldFocused(metadata)`.
+3. `onFieldFocused` forces `NUMERIC_PIN` for numeric/phone/password fields; other fields use the last mode saved for their package or default to `T9_MULTITAP`.
+4. `CoverKeyboardOverlayManager` hosts the keyboard through the shared `CoverComposeSurface` on the accessibility service's cover-display context (`TYPE_ACCESSIBILITY_OVERLAY`). It keeps the bottom-anchored, wrap-content layout and outside-touch handling. Password fields set `FLAG_SECURE` before attachment; the flag is cleared on detach or when leaving the field.
 
 Per keypress:
 1. Compose UI calls `CoverInputSessionManager.appendText(...)` / `replacePreviousChar(...)` / `deleteBackward()`.
-2. Session manager keeps its own `buffer` + `cursorPosition` and calls `performDirectInjection(buffer)`.
-3. `injectTextIntoFocusedNode` resolves the target node (walking every interactive window and skipping our own package to avoid pointing at the overlay), then does `ACTION_FOCUS + ACTION_ACCESSIBILITY_FOCUS + ACTION_SET_TEXT` with the *entire buffer*, then `ACTION_SET_SELECTION` to place the cursor at end.
-4. Fallback: clipboard + `ACTION_PASTE`.
+2. Session manager keeps its own `buffer` + `cursorPosition`; non-password fields send minimal deltas through the focused `InputConnection`, with `ACTION_SET_TEXT` and then clipboard paste as fallbacks.
+3. Password edits stay in the masked local buffer until `DONE`, when one full replacement is attempted. Clipboard paste is forbidden for password fields, and a failed injection does not submit.
 5. Echo-suppression: `isRecentSelfEcho` ignores text-change events within `INJECTION_ECHO_IGNORE_WINDOW_MS = 600 ms`.
 
 DONE:
-- `performDirectInjection` (final) → `dispatchActionDone` which does `ACTION_CLICK` (fallback `ACTION_NEXT_AT_MOVEMENT_GRANULARITY`) then `dismissOverlay` after 250 ms.
+- `dispatchImeAction` prefers the editor's input-connection action, then `ACTION_IME_ENTER` for Search/Send/Go/Done or next-element/focus traversal for Next. Unknown actions fall back to `ACTION_CLICK`; successful submissions dismiss after 250 ms.
 
-### 1c. Key design shortcuts / debt
+### 1c. Key design shortcuts / debt (pre-milestone-5 snapshot; see updated pipeline above)
 
 1. **Whole-buffer resend on every keystroke.** Each tap re-writes the *entire* field via `ACTION_SET_TEXT`. On Chrome, WebView, React Native and password managers this can:
   - Trigger repeated on-change handlers (validation, autocomplete, network calls)
@@ -217,6 +216,8 @@ fun dispatchImeAction() {
 - For password fields (`metadata.isPassword`), **defer injection to Enter**: type into overlay buffer only, inject the full text once on `DONE`. This eliminates per-keystroke autofill probing and shortens the plaintext window in accessibility logs.
 - Add `FLAG_SECURE` on the overlay window when `isPassword == true` to block screenshots.
 - Do not put password text on the clipboard fallback path — fail closed instead.
+
+Milestone 5 implements the focus, action, mode-memory and password safeguards above. Mode memory is stored as `keyboard_mode_by_package` in `LauncherSettingsStore` (DataStore), rather than the SharedPreferences proposed in §3f, and can be reset from Input settings. Physical Chrome/WhatsApp and screenshot acceptance still require device testing.
 
 ### 3h. Consistent HCI polish
 

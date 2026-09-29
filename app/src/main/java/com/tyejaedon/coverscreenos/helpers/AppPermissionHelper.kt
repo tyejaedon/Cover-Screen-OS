@@ -12,8 +12,9 @@ import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
-import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
+import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
+import com.tyejaedon.coverscreenos.services.overlay.CoverAccessibilityService
 
 object AppPermissionHelper {
 
@@ -28,10 +29,6 @@ object AppPermissionHelper {
             context,
             Manifest.permission.POST_NOTIFICATIONS
         ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    fun canDrawOverlays(context: Context): Boolean {
-        return Settings.canDrawOverlays(context)
     }
 
     fun galleryMediaPermissionsToRequest(): Array<String> {
@@ -49,6 +46,10 @@ object AppPermissionHelper {
     }
 
     fun isAccessibilityServiceEnabled(context: Context): Boolean {
+        return isAccessibilityServiceEnabled(context, CoverAccessibilityService::class.java)
+    }
+
+    fun isInputAccessibilityServiceEnabled(context: Context): Boolean {
         return isAccessibilityServiceEnabled(context, CoverInputAccessibilityService::class.java)
     }
 
@@ -80,13 +81,6 @@ object AppPermissionHelper {
 
         val targetService = ComponentName(context, serviceClass).flattenToString()
         return enabledServices.split(':').any { it.equals(targetService, ignoreCase = true) }
-    }
-
-    fun createOverlaySettingsIntent(context: Context): Intent {
-        return Intent(
-            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            "package:${context.packageName}".toUri()
-        )
     }
 
     fun createAccessibilitySettingsIntent(): Intent {

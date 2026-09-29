@@ -15,14 +15,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BatterySaver
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Accessibility
-import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +33,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
@@ -49,6 +52,13 @@ private data class PermissionRequirementUiModel(
 
 private const val PERMISSION_SCREEN_LOG_TAG = "PermissionScreen"
 
+internal fun areRequiredPermissionsGranted(
+    notification: Boolean,
+    accessibility: Boolean,
+    notificationListener: Boolean,
+    batteryExemption: Boolean
+): Boolean = notification && accessibility && notificationListener && batteryExemption
+
 @Composable
 fun PermissionScreen(
     modifier: Modifier = Modifier,
@@ -56,12 +66,15 @@ fun PermissionScreen(
     grantedContent: @Composable () -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var hasNotificationPermission by remember {
         mutableStateOf(AppPermissionHelper.hasNotificationPermission(context))
     }
-    var hasOverlayPermission by remember { mutableStateOf(AppPermissionHelper.canDrawOverlays(context)) }
     var hasAccessibilityPermission by remember {
         mutableStateOf(AppPermissionHelper.isAccessibilityServiceEnabled(context))
+    }
+    var hasInputAccessibilityPermission by remember {
+        mutableStateOf(AppPermissionHelper.isInputAccessibilityServiceEnabled(context))
     }
     var hasNotificationListenerPermission by remember {
         mutableStateOf(AppPermissionHelper.isNotificationListenerEnabled(context))
@@ -78,12 +91,10 @@ fun PermissionScreen(
     var isForegroundServiceRunning by remember {
         mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning())
     }
-    var hasTriggeredGrantedCallback by remember { mutableStateOf(false) }
-
     fun refreshPermissionState() {
         hasNotificationPermission = AppPermissionHelper.hasNotificationPermission(context)
-        hasOverlayPermission = AppPermissionHelper.canDrawOverlays(context)
         hasAccessibilityPermission = AppPermissionHelper.isAccessibilityServiceEnabled(context)
+        hasInputAccessibilityPermission = AppPermissionHelper.isInputAccessibilityServiceEnabled(context)
         hasNotificationListenerPermission = AppPermissionHelper.isNotificationListenerEnabled(context)
         hasBatteryOptimizationExemption = AppPermissionHelper.isBatteryOptimizationDisabled(context)
         hasGalleryMediaPermission = AppPermissionHelper.hasGalleryMediaPermissions(context)
@@ -91,16 +102,18 @@ fun PermissionScreen(
         isForegroundServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning()
     }
 
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshPermissionState()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val requestNotificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         hasNotificationPermission = isGranted
-    }
-
-    val openOverlaySettingsLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        refreshPermissionState()
     }
 
     val openAccessibilitySettingsLauncher = rememberLauncherForActivityResult(
@@ -139,10 +152,12 @@ fun PermissionScreen(
         refreshPermissionState()
     }
 
-    val allPermissionsGranted = hasNotificationPermission &&
-        hasOverlayPermission &&
-        hasAccessibilityPermission &&
-        hasNotificationListenerPermission
+    val allPermissionsGranted = areRequiredPermissionsGranted(
+        notification = hasNotificationPermission,
+        accessibility = hasAccessibilityPermission,
+        notificationListener = hasNotificationListenerPermission,
+        batteryExemption = hasBatteryOptimizationExemption
+    )
 
     /**
      * Launches a system settings screen defensively. Some OEM/enterprise builds omit individual
@@ -164,10 +179,7 @@ fun PermissionScreen(
     }
 
     LaunchedEffect(allPermissionsGranted) {
-        if (allPermissionsGranted && !hasTriggeredGrantedCallback) {
-            hasTriggeredGrantedCallback = true
-            onPermissionsGranted()
-        }
+        if (allPermissionsGranted) onPermissionsGranted()
     }
 
     if (allPermissionsGranted) {
@@ -187,21 +199,8 @@ fun PermissionScreen(
             }
         ),
         PermissionRequirementUiModel(
-            title = "Appear on top",
-            details = "Allows TYPE_APPLICATION_OVERLAY windows to draw over other apps.",
-            granted = hasOverlayPermission,
-            actionLabel = "Open overlay settings",
-            icon = Icons.Filled.Layers,
-            onAction = {
-                launchSettingsSafely(
-                    launcher = openOverlaySettingsLauncher,
-                    intent = AppPermissionHelper.createOverlaySettingsIntent(context)
-                )
-            }
-        ),
-        PermissionRequirementUiModel(
-            title = "Accessibility service",
-            details = "Lets the app react to window and navigation events needed for cover control.",
+            title = "Cover Screen OS Launcher accessibility",
+            details = "Enable Cover Screen OS Launcher in Accessibility settings to host the cover launcher.",
             granted = hasAccessibilityPermission,
             actionLabel = "Open accessibility settings",
             icon = Icons.Filled.Accessibility,
@@ -214,7 +213,7 @@ fun PermissionScreen(
         ),
         PermissionRequirementUiModel(
             title = "Notification access service",
-                details = "Required for notification listener callbacks used by home screen runtime checks.",
+            details = "Required for notification listener callbacks used by home screen runtime checks.",
             granted = hasNotificationListenerPermission,
             actionLabel = "Open notification access settings",
             icon = Icons.Filled.Notifications,
@@ -227,7 +226,7 @@ fun PermissionScreen(
         ),
         PermissionRequirementUiModel(
             title = "Battery optimization",
-                details = "Recommended: exclude this app from battery optimization to improve home screen reliability.",
+            details = "Exclude this app from battery optimization to keep the launcher running reliably.",
             granted = hasBatteryOptimizationExemption,
             actionLabel = "Open battery optimization settings",
             icon = Icons.Filled.BatterySaver,
@@ -286,11 +285,27 @@ fun PermissionScreen(
             }
 
             PermissionRequirementCard(
+                title = "Cover keyboard input service (recommended)",
+                details = "Separate from the launcher service. Enable Cover Screen OS in Accessibility settings for the cover keyboard fallback and text injection.",
+                granted = hasInputAccessibilityPermission,
+                actionLabel = "Open accessibility settings",
+                icon = Icons.Filled.Accessibility,
+                optional = true,
+                onAction = {
+                    launchSettingsSafely(
+                        launcher = openAccessibilitySettingsLauncher,
+                        intent = AppPermissionHelper.createAccessibilitySettingsIntent()
+                    )
+                }
+            )
+
+            PermissionRequirementCard(
                 title = "Selected photos access (optional)",
                 details = "Optional: grant limited selected-photos access if your OEM picker needs it for wallpaper imports.",
                 granted = hasGalleryMediaPermission,
                 actionLabel = "Grant selected photos access",
                 icon = Icons.Filled.PhotoLibrary,
+                optional = true,
                 onAction = {
                     requestGalleryMediaPermissionLauncher.launch(
                         AppPermissionHelper.galleryMediaPermissionsToRequest()
@@ -304,6 +319,7 @@ fun PermissionScreen(
                 granted = hasMicrophonePermission,
                 actionLabel = "Grant microphone permission",
                 icon = Icons.Filled.Mic,
+                optional = true,
                 onAction = {
                     requestMicrophonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 }

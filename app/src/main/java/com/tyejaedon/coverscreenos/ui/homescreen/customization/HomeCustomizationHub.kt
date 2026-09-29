@@ -43,7 +43,6 @@ import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
-import com.tyejaedon.coverscreenos.services.overlay.OverlayHostMode
 import com.tyejaedon.coverscreenos.ui.settings.DockAppPickerDialog
 import com.tyejaedon.coverscreenos.ui.settings.LauncherSettingsHeaderCard
 import com.tyejaedon.coverscreenos.ui.settings.SettingsQuickMenuCard
@@ -109,9 +108,6 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
     var keyboardStrategyPreview by remember(settings.keyboardStrategy) {
         mutableStateOf(settings.keyboardStrategy)
     }
-    var overlayHostModePreview by remember(settings.overlayHostMode) {
-        mutableStateOf(settings.overlayHostMode)
-    }
     var keyboardCapabilityRefreshNonce by remember { mutableIntStateOf(0) }
 
     var activeDockSlotIndex by remember { mutableStateOf<Int?>(null) }
@@ -176,7 +172,6 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                 dockFilledCount = dockFilledCount,
                 wallpaperSummary = wallpaperSummary,
                 themePreference = themePreferencePreview,
-                overlayHostMode = overlayHostModePreview,
                 onPanelSelected = { selectedPanel -> activePanel = selectedPanel },
                 onResetRequested = { showResetConfirmDialog = true }
             )
@@ -212,13 +207,6 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                     settingsStore.setThemePreference(selectedPreference)
                 }
             },
-            overlayHostMode = overlayHostModePreview,
-            onOverlayHostModeSelected = { selectedMode ->
-                overlayHostModePreview = selectedMode
-                scope.launch {
-                    settingsStore.setOverlayHostMode(selectedMode)
-                }
-            },
             keyboardStrategy = keyboardStrategyPreview,
             onKeyboardStrategySelected = { selectedStrategy ->
                 keyboardStrategyPreview = selectedStrategy
@@ -251,6 +239,12 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                     }
                 }
                 keyboardCapabilityRefreshNonce += 1
+            },
+            onResetSavedKeyboardModes = {
+                scope.launch {
+                    settingsStore.clearSavedKeyboardModes()
+                    snackbarHostState.showSnackbar("Saved keyboard preferences reset")
+                }
             },
             capabilityRefreshNonce = keyboardCapabilityRefreshNonce,
             wallpaperUri = settings.wallpaperUri,
@@ -344,7 +338,6 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                             isDockVisible = settings.isDockVisible,
                             themePreference = themePreferencePreview,
                             keyboardStrategy = keyboardStrategyPreview,
-                            overlayHostMode = overlayHostModePreview
                         )
 
                         showResetConfirmDialog = false
@@ -383,7 +376,6 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                                     .coerceIn(MIN_WALLPAPER_BLUR_RADIUS_DP, MAX_WALLPAPER_BLUR_RADIUS_DP)
                                 themePreferencePreview = launcherSnapshotBeforeReset.themePreference
                                 keyboardStrategyPreview = launcherSnapshotBeforeReset.keyboardStrategy
-                                overlayHostModePreview = launcherSnapshotBeforeReset.overlayHostMode
                             }
                         }
                     }
@@ -394,4 +386,3 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
         )
     }
 }
-

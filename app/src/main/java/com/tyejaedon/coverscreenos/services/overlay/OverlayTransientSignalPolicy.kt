@@ -31,7 +31,7 @@ internal class OverlayTransientSignalPolicy(
     fun shouldResumeOverlayForPackage(packageName: String, launchedPackage: String?, appPackageName: String): Boolean {
         if (launchedPackage != null && packageName == launchedPackage) return false
         // Do NOT treat our own package as a "user is back on our launcher" signal.
-        // Our launcher/keyboard/media panels are TYPE_APPLICATION_OVERLAY windows
+        // Our launcher/keyboard/media panels are accessibility overlay windows
         // that emit accessibility window events under our own package name. If we
         // resumed on those, adding the cover keyboard would immediately un-suppress
         // the launcher overlay and paint it on top of the app the user just launched.
@@ -81,4 +81,3 @@ internal class OverlayTransientSignalPolicy(
         return systemUiAgeMs <= transientExitPatternWindowMs && aodAgeMs <= transientExitPatternWindowMs
     }
 }
-

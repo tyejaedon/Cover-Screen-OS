@@ -1,6 +1,7 @@
 package com.tyejaedon.coverscreenos.overlay.surface
 
 import android.content.Context
+import android.view.Gravity
 import android.view.WindowManager
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -24,7 +25,7 @@ class CoverComposeSurfaceTest {
     fun `initial state is detached with no active display`() {
         val surface = CoverComposeSurface(
             hostContext = appContext,
-            windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             logTag = TAG
         )
         assertFalse(surface.isAttached())
@@ -35,7 +36,7 @@ class CoverComposeSurfaceTest {
     fun `detach on unattached surface is a safe no-op`() {
         val surface = CoverComposeSurface(
             hostContext = appContext,
-            windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             logTag = TAG
         )
         // Should not throw.
@@ -48,7 +49,7 @@ class CoverComposeSurfaceTest {
     fun `setTouchable before attach does not throw and is deferred`() {
         val surface = CoverComposeSurface(
             hostContext = appContext,
-            windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             logTag = TAG
         )
         // Should be a safe no-op prior to attach.
@@ -57,9 +58,42 @@ class CoverComposeSurfaceTest {
         assertFalse(surface.isAttached())
     }
 
+    @Test
+    fun `keyboard window config preserves wrap content bottom and outside touch flags`() {
+        val keyboard = CoverSurfaceWindowConfig(
+            height = WindowManager.LayoutParams.WRAP_CONTENT,
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+            extraFlags = WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+        )
+        assertEquals(WindowManager.LayoutParams.WRAP_CONTENT, keyboard.height)
+        assertEquals(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL, keyboard.gravity)
+        assertTrue(keyboard.flags(false) and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH != 0)
+        assertTrue(keyboard.flags(true) and WindowManager.LayoutParams.FLAG_SECURE != 0)
+        assertEquals(0, keyboard.flags(false) and WindowManager.LayoutParams.FLAG_SECURE)
+
+        val launcher = CoverSurfaceWindowConfig()
+        assertEquals(WindowManager.LayoutParams.MATCH_PARENT, launcher.height)
+        assertEquals(0, launcher.flags(false) and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+    }
+
+    @Test
+    fun `secure flag is deferred until attach and cleared on detach`() {
+        val surface = CoverComposeSurface(
+            hostContext = appContext,
+            windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            logTag = TAG
+        )
+        assertTrue(surface.setSecure(true))
+        assertTrue(surface.secureRequestedForTest())
+        surface.detach()
+        assertFalse(surface.secureRequestedForTest())
+        assertTrue(surface.setSecure(false))
+        assertFalse(surface.secureRequestedForTest())
+    }
+
     /**
      * Asserts the AndroidX savedstate 1.4.0 ordering contract that
-     * [CoverComposeSurface.SurfaceLifecycleOwner] must uphold: `performRestore`
+     * [CoverComposeSurface.CoverSurfaceLifecycleOwner] must uphold: `performRestore`
      * runs while the lifecycle is INITIALIZED, so by the time observers
      * receive ON_CREATE the `SavedStateRegistry` is already restored and
      * downstream consumers (`consumeRestoredStateForKey`) succeed.
@@ -68,8 +102,8 @@ class CoverComposeSurfaceTest {
      * event dispatch.
      */
     @Test
-    fun `SurfaceLifecycleOwner restores saved state before dispatching ON_CREATE`() {
-        val owner = CoverComposeSurface.SurfaceLifecycleOwner()
+    fun `CoverSurfaceLifecycleOwner restores saved state before dispatching ON_CREATE`() {
+        val owner = CoverComposeSurface.CoverSurfaceLifecycleOwner()
 
         // After construction (init { performAttach; performRestore }) but
         // before any lifecycle events, the registry is already restored.
@@ -80,7 +114,7 @@ class CoverComposeSurfaceTest {
 
         val samples = mutableListOf<EventSample>()
         owner.lifecycle.addObserver(LifecycleEventObserver { source, event ->
-            val consumer = source as CoverComposeSurface.SurfaceLifecycleOwner
+            val consumer = source as CoverComposeSurface.CoverSurfaceLifecycleOwner
             samples += EventSample(event, consumer.savedStateRegistry.isRestored)
         })
 

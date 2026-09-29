@@ -8,28 +8,23 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.hardware.display.DisplayManager
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.text.InputType
 import android.util.Log
-import android.view.Display
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -58,6 +53,8 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,34 +62,41 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.ViewModelStore
-import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.setViewTreeLifecycleOwner
-import androidx.lifecycle.setViewTreeViewModelStoreOwner
-import androidx.savedstate.SavedStateRegistry
-import androidx.savedstate.SavedStateRegistryController
-import androidx.savedstate.SavedStateRegistryOwner
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverCompactQwertyKeyboard
-import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9PredictionToggle
+import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9SuggestionStrip
+import com.tyejaedon.coverscreenos.ui.keyboard.previousWordLength
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.HapticTier
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberHapticPerformer
+import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
+import com.tyejaedon.coverscreenos.overlay.surface.CoverComposeSurface
+import com.tyejaedon.coverscreenos.overlay.surface.CoverSurfaceWindowConfig
 import com.tyejaedon.coverscreenos.services.CallPackageMatchers
 import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.TextBuffer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -106,15 +110,12 @@ private const val ACTION_THROTTLE_MS = 300L
 private const val FOREGROUND_EVENT_REFRESH_MIN_INTERVAL_MS = 250L
 private const val RECLAIM_STABILITY_DEBOUNCE_MS = 1_500L
 private const val RECENT_USER_APP_GUARD_MS = 2_000L
-// Window during which WINDOW_STATE_CHANGED events on the cover display are
-// treated as "our own overlay attaching" instead of "focus lost". Chosen to
-// comfortably cover the observed 250-350 ms tail between addView and the
-// resulting a11y event.
-private const val FIELD_FOCUS_GRACE_MS = 750L
-// How long to wait before acting on an apparent focus loss. Gives the target app time to
-// settle after transient window churn; any real focus event arriving inside this window
-// cancels the dismissal outright.
-private const val FOCUS_LOSS_CONFIRM_DELAY_MS = 450L
+// Content changes during the first 1.5 s after attach extend a pending focus-loss hold.
+private const val FIELD_FOCUS_GRACE_MS = 1_500L
+// Require the target editor to be absent continuously for this long after a non-editable
+// focus event from its own package.
+private const val FOCUS_LOSS_CONFIRM_DELAY_MS = 400L
+private const val FOCUS_LOSS_POLL_MS = 50L
 // Upper bound used when clearing an editor through the InputConnection and the
 // extracted-text length is unavailable. Comfortably exceeds any realistic field.
 private const val INPUT_CONNECTION_CLEAR_SPAN = 5_000
@@ -167,7 +168,10 @@ data class CoverFieldMetadata(
     val isPassword: Boolean = false,
     val isPhoneNumber: Boolean = false,
     val isMultiLine: Boolean = false,
+    val imeAction: Int = EditorInfo.IME_ACTION_UNSPECIFIED,
     val initialText: String = "",
+    val selectionStart: Int = -1,
+    val selectionEnd: Int = -1,
     val boundsInScreen: Rect = Rect()
 ) {
     companion object {
@@ -176,7 +180,6 @@ data class CoverFieldMetadata(
 
             val inputType = node.inputType
             val inputClass = inputType and InputType.TYPE_MASK_CLASS
-            val variation = inputType and InputType.TYPE_MASK_VARIATION
 
             val isNumericClass = inputClass == InputType.TYPE_CLASS_NUMBER ||
                 inputClass == InputType.TYPE_CLASS_PHONE ||
@@ -184,11 +187,7 @@ data class CoverFieldMetadata(
 
             val isPhoneClass = inputClass == InputType.TYPE_CLASS_PHONE
 
-            val isPasswordField = variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD ||
-                variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
-                variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
-                variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
-                node.isPassword
+            val isPasswordField = isPasswordInputType(inputType) || node.isPassword
 
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
@@ -201,11 +200,108 @@ data class CoverFieldMetadata(
                 isPassword = isPasswordField,
                 isPhoneNumber = isPhoneClass,
                 isMultiLine = node.isMultiLine,
+                imeAction = resolveImeAction(node.extras, inputType, node.isMultiLine),
                 initialText = node.text?.toString() ?: "",
+                selectionStart = node.textSelectionStart,
+                selectionEnd = node.textSelectionEnd,
                 boundsInScreen = bounds
             )
         }
     }
+}
+
+internal fun isPasswordInputType(inputType: Int): Boolean {
+    val inputClass = inputType and InputType.TYPE_MASK_CLASS
+    val variation = inputType and InputType.TYPE_MASK_VARIATION
+    return (inputClass == InputType.TYPE_CLASS_NUMBER &&
+        variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD) ||
+        (inputClass == InputType.TYPE_CLASS_TEXT && variation in setOf(
+            InputType.TYPE_TEXT_VARIATION_PASSWORD,
+            InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+            InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+        ))
+}
+
+internal fun resolveImeAction(extras: Bundle?, inputType: Int, isMultiLine: Boolean): Int {
+    val keys = arrayOf(
+        "imeOptions",
+        "android.view.inputmethod.EditorInfo.IME_OPTIONS",
+        "android.view.accessibility.AccessibilityNodeInfo.IME_OPTIONS",
+        "android.view.accessibility.AccessibilityNodeInfo.IME_ACTION"
+    )
+    for (key in keys) {
+        val value = extras?.get(key)
+        val option = when (value) {
+            is Int -> value
+            is String -> value.toIntOrNull()
+            else -> null
+        } ?: continue
+        val action = option and EditorInfo.IME_MASK_ACTION
+        if (action in EditorInfo.IME_ACTION_GO..EditorInfo.IME_ACTION_DONE) return action
+    }
+    return when {
+        isMultiLine || inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE != 0 ->
+            EditorInfo.IME_ACTION_NONE
+        inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_TEXT &&
+            inputType and InputType.TYPE_MASK_VARIATION == InputType.TYPE_TEXT_VARIATION_URI ->
+            EditorInfo.IME_ACTION_GO
+        inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_TEXT &&
+            inputType and InputType.TYPE_MASK_VARIATION == InputType.TYPE_TEXT_VARIATION_SHORT_MESSAGE ->
+            EditorInfo.IME_ACTION_SEND
+        else -> EditorInfo.IME_ACTION_DONE
+    }
+}
+
+internal fun compatibleKeyboardMode(
+    metadata: CoverFieldMetadata,
+    saved: CoverKeyboardMode?
+): CoverKeyboardMode = when {
+    metadata.isNumeric || metadata.isPhoneNumber || metadata.isPassword -> CoverKeyboardMode.NUMERIC_PIN
+    else -> saved ?: CoverKeyboardMode.T9_MULTITAP
+}
+
+internal class FocusLossGate {
+    private var candidateSinceMs: Long? = null
+    private var absentSinceMs: Long? = null
+    var isArmed: Boolean = false
+        private set
+
+    fun onEditableFocus() {
+        isArmed = false
+        candidateSinceMs = null
+        absentSinceMs = null
+    }
+
+    fun onNonEditableFocus(nowMs: Long) {
+        if (isArmed) return
+        isArmed = true
+        candidateSinceMs = nowMs
+        absentSinceMs = null
+    }
+
+    fun onContentChurn(nowMs: Long) {
+        if (isArmed && candidateSinceMs?.let { nowMs - it < FIELD_FOCUS_GRACE_MS } == true) {
+            absentSinceMs = null
+        }
+    }
+
+    fun shouldDismiss(nowMs: Long, targetMissing: Boolean): Boolean {
+        if (!isArmed) return false
+        if (!targetMissing) {
+            absentSinceMs = null
+            return false
+        }
+        val since = absentSinceMs ?: nowMs.also { absentSinceMs = it }
+        return nowMs - since >= FOCUS_LOSS_CONFIRM_DELAY_MS
+    }
+}
+
+internal fun accessibilityActionForIme(action: Int): Int = when (action and EditorInfo.IME_MASK_ACTION) {
+    EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_SEARCH,
+    EditorInfo.IME_ACTION_SEND, EditorInfo.IME_ACTION_DONE ->
+        AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id
+    EditorInfo.IME_ACTION_NEXT -> AccessibilityNodeInfo.ACTION_NEXT_HTML_ELEMENT
+    else -> AccessibilityNodeInfo.ACTION_CLICK
 }
 
 data class CoverInputSessionState(
@@ -213,6 +309,8 @@ data class CoverInputSessionState(
     val buffer: String = "",
     val cursorPosition: Int = 0,
     val keyboardMode: CoverKeyboardMode = CoverKeyboardMode.NUMERIC_PIN,
+    val isT9Predictive: Boolean = false,
+    val t9PredictiveDigits: String = "",
     val metadata: CoverFieldMetadata = CoverFieldMetadata(),
     val isInjecting: Boolean = false,
     val lastStatusMessage: String = "Ready",
@@ -226,6 +324,12 @@ object CoverInputSessionManager {
 
     private var activeAccessibilityService: CoverInputAccessibilityService? = null
     private var overlayManager: CoverKeyboardOverlayManager? = null
+    private var settingsStore: LauncherSettingsStore? = null
+    private var settingsScope: CoroutineScope? = null
+    private var settingsJob: Job? = null
+    private val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var savedModes: Map<String, CoverKeyboardMode> = emptyMap()
+    private var modeChosenThisSession = false
 
     /**
      * Adapter that translates a [BufferDelta] into a minimal injection call
@@ -266,8 +370,27 @@ object CoverInputSessionManager {
 
     fun bindService(service: CoverInputAccessibilityService) {
         activeAccessibilityService = service
-        overlayManager = CoverKeyboardOverlayManager(service.applicationContext)
+        overlayManager = CoverKeyboardOverlayManager(service)
         injectionTarget = AccessibilityServiceInjectionTarget(service)
+        settingsStore = LauncherSettingsStore(service.applicationContext)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        settingsScope = scope
+        settingsJob = scope.launch {
+            settingsStore?.settings?.collect { settings ->
+                savedModes = settings.keyboardModeByPackage
+                val current = _sessionState.value
+                if (current.isActive && !modeChosenThisSession &&
+                    current.metadata.packageName.isNotBlank() &&
+                    current.buffer == current.metadata.initialText
+                ) {
+                    _sessionState.value = current.copy(
+                        keyboardMode = compatibleKeyboardMode(
+                            current.metadata, savedModes[current.metadata.packageName]
+                        )
+                    )
+                }
+            }
+        }
     }
 
     fun unbindService() {
@@ -276,6 +399,12 @@ object CoverInputSessionManager {
         overlayManager = null
         activeAccessibilityService = null
         injectionTarget = null
+        settingsJob?.cancel()
+        settingsScope?.coroutineContext?.get(Job)?.cancel()
+        settingsJob = null
+        settingsScope = null
+        settingsStore = null
+        savedModes = emptyMap()
     }
 
     /**
@@ -294,9 +423,58 @@ object CoverInputSessionManager {
         injectionTarget = null
         textBuffer = TextBuffer.Empty
         _sessionState.value = CoverInputSessionState()
+        savedModes = emptyMap()
+    }
+
+    internal fun setSavedModesForTest(modes: Map<String, CoverKeyboardMode>) {
+        savedModes = modes
     }
 
     fun onFieldFocused(metadata: CoverFieldMetadata) {
+        val current = _sessionState.value
+        if (current.isActive &&
+            current.metadata.packageName == metadata.packageName &&
+            current.metadata.viewIdResourceName == metadata.viewIdResourceName &&
+            current.metadata.boundsInScreen == metadata.boundsInScreen &&
+            current.metadata.hintText == metadata.hintText &&
+            current.metadata.isNumeric == metadata.isNumeric &&
+            current.metadata.isPhoneNumber == metadata.isPhoneNumber &&
+            current.metadata.isPassword == metadata.isPassword
+        ) {
+            activeAccessibilityService?.cancelPendingFocusLossVerification()
+            if (!metadata.isPassword) {
+                injectionLock.withLock {
+                    val state = _sessionState.value
+                    val observedText = metadata.initialText
+                    val recentOldEcho = lastInjectionTimestamp > 0L &&
+                        SystemClock.elapsedRealtime() - lastInjectionTimestamp < INJECTION_ECHO_IGNORE_WINDOW_MS &&
+                        observedText == state.metadata.initialText &&
+                        lastInjectedText == state.buffer
+                    if (!recentOldEcho) {
+                        val changedText = observedText != state.buffer
+                        val selection = metadata.observedSelection(observedText)
+                            ?: if (changedText) observedText.length..observedText.length
+                            else textBuffer.selection
+                        if (changedText || selection != textBuffer.selection) {
+                            textBuffer = TextBuffer(observedText, selection, composing = null)
+                            if (changedText) {
+                                lastInjectedText = observedText
+                                lastInjectionTimestamp = 0L
+                                Log.d(TAG, "Focused editor changed externally; resetting local buffer")
+                            }
+                            _sessionState.value = state.copy(
+                                buffer = observedText,
+                                cursorPosition = selection.first,
+                                metadata = metadata,
+                                t9PredictiveDigits = "",
+                                lastStatusMessage = if (changedText) "Field updated" else state.lastStatusMessage
+                            )
+                        }
+                    }
+                }
+            }
+            return
+        }
         // If the user previously relinquished control to their default IME for
         // this same package, honour that choice and stay out of the way. Focus
         // in any *other* package resets the opt-out so the cover keyboard can
@@ -312,27 +490,40 @@ object CoverInputSessionManager {
             return
         }
 
-        val defaultMode = when {
-            metadata.isNumeric || metadata.isPhoneNumber || metadata.isPassword -> CoverKeyboardMode.NUMERIC_PIN
-            else -> CoverKeyboardMode.T9_MULTITAP
-        }
+        val defaultMode = compatibleKeyboardMode(metadata, savedModes[metadata.packageName])
 
+        modeChosenThisSession = false
+        val initialBuffer = if (metadata.isPassword) "" else metadata.initialText
+        val initialSelection = if (metadata.isPassword) null else metadata.observedSelection(initialBuffer)
+        val selection = initialSelection ?: initialBuffer.length..initialBuffer.length
         _sessionState.value = CoverInputSessionState(
             isActive = true,
-            buffer = metadata.initialText,
-            cursorPosition = metadata.initialText.length,
+            buffer = initialBuffer,
+            cursorPosition = selection.first,
             keyboardMode = defaultMode,
             metadata = metadata,
             lastStatusMessage = "Attached to ${cleanAppLabel(metadata.packageName)}"
         )
         textBuffer = TextBuffer(
-            text = metadata.initialText,
-            selection = metadata.initialText.length..metadata.initialText.length,
+            text = initialBuffer,
+            selection = selection,
             composing = null
         )
+        lastInjectedText = if (metadata.isPassword) null else metadata.initialText
+        lastInjectionTimestamp = 0L
 
-        overlayManager?.showOverlay()
+        activeAccessibilityService?.cancelPendingFocusLossVerification()
+        if (overlayManager?.showOverlay(metadata.isPassword) == false) {
+            dismissOverlay(reason = "Keyboard surface attach failed")
+        }
     }
+
+    private fun CoverFieldMetadata.observedSelection(text: String): IntRange? =
+        if (selectionStart in 0..text.length && selectionEnd in selectionStart..text.length) {
+            selectionStart..selectionEnd
+        } else {
+            null
+        }
 
     fun onFieldLostFocus(reason: String = "unknown") {
         dismissOverlay(reason = "Field lost focus ($reason)")
@@ -349,19 +540,127 @@ object CoverInputSessionManager {
     }
 
     fun appendText(text: String) {
+        if (_sessionState.value.t9PredictiveDigits.isNotEmpty()) {
+            _sessionState.value = _sessionState.value.copy(
+                lastStatusMessage = "Choose a prediction before typing further"
+            )
+            return
+        }
         applyDelta(TextDelta.Insert(text))
     }
 
     fun replacePreviousChar(char: Char) {
+        if (_sessionState.value.t9PredictiveDigits.isNotEmpty()) {
+            _sessionState.value = _sessionState.value.copy(
+                lastStatusMessage = "Choose a prediction before typing further"
+            )
+            return
+        }
         applyDelta(TextDelta.ReplacePreviousChar(char))
     }
 
     fun deleteBackward() {
+        val state = _sessionState.value
+        if (state.t9PredictiveDigits.isNotEmpty()) {
+            _sessionState.value = state.copy(t9PredictiveDigits = state.t9PredictiveDigits.dropLast(1))
+            return
+        }
         applyDelta(TextDelta.Backspace())
     }
 
     fun clearBuffer() {
+        _sessionState.value = _sessionState.value.copy(t9PredictiveDigits = "")
         applyDelta(TextDelta.Clear)
+    }
+
+    fun setT9Predictive(enabled: Boolean) {
+        val state = _sessionState.value
+        if (!state.isActive || state.keyboardMode != CoverKeyboardMode.T9_MULTITAP ||
+            state.metadata.isPassword || state.metadata.isNumeric || state.metadata.isPhoneNumber
+        ) {
+            Log.w(TAG, "Predictive T9 unavailable for this field")
+            return
+        }
+        if (state.isT9Predictive == enabled) return
+        if (enabled && textBuffer.text.take(textBuffer.selection.first).lastOrNull()?.isLetter() == true) {
+            _sessionState.value = state.copy(lastStatusMessage = "Finish this word before predictive T9")
+            return
+        }
+        val discarded = !enabled && state.t9PredictiveDigits.isNotEmpty()
+        if (discarded) {
+            Log.w(TAG, "Discarding uncommitted predictive digits on mode change")
+        }
+        _sessionState.value = state.copy(
+            isT9Predictive = enabled,
+            t9PredictiveDigits = "",
+            lastStatusMessage = when {
+                discarded -> "Uncommitted prediction discarded"
+                enabled -> "Predictive T9 ready"
+                else -> "Multi-tap T9 ready"
+            }
+        )
+    }
+
+    fun tapPredictiveDigit(digit: Char) {
+        val state = _sessionState.value
+        if (!state.isActive || !state.isT9Predictive || digit !in '2'..'9') {
+            Log.w(TAG, "Predictive T9 digit rejected")
+            return
+        }
+        if (state.t9PredictiveDigits.length >= 32) {
+            _sessionState.value = state.copy(lastStatusMessage = "Prediction is too long")
+            return
+        }
+        val digits = state.t9PredictiveDigits + digit
+        _sessionState.value = state.copy(
+            t9PredictiveDigits = digits,
+            lastStatusMessage = "Choose a prediction"
+        )
+    }
+
+    fun deletePreviousWord() {
+        val beforeCaret = textBuffer.text.take(textBuffer.selection.first)
+        val count = previousWordLength(beforeCaret)
+        if (count > 0) applyDelta(TextDelta.Backspace(count))
+    }
+
+    fun commitCandidate(candidate: String) {
+        val state = _sessionState.value
+        if (!state.isActive || state.metadata.isPassword ||
+            state.metadata.isNumeric || state.metadata.isPhoneNumber
+        ) {
+            Log.w(TAG, "Candidate commit unavailable for this field")
+            return
+        }
+        if (candidate.isBlank()) {
+            Log.w(TAG, "Empty candidate rejected")
+            return
+        }
+        if (state.t9PredictiveDigits.isNotEmpty()) {
+            applyDelta(TextDelta.Commit(candidate))
+            _sessionState.value = _sessionState.value.copy(t9PredictiveDigits = "")
+        } else {
+            applyDelta(TextDelta.CommitCurrentWord(candidate))
+        }
+    }
+
+    fun moveCursor(delta: Int) {
+        injectionLock.withLock {
+            val state = _sessionState.value
+            if (!state.isActive || delta == 0) return@withLock
+            val next = (textBuffer.selection.first + delta).coerceIn(0, textBuffer.text.length)
+            if (next == textBuffer.selection.first) return@withLock
+            val service = activeAccessibilityService
+            if (service != null && !service.moveCursorInFocusedField(next)) {
+                _sessionState.value = state.copy(
+                    lastStatusMessage = "This field cannot move the cursor",
+                    isSuccessFeedback = false
+                )
+                return@withLock
+            }
+            textBuffer = textBuffer.withCaret(next)
+            _sessionState.value = state.copy(cursorPosition = next)
+        }
     }
 
     /**
@@ -394,6 +693,7 @@ object CoverInputSessionManager {
                 is TextDelta.Backspace -> before.backspace(delta.count)
                 TextDelta.Clear -> TextBuffer.Empty
                 is TextDelta.Commit -> before.commit(delta.text)
+                is TextDelta.CommitCurrentWord -> before.commitCurrentWord(delta.text)
             }
 
             // Fast path: buffer unchanged (e.g. backspace at position 0).
@@ -410,12 +710,43 @@ object CoverInputSessionManager {
                 isSuccessFeedback = false
             )
 
-            performDeltaInjection(before.text, after.text, newCaret)
+            if (!_sessionState.value.metadata.isPassword) {
+                performDeltaInjection(before.text, after.text, newCaret)
+            }
         }
     }
 
     fun switchMode(mode: CoverKeyboardMode) {
-        _sessionState.value = _sessionState.value.copy(keyboardMode = mode)
+        val current = _sessionState.value
+        if (!current.isActive) return
+        val compatible = compatibleKeyboardMode(current.metadata, mode)
+        val discardedPrediction = current.t9PredictiveDigits.isNotEmpty() &&
+            compatible != CoverKeyboardMode.T9_MULTITAP
+        if (discardedPrediction) Log.w(TAG, "Discarding uncommitted predictive digits on mode switch")
+        _sessionState.value = current.copy(
+            keyboardMode = compatible,
+            isT9Predictive = current.isT9Predictive && compatible == CoverKeyboardMode.T9_MULTITAP,
+            t9PredictiveDigits = if (compatible == CoverKeyboardMode.T9_MULTITAP) {
+                current.t9PredictiveDigits
+            } else {
+                ""
+            },
+            lastStatusMessage = if (discardedPrediction) "Uncommitted prediction discarded"
+                else current.lastStatusMessage
+        )
+        modeChosenThisSession = true
+        val packageName = current.metadata.packageName
+        if (packageName.isNotBlank() && mode == compatible &&
+            !current.metadata.isNumeric && !current.metadata.isPhoneNumber &&
+            !current.metadata.isPassword
+        ) {
+            savedModes = savedModes + (packageName to compatible)
+            val store = settingsStore
+            if (store != null) persistenceScope.launch {
+                runCatching { store.setKeyboardModeForPackage(packageName, compatible) }
+                    .onFailure { Log.w(TAG, "Failed to save keyboard preference", it) }
+            }
+        }
     }
 
     /**
@@ -436,25 +767,55 @@ object CoverInputSessionManager {
 
     fun commitAndFinish() {
         val state = _sessionState.value
-        // A commit is the final delta of the session: it ensures the target
-        // is in sync with the overlay's buffer even if some intermediate
-        // deltas failed (e.g. a transient InputConnection unavailability).
-        injectionLock.withLock {
-            performDeltaInjection(
-                oldText = lastInjectedText ?: state.buffer,
-                newText = state.buffer,
-                newCaret = state.cursorPosition
+        if (!state.isActive) return
+        if (state.t9PredictiveDigits.isNotEmpty()) {
+            _sessionState.value = state.copy(
+                lastStatusMessage = "Choose a prediction before finishing",
+                isSuccessFeedback = false
             )
+            return
+        }
+        if (state.metadata.isPassword) {
+            val delta = BufferDelta.compute(
+                state.metadata.initialText, state.buffer, state.cursorPosition
+            )
+            val method = if (delta.isNoOp) InjectionMethod.ACTION_SET_TEXT
+                else injectionLock.withLock {
+                    injectionTarget?.applyDelta(delta) ?: InjectionMethod.NONE
+                }
+            if (method == InjectionMethod.NONE || method == InjectionMethod.ACTION_PASTE_CLIPBOARD) {
+                _sessionState.value = state.copy(
+                    lastStatusMessage = "Secure input failed; text was not submitted",
+                    isSuccessFeedback = false
+                )
+                Log.w(TAG, "Secure input failed for ${state.metadata.packageName}")
+                return
+            }
+        } else {
+            // The last delta reconciles an interrupted non-secure session.
+            val result = injectionLock.withLock {
+                performDeltaInjection(
+                    oldText = lastInjectedText ?: state.buffer,
+                    newText = state.buffer,
+                    newCaret = state.cursorPosition
+                )
+            }
+            if (result == InjectionMethod.NONE) return
         }
         injectionTarget?.dispatchDone() ?: activeAccessibilityService?.dispatchActionDone()
 
-        _sessionState.value = state.copy(
+        val latest = _sessionState.value
+        if (!latest.isActive || latest.metadata != state.metadata || latest.buffer != state.buffer) {
+            return
+        }
+        val completedState = latest.copy(
             lastStatusMessage = "Injected successfully",
             isSuccessFeedback = true
         )
+        _sessionState.value = completedState
 
         Handler(Looper.getMainLooper()).postDelayed({
-            dismissOverlay(reason = "Input finished")
+            if (_sessionState.value === completedState) dismissOverlay(reason = "Input finished")
         }, 250L)
     }
 
@@ -475,25 +836,30 @@ object CoverInputSessionManager {
 
     fun isRecentSelfEcho(text: String): Boolean {
         val elapsed = SystemClock.elapsedRealtime() - lastInjectionTimestamp
-        return elapsed < INJECTION_ECHO_IGNORE_WINDOW_MS && text == lastInjectedText
+        return lastInjectionTimestamp > 0L &&
+            elapsed < INJECTION_ECHO_IGNORE_WINDOW_MS && text == lastInjectedText
     }
 
-    private fun performDeltaInjection(oldText: String, newText: String, newCaret: Int) {
-        lastInjectedText = newText
-        lastInjectionTimestamp = SystemClock.elapsedRealtime()
-
+    private fun performDeltaInjection(oldText: String, newText: String, newCaret: Int): InjectionMethod? {
+        val delta = BufferDelta.compute(old = lastInjectedText ?: oldText, new = newText, newCaret = newCaret)
+        if (delta.isNoOp) {
+            // Caret-only movement, or no real content change. No injection required.
+            return null
+        }
         val target = injectionTarget
         if (target == null) {
             Log.w(TAG, "Cannot inject text: injection target not bound")
-            return
-        }
-
-        val delta = BufferDelta.compute(old = oldText, new = newText, newCaret = newCaret)
-        if (delta.isNoOp) {
-            // Caret-only movement, or no real content change. No injection required.
-            return
+            _sessionState.value = _sessionState.value.copy(
+                lastStatusMessage = "This field blocks external input",
+                isSuccessFeedback = false
+            )
+            return InjectionMethod.NONE
         }
         val method = target.applyDelta(delta)
+        if (method != InjectionMethod.NONE) {
+            lastInjectedText = newText
+            lastInjectionTimestamp = SystemClock.elapsedRealtime()
+        }
         _sessionState.value = _sessionState.value.copy(
             isSuccessFeedback = method != InjectionMethod.NONE,
             lastStatusMessage = when (method) {
@@ -509,6 +875,7 @@ object CoverInputSessionManager {
                 "All injection channels failed for '${_sessionState.value.metadata.packageName}'"
             )
         }
+        return method
     }
 
     private fun cleanAppLabel(packageName: String): String {
@@ -613,6 +980,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
     private var fieldFocusClaimedAtMs: Long = 0L
     private val focusLossHandler = Handler(Looper.getMainLooper())
     private var pendingFocusLossCheck: Runnable? = null
+    private val focusLossGate = FocusLossGate()
 
     /**
      * Defers a dismissal until we can confirm, across every window on every display, that
@@ -623,43 +991,33 @@ class CoverInputAccessibilityService : AccessibilityService() {
      * keyboard away mid-session.
      */
     fun scheduleFocusLossVerification(reason: String) {
-        cancelPendingFocusLossVerification()
-        val check = Runnable {
-            pendingFocusLossCheck = null
-            if (hasEditableFocusOutsideOwnPackage()) {
-                Log.d(TAG, "Focus-loss check ('$reason') cancelled: editable field still focused")
-                return@Runnable
+        if (!CoverInputSessionManager.sessionState.value.isActive || !focusLossGate.isArmed) return
+        pendingFocusLossCheck?.let { focusLossHandler.removeCallbacks(it) }
+        pendingFocusLossCheck = null
+        val check = object : Runnable {
+            override fun run() {
+                pendingFocusLossCheck = null
+                val now = SystemClock.elapsedRealtime()
+                val targetMissing = resolveTargetInputNode(requireInputFocus = true) == null
+                if (focusLossGate.shouldDismiss(now, targetMissing)) {
+                    Log.d(TAG, "focus_loss result=dismiss reason=$reason targetMissing=true holdMs=$FOCUS_LOSS_CONFIRM_DELAY_MS")
+                    focusLossGate.onEditableFocus()
+                    CoverInputSessionManager.onFieldLostFocus(reason)
+                } else if (focusLossGate.isArmed && CoverInputSessionManager.sessionState.value.isActive) {
+                    Log.d(TAG, "focus_loss result=retain reason=$reason targetMissing=$targetMissing")
+                    focusLossHandler.postDelayed(this, FOCUS_LOSS_POLL_MS)
+                    pendingFocusLossCheck = this
+                }
             }
-            CoverInputSessionManager.onFieldLostFocus(reason)
         }
         pendingFocusLossCheck = check
-        focusLossHandler.postDelayed(check, FOCUS_LOSS_CONFIRM_DELAY_MS)
+        focusLossHandler.post(check)
     }
 
     fun cancelPendingFocusLossVerification() {
         pendingFocusLossCheck?.let { focusLossHandler.removeCallbacks(it) }
         pendingFocusLossCheck = null
-    }
-
-    /** True when any window not owned by us still reports an editable input-focused node. */
-    private fun hasEditableFocusOutsideOwnPackage(): Boolean {
-        val ownPackage = this.packageName
-        val windowList = runCatching { windows }.getOrNull().orEmpty()
-        for (window in windowList) {
-            val root = runCatching { window.root }.getOrNull() ?: continue
-            if (root.packageName?.toString() == ownPackage) continue
-            val focused = runCatching {
-                root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            }.getOrNull()
-            if (focused != null && focused.isEditable) return true
-        }
-
-        val root = rootInActiveWindow ?: return false
-        if (root.packageName?.toString() == ownPackage) return false
-        val focused = runCatching {
-            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        }.getOrNull()
-        return focused != null && focused.isEditable
+        focusLossGate.onEditableFocus()
     }
 
     override fun onServiceConnected() {
@@ -671,7 +1029,8 @@ class CoverInputAccessibilityService : AccessibilityService() {
                 AccessibilityEvent.TYPE_VIEW_CLICKED or
                 AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                AccessibilityEvent.TYPE_WINDOWS_CHANGED
+                AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
@@ -709,34 +1068,13 @@ class CoverInputAccessibilityService : AccessibilityService() {
 
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> handleTextChangedEvent(event)
 
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                // Ignore window-state events that originate from our own package
-                // (the cover launcher overlay, the cover keyboard overlay, and
-                // any other TYPE_APPLICATION_OVERLAY we own). Otherwise adding
-                // the keyboard triggers WINDOW_STATE_CHANGED -> "no editable
-                // focus in our overlay" -> onFieldLostFocus -> hideOverlay, a
-                // self-inflicted feedback loop that flashes the keyboard for
-                // ~300 ms and then dismisses it. See CoverInputInjection log:
-                // "Dismissing cover overlay: Field lost focus".
-                if (packageName == this.packageName) return
-                // Also swallow the immediate post-focus tail so any third-party
-                // window churn (dialog/toast/ripple) inside the target app cannot
-                // yank the keyboard away in the first few hundred ms.
-                if (fieldFocusClaimedAtMs != 0L &&
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                if (packageName == CoverInputSessionManager.sessionState.value.metadata.packageName &&
+                    fieldFocusClaimedAtMs != 0L &&
                     SystemClock.elapsedRealtime() - fieldFocusClaimedAtMs < FIELD_FOCUS_GRACE_MS
                 ) {
-                    return
-                }
-                val rootNode = rootInActiveWindow
-                val currentFocus = rootNode?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                if (currentFocus == null || !currentFocus.isEditable) {
-                    // Do NOT dismiss straight away. `rootInActiveWindow` is unreliable on
-                    // multi-display devices: during transient window churn it frequently
-                    // resolves to a window that legitimately has no editable focus (a
-                    // dialog, a system window, or the other display's window) while the
-                    // user's field is still very much focused. Confirm across *all*
-                    // windows after a short delay instead.
-                    scheduleFocusLossVerification("window state changed")
+                    focusLossGate.onContentChurn(SystemClock.elapsedRealtime())
+                    Log.d(TAG, "focus_loss result=grace_reset package=$packageName")
                 }
             }
 
@@ -801,8 +1139,32 @@ class CoverInputAccessibilityService : AccessibilityService() {
         softKeyboardController.showMode = SHOW_MODE_AUTO
     }
 
+    fun moveCursorInFocusedField(position: Int): Boolean {
+        val targetPackage = CoverInputSessionManager.sessionState.value.metadata.packageName
+        val editorInfo = runCatching { inputMethod?.currentInputEditorInfo }.getOrNull()
+        val connection = runCatching { inputMethod?.currentInputConnection }.getOrNull()
+        if (connection != null && editorInfo?.packageName == targetPackage &&
+            runCatching { connection.setSelection(position, position) }.isSuccess
+        ) return true
+
+        val node = resolveTargetInputNode(requireInputFocus = true)
+        if (node == null) {
+            Log.w(TAG, "moveCursorInFocusedField: target editor unavailable")
+            return false
+        }
+        val args = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, position)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, position)
+        }
+        val performed = node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
+        if (!performed) Log.w(TAG, "moveCursorInFocusedField: target rejected selection")
+        return performed
+    }
+
     fun injectTextIntoFocusedNode(text: String): Boolean {
-        val node = resolveTargetInputNode() ?: run {
+        val node = resolveTargetInputNode(
+            requireInputFocus = CoverInputSessionManager.sessionState.value.metadata.isPassword
+        ) ?: run {
             Log.w(TAG, "injectTextIntoFocusedNode: no editable target node resolved")
             return false
         }
@@ -870,6 +1232,9 @@ class CoverInputAccessibilityService : AccessibilityService() {
      */
     internal fun applyDeltaToFocusedField(delta: BufferDelta): InjectionMethod {
         if (delta.isNoOp) return InjectionMethod.NONE
+        if (CoverInputSessionManager.sessionState.value.metadata.isPassword) {
+            return syncTextToFocusedField(delta.new)
+        }
 
         if (injectDeltaViaInputConnection(delta)) return InjectionMethod.IME_INPUT_CONNECTION
 
@@ -987,6 +1352,12 @@ class CoverInputAccessibilityService : AccessibilityService() {
      * non-null while an editor is actually focused.
      */
     fun injectViaInputConnection(text: String): Boolean {
+        if (CoverInputSessionManager.sessionState.value.metadata.isPassword) {
+            val targetPackage = CoverInputSessionManager.sessionState.value.metadata.packageName
+            if (resolveTargetInputNode(requireInputFocus = true) == null ||
+                runCatching { inputMethod?.currentInputEditorInfo?.packageName }.getOrNull() != targetPackage
+            ) return false
+        }
         val connection = runCatching { inputMethod?.currentInputConnection }
             .getOrNull()
             ?: run {
@@ -1028,6 +1399,9 @@ class CoverInputAccessibilityService : AccessibilityService() {
      * reports which one was used, so a failure to sync is always attributable.
      */
     fun syncTextToFocusedField(text: String): InjectionMethod {
+        if (CoverInputSessionManager.sessionState.value.metadata.isPassword &&
+            resolveTargetInputNode(requireInputFocus = true) == null
+        ) return InjectionMethod.NONE
         if (injectViaInputConnection(text)) return InjectionMethod.IME_INPUT_CONNECTION
         if (injectTextIntoFocusedNode(text)) return InjectionMethod.ACTION_SET_TEXT
         if (injectViaClipboard(text)) return InjectionMethod.ACTION_PASTE_CLIPBOARD
@@ -1035,7 +1409,15 @@ class CoverInputAccessibilityService : AccessibilityService() {
     }
 
     fun injectViaClipboard(text: String): Boolean {
+        if (CoverInputSessionManager.sessionState.value.metadata.isPassword) {
+            Log.w(TAG, "Clipboard fallback refused for secure field")
+            return false
+        }
         val node = resolveTargetInputNode() ?: return false
+        if (CoverFieldMetadata.fromNode(node).isPassword) {
+            Log.w(TAG, "Clipboard fallback refused for secure target node")
+            return false
+        }
         val supportsPaste = node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_PASTE }
         if (!supportsPaste) {
             Log.w(
@@ -1070,7 +1452,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
 
     /**
      * Locates the editable target field the user tapped on. On multi-display Samsung
-     * devices, once our TYPE_APPLICATION_OVERLAY keyboard is attached on display 1,
+     * devices, once our TYPE_ACCESSIBILITY_OVERLAY keyboard is attached on display 1,
      * `rootInActiveWindow` frequently resolves to our own compose overlay instead of
      * the underlying app window, causing ACTION_SET_TEXT to silently fail. To work
      * around that we:
@@ -1080,11 +1462,13 @@ class CoverInputAccessibilityService : AccessibilityService() {
      *     editable focused node (or any editable node if focus was stolen).
      *  3. Fall back to `rootInActiveWindow` as a last resort.
      */
-    private fun resolveTargetInputNode(): AccessibilityNodeInfo? {
+    private fun resolveTargetInputNode(requireInputFocus: Boolean = false): AccessibilityNodeInfo? {
+        val targetPackage = CoverInputSessionManager.sessionState.value.metadata.packageName
         val cached = targetFocusedNode
         if (cached != null &&
             runCatching { cached.refresh() }.getOrDefault(false) &&
-            cached.isEditable
+            cached.isEditable &&
+            (!requireInputFocus || (cached.isFocused && cached.packageName?.toString() == targetPackage))
         ) {
             return cached
         }
@@ -1095,6 +1479,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
             val root = runCatching { window.root }.getOrNull() ?: continue
             val pkg = root.packageName?.toString()
             if (pkg == ownPackage) continue
+            if (requireInputFocus && pkg != targetPackage) continue
 
             val focused = runCatching { root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }.getOrNull()
             if (focused != null && focused.isEditable) {
@@ -1102,7 +1487,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
                 targetFocusedNode = AccessibilityNodeInfo.obtain(focused)
                 return targetFocusedNode
             }
-            val editable = findEditableNode(root)
+            val editable = if (requireInputFocus) null else findEditableNode(root)
             if (editable != null) {
                 targetFocusedNode?.recycle()
                 targetFocusedNode = AccessibilityNodeInfo.obtain(editable)
@@ -1112,6 +1497,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
 
         val root = rootInActiveWindow ?: return null
         if (root.packageName?.toString() == ownPackage) return null
+        if (requireInputFocus && root.packageName?.toString() != targetPackage) return null
         val fallbackFocus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (fallbackFocus != null && fallbackFocus.isEditable) {
             targetFocusedNode?.recycle()
@@ -1122,31 +1508,44 @@ class CoverInputAccessibilityService : AccessibilityService() {
     }
 
     fun dispatchActionDone() {
-        // Prefer the editor action carried by the input connection: it triggers the field's
-        // real "done/search/next" handler instead of simulating a tap on the node.
+        dispatchImeAction(CoverInputSessionManager.sessionState.value.metadata.imeAction)
+    }
+
+    fun dispatchImeAction(action: Int) {
+        val resolved = action and EditorInfo.IME_MASK_ACTION
+        val actionName = when (resolved) {
+            EditorInfo.IME_ACTION_GO -> "GO"
+            EditorInfo.IME_ACTION_SEARCH -> "SEARCH"
+            EditorInfo.IME_ACTION_SEND -> "SEND"
+            EditorInfo.IME_ACTION_NEXT -> "NEXT"
+            EditorInfo.IME_ACTION_DONE -> "DONE"
+            else -> "UNSPECIFIED"
+        }
+        Log.d(TAG, "dispatchImeAction resolved=$actionName")
         val connection = runCatching { inputMethod?.currentInputConnection }.getOrNull()
-        if (connection != null) {
-            val editorAction = runCatching {
-                inputMethod?.currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
-            }.getOrNull() ?: EditorInfo.IME_ACTION_DONE
-            val action = if (editorAction == EditorInfo.IME_ACTION_NONE ||
-                editorAction == EditorInfo.IME_ACTION_UNSPECIFIED
-            ) {
-                EditorInfo.IME_ACTION_DONE
-            } else {
-                editorAction
-            }
-            if (runCatching { connection.performEditorAction(action) }.isSuccess) {
-                Log.d(TAG, "dispatchActionDone via input connection action=$action")
-                return
-            }
+        if (connection != null && resolved != EditorInfo.IME_ACTION_NONE &&
+            resolved != EditorInfo.IME_ACTION_UNSPECIFIED &&
+            runCatching { connection.performEditorAction(resolved) }.isSuccess
+        ) {
+            Log.d(TAG, "dispatchImeAction via input connection resolved=$actionName")
+            return
         }
 
         val node = resolveTargetInputNode() ?: return
-        val clickPerformed = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        if (!clickPerformed) {
-            node.performAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY)
+        val fallbackAction = accessibilityActionForIme(resolved)
+        val performed = when (fallbackAction) {
+            AccessibilityNodeInfo.ACTION_NEXT_HTML_ELEMENT -> {
+                val args = Bundle().apply {
+                    putString(AccessibilityNodeInfo.ACTION_ARGUMENT_HTML_ELEMENT_STRING, "INPUT")
+                }
+                (node.focusSearch(View.FOCUS_FORWARD)?.performAction(
+                        AccessibilityNodeInfo.ACTION_FOCUS
+                    ) == true) ||
+                    node.performAction(AccessibilityNodeInfo.ACTION_NEXT_HTML_ELEMENT, args)
+            }
+            else -> node.performAction(fallbackAction)
         }
+        Log.d(TAG, "dispatchImeAction resolved=$actionName performed=$performed")
     }
 
     private fun isCoverScreenEvent(event: AccessibilityEvent): Boolean {
@@ -1154,6 +1553,18 @@ class CoverInputAccessibilityService : AccessibilityService() {
     }
 
     private fun handleFocusOrClickEvent(event: AccessibilityEvent) {
+        val targetPackage = CoverInputSessionManager.sessionState.value.metadata.packageName
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED &&
+            CoverInputSessionManager.sessionState.value.isActive &&
+            event.packageName?.toString() == targetPackage &&
+            event.source?.isEditable == false
+        ) {
+            val now = SystemClock.elapsedRealtime()
+            focusLossGate.onNonEditableFocus(now)
+            Log.d(TAG, "focus_loss result=candidate package=$targetPackage atMs=$now")
+            scheduleFocusLossVerification("non-editable focus")
+            return
+        }
         val source = event.source ?: run {
             val root = rootInActiveWindow
             root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
@@ -1161,6 +1572,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
 
         val editableNode = findEditableNode(source)
         if (editableNode != null && editableNode.isEditable) {
+            editableNode.refresh()
             // A real editable field just took focus, so any in-flight dismissal is stale.
             cancelPendingFocusLossVerification()
 
@@ -1178,7 +1590,15 @@ class CoverInputAccessibilityService : AccessibilityService() {
 
             suppressHoneyBoardSoftKeyboard()
 
-            val metadata = CoverFieldMetadata.fromNode(editableNode)
+            val metadata = CoverFieldMetadata.fromNode(editableNode).let { fromNode ->
+                val editorInfo = runCatching { inputMethod?.currentInputEditorInfo }.getOrNull()
+                val editorAction = editorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
+                if (editorInfo?.packageName == fromNode.packageName &&
+                    editorAction != null &&
+                    editorAction in EditorInfo.IME_ACTION_GO..EditorInfo.IME_ACTION_DONE &&
+                    editableNode.extras?.containsKey("imeOptions") != true
+                ) fromNode.copy(imeAction = editorAction) else fromNode
+            }
             CoverInputSessionManager.onFieldFocused(metadata)
         }
     }
@@ -1219,7 +1639,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         if (!isWindowEvent) return
 
-        // Never let window events emitted by our own TYPE_APPLICATION_OVERLAY
+        // Never let window events emitted by our own TYPE_ACCESSIBILITY_OVERLAY
         // surfaces (cover launcher overlay, cover keyboard overlay, expanded
         // media panel, etc.) count as a foreground-app signal. Otherwise the
         // moment we addView() the cover keyboard on display 1 we would refresh
@@ -1325,168 +1745,63 @@ class CoverInputAccessibilityService : AccessibilityService() {
     }
 }
 
-class CoverKeyboardOverlayManager(private val context: Context) {
+class CoverKeyboardOverlayManager(private val context: AccessibilityService) {
 
-    private var windowManager: WindowManager? = null
-    private var overlayWindowContext: Context? = null
-    private var overlayComposeView: ComposeView? = null
-    private var isOverlayAttached = false
+    private val surface = CoverComposeSurface(
+        hostContext = context,
+        windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        logTag = TAG
+    )
+    private val displayHelper = CoverDisplayHelper(context)
+    private val windowConfig = CoverSurfaceWindowConfig(
+        height = WindowManager.LayoutParams.WRAP_CONTENT,
+        gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+        extraFlags = WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+        windowAnimations = R.style.Animation_InputMethod,
+        cutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+    )
 
-    private fun resolveCoverWindowContext(): Context {
-        val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-        val coverDisplay = displayManager.displays.firstOrNull { it.displayId == COVER_DISPLAY_ID }
-            ?: displayManager.displays.firstOrNull { it.displayId != Display.DEFAULT_DISPLAY }
-            ?: displayManager.getDisplay(Display.DEFAULT_DISPLAY)
-
-        Log.d(
-            TAG,
-            "Resolving cover keyboard overlay display: id=${coverDisplay?.displayId} name=${coverDisplay?.name}"
-        )
-
-        return if (coverDisplay != null) {
-            val displayContext = context.createDisplayContext(coverDisplay)
-            runCatching {
-                displayContext.createWindowContext(
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    Bundle()
-                )
-            }.getOrElse {
-                Log.w(TAG, "createWindowContext failed for cover display; using display context: ${it.message}")
-                displayContext
+    fun showOverlay(isPassword: Boolean = false): Boolean {
+        val display = displayHelper.getCoverDisplay()
+            ?: run {
+                Log.e(TAG, "No usable cover display available for accessibility keyboard")
+                return false
             }
-        } else {
-            context
-        }
-    }
 
-    fun showOverlay() {
-        if (isOverlayAttached) return
-
-        // Re-resolve the cover-display window context on every show so the overlay
-        // follows the currently active cover display (the accessibility service is
-        // bound once, but display availability may change over time).
-        val coverContext = resolveCoverWindowContext()
-        overlayWindowContext = coverContext
-        val wm = coverContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        windowManager = wm
-
-        val view = createComposeOverlayView(coverContext)
-        overlayComposeView = view
-
-        val layoutParams = WindowManager.LayoutParams().apply {
-            width = WindowManager.LayoutParams.MATCH_PARENT
-            height = WindowManager.LayoutParams.WRAP_CONTENT
-            type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-            format = PixelFormat.TRANSLUCENT
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            windowAnimations = R.style.Animation_InputMethod
+        if (surface.isAttached() && surface.activeDisplayId() == display.displayId) {
+            if (surface.setSecure(isPassword)) return true
+            surface.detach()
+            return false
         }
 
-        runCatching {
-            wm.addView(view, layoutParams)
-            isOverlayAttached = true
-            Log.d(
-                TAG,
-                "Cover keyboard overlay attached to display=${coverContext.display?.displayId}"
-            )
-        }.onFailure { error ->
-            Log.e(TAG, "Failed to attach cover keyboard overlay", error)
-            overlayComposeView = null
-            overlayWindowContext = null
-            windowManager = null
-        }
-    }
-
-    fun isAttached(): Boolean = isOverlayAttached
-
-    fun hideOverlay() {
-        if (!isOverlayAttached) return
-        val wm = windowManager ?: return
-        val view = overlayComposeView ?: return
-
-        runCatching {
-            wm.removeView(view)
-        }.onFailure { error ->
-            Log.e(TAG, "Error removing cover keyboard overlay", error)
-        }
-        isOverlayAttached = false
-        overlayComposeView = null
-        overlayWindowContext = null
-        windowManager = null
-    }
-
-    fun destroy() {
-        hideOverlay()
-        windowManager = null
-        overlayWindowContext = null
-    }
-
-    private fun createComposeOverlayView(viewContext: Context): ComposeView {
-        val composeView = ComposeView(viewContext).apply {
-            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-        }
-
-        val lifecycleOwner = StandaloneOverlayLifecycleOwner()
-        lifecycleOwner.performRestore(null)
-        lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-        lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_START)
-        lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
-
-        composeView.setViewTreeLifecycleOwner(lifecycleOwner)
-        composeView.setViewTreeViewModelStoreOwner(lifecycleOwner)
-        composeView.setViewTreeSavedStateRegistryOwner(lifecycleOwner)
-
-        composeView.setContent {
+        surface.detach()
+        surface.setSecure(isPassword)
+        val attached = surface.attach(
+            display = display,
+            windowConfig = windowConfig,
+            onOutsideTouch = { CoverInputSessionManager.onOutsideTouch() }
+        ) {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 CoverKeyboardOverlayRoot(
                     onDismiss = { CoverInputSessionManager.dismissOverlay("User tapped close") }
                 )
             }
         }
-
-        composeView.setOnTouchListener { view: View, event: MotionEvent ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE) {
-                view.performClick()
-                CoverInputSessionManager.onOutsideTouch()
-                true
-            } else {
-                false
-            }
+        if (!attached) {
+            surface.detach()
+            Log.e(TAG, "Failed to attach accessibility keyboard surface to display=${display.displayId}")
         }
-
-        return composeView
-    }
-}
-
-private class StandaloneOverlayLifecycleOwner :
-    LifecycleOwner,
-    ViewModelStoreOwner,
-    SavedStateRegistryOwner {
-
-    private val savedStateRegistryController = SavedStateRegistryController.create(this)
-    private val store = ViewModelStore()
-
-    override val lifecycle: Lifecycle
-        field = LifecycleRegistry(this)
-    override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
-    override val viewModelStore: ViewModelStore get() = store
-
-    init {
-        // performAttach() reads owner.lifecycle internally; the property accessors above
-        // must be resolvable before this runs, otherwise SavedStateRegistryImpl throws NPE.
-        savedStateRegistryController.performAttach()
+        return attached
     }
 
+    fun isAttached(): Boolean = surface.isAttached()
 
-    fun performRestore(savedState: Bundle?) {
-        savedStateRegistryController.performRestore(savedState)
+    fun hideOverlay() {
+        surface.detach()
     }
 
-    fun handleLifecycleEvent(event: Lifecycle.Event) {
-        lifecycle.handleLifecycleEvent(event)
+    fun destroy() {
+        surface.detach()
     }
 }
 
@@ -1496,24 +1811,17 @@ fun CoverKeyboardOverlayRoot(
     modifier: Modifier = Modifier
 ) {
     val sessionState by CoverInputSessionManager.sessionState.collectAsState()
-    val context = LocalContext.current
-
-    val triggerHaptic = remember(context) {
-        {
-            runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                    vibratorManager.defaultVibrator.vibrate(
-                        VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-                    vibrator.vibrate(20L)
-                }
-            }
-        }
-    }
+    val modeHaptic = rememberHapticPerformer(HapticTier.Strong)
+    var t9DigitTrace by remember(
+        sessionState.metadata.packageName,
+        sessionState.metadata.viewIdResourceName,
+        sessionState.metadata.boundsInScreen
+    ) { mutableStateOf("") }
+    var t9CandidateCommitCount by remember(
+        sessionState.metadata.packageName,
+        sessionState.metadata.viewIdResourceName,
+        sessionState.metadata.boundsInScreen
+    ) { mutableIntStateOf(0) }
 
     Surface(
         modifier = modifier
@@ -1535,11 +1843,12 @@ fun CoverKeyboardOverlayRoot(
                 isSuccess = sessionState.isSuccessFeedback,
                 activeMode = sessionState.keyboardMode,
                 onModeSelected = { mode ->
-                    triggerHaptic()
+                    modeHaptic()
+                    if (mode != CoverKeyboardMode.T9_MULTITAP) t9DigitTrace = ""
                     CoverInputSessionManager.switchMode(mode)
                 },
                 onUseSystemKeyboard = {
-                    triggerHaptic()
+                    modeHaptic()
                    // CoverInputSessionManager.relinquishToSystemKeyboard()
                 },
                 onDismiss = onDismiss
@@ -1555,67 +1864,102 @@ fun CoverKeyboardOverlayRoot(
                 CoverKeyboardMode.NUMERIC_PIN -> {
                     CoverNumericPinKeypad(
                         onDigit = { digit ->
-                            triggerHaptic()
                             CoverInputSessionManager.appendText(digit.toString())
                         },
                         onBackspace = {
-                            triggerHaptic()
                             CoverInputSessionManager.deleteBackward()
                         },
                         onClear = {
-                            triggerHaptic()
                             CoverInputSessionManager.clearBuffer()
                         },
                         onDone = {
-                            triggerHaptic()
                             CoverInputSessionManager.commitAndFinish()
                         }
                     )
                 }
 
                 CoverKeyboardMode.T9_MULTITAP -> {
-                    CoverT9MultiTapKeypad(
-                        onAppend = { char ->
-                            triggerHaptic()
-                            CoverInputSessionManager.appendText(char.toString())
+                    val suggestionsEnabled = !sessionState.metadata.isPassword &&
+                        !sessionState.metadata.isNumeric && !sessionState.metadata.isPhoneNumber
+                    if (suggestionsEnabled) {
+                        CoverT9PredictionToggle(
+                            isPredictive = sessionState.isT9Predictive,
+                            onModeChanged = { enabled ->
+                                CoverInputSessionManager.setT9Predictive(enabled)
+                                if (CoverInputSessionManager.sessionState.value.isT9Predictive == enabled) {
+                                    t9DigitTrace = ""
+                                    t9CandidateCommitCount++
+                                }
+                            }
+                        )
+                    }
+                    CoverT9SuggestionStrip(
+                        textBeforeCursor = sessionState.buffer.take(sessionState.cursorPosition),
+                        onCandidateCommitted = { candidate ->
+                            CoverInputSessionManager.commitCandidate(candidate)
+                            t9DigitTrace = ""
+                            t9CandidateCommitCount++
                         },
-                        onReplace = { char ->
-                            triggerHaptic()
-                            CoverInputSessionManager.replacePreviousChar(char)
-                        },
-                        onBackspace = {
-                            triggerHaptic()
-                            CoverInputSessionManager.deleteBackward()
-                        },
-                        onClear = {
-                            triggerHaptic()
-                            CoverInputSessionManager.clearBuffer()
-                        },
-                        onDone = {
-                            triggerHaptic()
-                            CoverInputSessionManager.commitAndFinish()
+                        enabled = suggestionsEnabled,
+                        predictiveDigits = if (sessionState.isT9Predictive) {
+                            sessionState.t9PredictiveDigits.takeIf { it.isNotEmpty() }
+                        } else {
+                            t9DigitTrace.takeIf { '-' in it }
                         }
                     )
+                    key(
+                        sessionState.metadata.packageName,
+                        sessionState.metadata.viewIdResourceName,
+                        sessionState.metadata.boundsInScreen,
+                        t9CandidateCommitCount
+                    ) {
+                        CoverT9MultiTapKeypad(
+                            isPredictive = sessionState.isT9Predictive,
+                            onPredictiveDigit = CoverInputSessionManager::tapPredictiveDigit,
+                            onDigitTraceChanged = { t9DigitTrace = it },
+                            onAppend = { char ->
+                                CoverInputSessionManager.appendText(char.toString())
+                            },
+                            onReplace = { char ->
+                                CoverInputSessionManager.replacePreviousChar(char)
+                            },
+                            onBackspace = {
+                                CoverInputSessionManager.deleteBackward()
+                            },
+                            onClear = {
+                                CoverInputSessionManager.clearBuffer()
+                            },
+                            onDone = {
+                                CoverInputSessionManager.commitAndFinish()
+                            }
+                        )
+                    }
                 }
 
                 CoverKeyboardMode.QWERTY -> {
                     CoverCompactQwertyKeyboard(
                         onChar = { char ->
-                            triggerHaptic()
                             CoverInputSessionManager.appendText(char.toString())
                         },
                         onBackspace = {
-                            triggerHaptic()
                             CoverInputSessionManager.deleteBackward()
                         },
                         onDone = {
-                            triggerHaptic()
                             CoverInputSessionManager.commitAndFinish()
                         },
-                        onClear ={
-                            triggerHaptic()
+                        onClear = {
                             CoverInputSessionManager.clearBuffer()
                         },
+                        imeOptions = sessionState.metadata.imeAction,
+                        textBeforeCursor = sessionState.buffer.take(sessionState.cursorPosition),
+                        onMoveCursor = { delta -> CoverInputSessionManager.moveCursor(delta) },
+                        onDeleteWord = { CoverInputSessionManager.deletePreviousWord() },
+                        onCandidateCommitted = { candidate ->
+                            CoverInputSessionManager.commitCandidate(candidate)
+                        },
+                        suggestionsEnabled = !sessionState.metadata.isPassword &&
+                            !sessionState.metadata.isNumeric &&
+                            !sessionState.metadata.isPhoneNumber,
                         modifier = Modifier
                     )
                 }
@@ -1830,7 +2174,8 @@ private fun CoverNumericPinKeypad(
                     .weight(0.85f)
                     .height(44.dp),
                 backgroundColor = Color(0xFF2A2A30),
-                onClick = onClear
+                onClick = onClear,
+                hapticTier = HapticTier.Strong
             ) {
                 Text(
                     text = "CLR",
@@ -1860,7 +2205,8 @@ private fun CoverNumericPinKeypad(
                     .height(44.dp),
                 backgroundColor = Color(0xFF2A2A30),
                 onClick = onBackspace,
-                repeating = true
+                repeating = true,
+                hapticTier = HapticTier.Standard
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Backspace,
@@ -1875,7 +2221,8 @@ private fun CoverNumericPinKeypad(
                     .weight(1.1f)
                     .height(44.dp),
                 backgroundColor = Color(0xFF10B981),
-                onClick = onDone
+                onClick = onDone,
+                hapticTier = HapticTier.Strong
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1909,6 +2256,9 @@ private val T9_KEYS = listOf(
 
 @Composable
 private fun CoverT9MultiTapKeypad(
+    isPredictive: Boolean,
+    onPredictiveDigit: (Char) -> Unit,
+    onDigitTraceChanged: (String) -> Unit,
     onAppend: (Char) -> Unit,
     onReplace: (Char) -> Unit,
     onBackspace: () -> Unit,
@@ -1918,22 +2268,37 @@ private fun CoverT9MultiTapKeypad(
     var lastTapDigit by remember { mutableStateOf<Char?>(null) }
     var lastTapTime by remember { mutableLongStateOf(0L) }
     var cycleIndex by remember { mutableStateOf(0) }
+    var digitTrace by remember { mutableStateOf("") }
 
     val handleKeyTap: (T9KeyInfo) -> Unit = { key ->
-        val now = SystemClock.elapsedRealtime()
-        val letters = key.letters.lowercase()
-
-        if (lastTapDigit == key.digit && (now - lastTapTime) < MULTI_TAP_CYCLE_TIMEOUT_MS && letters.isNotEmpty()) {
-            val nextIndex = (cycleIndex + 1) % letters.length
-            cycleIndex = nextIndex
-            lastTapTime = now
-            onReplace(letters[nextIndex])
+        if (isPredictive && key.digit in '2'..'9') {
+            onPredictiveDigit(key.digit)
         } else {
-            lastTapDigit = key.digit
-            lastTapTime = now
-            cycleIndex = 0
-            val initialChar = if (letters.isNotEmpty()) letters.first() else key.digit
-            onAppend(initialChar)
+            val now = SystemClock.elapsedRealtime()
+            val letters = key.letters.lowercase()
+
+            if (lastTapDigit == key.digit && (now - lastTapTime) < MULTI_TAP_CYCLE_TIMEOUT_MS &&
+                letters.isNotEmpty()
+            ) {
+                val nextIndex = (cycleIndex + 1) % letters.length
+                cycleIndex = nextIndex
+                lastTapTime = now
+                digitTrace = if (key.digit == '1') "" else digitTrace + key.digit
+                onDigitTraceChanged(digitTrace)
+                onReplace(letters[nextIndex])
+            } else {
+                lastTapDigit = key.digit
+                lastTapTime = now
+                cycleIndex = 0
+                digitTrace = when {
+                    key.digit == '1' -> ""
+                    digitTrace.isEmpty() -> key.digit.toString()
+                    else -> "$digitTrace-${key.digit}"
+                }
+                onDigitTraceChanged(digitTrace)
+                val initialChar = if (letters.isNotEmpty()) letters.first() else key.digit
+                onAppend(initialChar)
+            }
         }
     }
 
@@ -1986,7 +2351,13 @@ private fun CoverT9MultiTapKeypad(
                     .weight(0.75f)
                     .height(42.dp),
                 backgroundColor = Color(0xFF2A2A30),
-                onClick = onClear
+                onClick = {
+                    digitTrace = ""
+                    onDigitTraceChanged("")
+                    lastTapDigit = null
+                    onClear()
+                },
+                hapticTier = HapticTier.Strong
             ) {
                 Text("CLR", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF7043))
             }
@@ -1998,8 +2369,11 @@ private fun CoverT9MultiTapKeypad(
                 backgroundColor = Color(0xFF24242A),
                 onClick = {
                     lastTapDigit = null
+                    digitTrace = ""
+                    onDigitTraceChanged("")
                     onAppend(' ')
-                }
+                },
+                hapticTier = HapticTier.Standard
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2022,9 +2396,12 @@ private fun CoverT9MultiTapKeypad(
                 backgroundColor = Color(0xFF2A2A30),
                 onClick = {
                     lastTapDigit = null
+                    digitTrace = digitTrace.substringBeforeLast('-', missingDelimiterValue = "")
+                    onDigitTraceChanged(digitTrace)
                     onBackspace()
                 },
-                repeating = true
+                repeating = true,
+                hapticTier = HapticTier.Standard
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Backspace,
@@ -2039,7 +2416,12 @@ private fun CoverT9MultiTapKeypad(
                     .weight(1.1f)
                     .height(42.dp),
                 backgroundColor = Color(0xFF10B981),
-                onClick = onDone
+                onClick = {
+                    digitTrace = ""
+                    onDigitTraceChanged("")
+                    onDone()
+                },
+                hapticTier = HapticTier.Strong
             ) {
                 Text("ENTER", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
             }
@@ -2056,59 +2438,61 @@ private fun KeypadButton(
     repeating: Boolean = false,
     repeatInitialDelayMillis: Long = 400L,
     repeatIntervalMillis: Long = 55L,
+    hapticTier: HapticTier = HapticTier.Light,
     content: @Composable () -> Unit
 ) {
-    if (!repeating) {
-        Box(
-            modifier = modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(backgroundColor)
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center
-        ) {
-            content()
-        }
-        return
-    }
-
-    // Hold-to-repeat path: fires `onClick` once on down, then every
-    // [repeatIntervalMillis] after an initial [repeatInitialDelayMillis]
-    // delay, until the finger releases. Matches system-IME backspace
-    // behaviour (Samsung Keyboard uses ~50-60 ms cadence after ~400 ms
-    // hold).
     val callback = androidx.compose.runtime.rememberUpdatedState(onClick)
+    val performHaptic = rememberHapticPerformer(hapticTier)
     var isPressed by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        if (isPressed) 0.92f else 1f,
+        animationSpec = tween(60),
+        label = "KeypadPressScale"
+    )
+    val pressedBackground by animateColorAsState(
+        if (isPressed) lerp(backgroundColor, Color.White, 0.08f) else backgroundColor,
+        animationSpec = tween(60),
+        label = "KeypadPressColor"
+    )
 
-    androidx.compose.runtime.LaunchedEffect(repeatInitialDelayMillis, repeatIntervalMillis) {
-        androidx.compose.runtime.snapshotFlow { isPressed }
-            .collect { pressed ->
-                if (!pressed) return@collect
-                kotlinx.coroutines.delay(repeatInitialDelayMillis)
-                while (isPressed) {
-                    callback.value.invoke()
-                    kotlinx.coroutines.delay(repeatIntervalMillis)
-                }
+    androidx.compose.runtime.LaunchedEffect(isPressed, repeating, repeatInitialDelayMillis, repeatIntervalMillis) {
+        if (isPressed && repeating) {
+            kotlinx.coroutines.delay(repeatInitialDelayMillis)
+            while (isPressed) {
+                performHaptic()
+                callback.value.invoke()
+                kotlinx.coroutines.delay(repeatIntervalMillis)
             }
+        }
     }
 
     Box(
         modifier = modifier
+            .scale(scale)
             .clip(RoundedCornerShape(6.dp))
-            .background(backgroundColor)
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    isPressed = true
-                    // Fire the first click immediately on down so a quick tap
-                    // still deletes one character before the repeat cadence
-                    // kicks in.
+            .background(pressedBackground)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                onClick {
+                    performHaptic()
                     callback.value.invoke()
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        if (event.changes.none { change -> change.pressed }) {
-                            isPressed = false
-                            break
+                    true
+                }
+            }
+            .pointerInput(repeating, repeatInitialDelayMillis, repeatIntervalMillis) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    isPressed = true
+                    performHaptic()
+                    callback.value.invoke()
+                    try {
+                        var pressed = true
+                        while (pressed) {
+                            val event = awaitPointerEvent()
+                            pressed = event.changes.any { change -> change.id == down.id && change.pressed }
                         }
+                    } finally {
+                        isPressed = false
                     }
                 }
             },
@@ -2117,4 +2501,3 @@ private fun KeypadButton(
         content()
     }
 }
-

@@ -174,6 +174,29 @@ class TextBufferTest {
         assertNull(next.composing)
     }
 
+    @Test
+    fun `candidate commits over preceding word and preserves following text`() {
+        val buf = TextBuffer(text = "say helo friend", selection = 8..8)
+        val next = buf.commitCurrentWord("hello")
+        assertEquals("say hello friend", next.text)
+        assertEquals(9..9, next.selection)
+        assertNull(next.composing)
+    }
+
+    @Test
+    fun `candidate commits over composing or selected region`() {
+        val composing = TextBuffer(text = "helo!", selection = 5..5, composing = 0..4)
+        assertEquals("hello!", composing.commitCurrentWord("hello").text)
+        val selected = TextBuffer(text = "say helo", selection = 4..8)
+        assertEquals("say hello", selected.commitCurrentWord("hello").text)
+    }
+
+    @Test
+    fun `next word candidate inserts at caret`() {
+        val buf = TextBuffer(text = "hello ", selection = 6..6)
+        assertEquals("hello world", buf.commitCurrentWord("world").text)
+    }
+
     // ------------- composing survives non-overlapping edits -------------
 
     @Test
@@ -232,4 +255,3 @@ class TextBufferTest {
         assertEquals("a", next.text)
     }
 }
-
