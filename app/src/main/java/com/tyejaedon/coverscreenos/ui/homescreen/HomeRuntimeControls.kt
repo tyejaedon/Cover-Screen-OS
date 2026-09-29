@@ -33,31 +33,22 @@ import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import kotlinx.coroutines.delay
-import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 internal fun HomeRuntimeControls(
-    modifier: Modifier = Modifier,
-    refreshIntervalMs: Long = 6_000L
+    isServiceRunning: Boolean,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var isServiceRunning by remember {
-        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning())
-    }
     var lastCheckedAt by remember { mutableStateOf(currentStatusTimestamp()) }
     var lastActionFeedback by remember { mutableStateOf<String?>(null) }
 
     fun refreshServiceState() {
-        isServiceRunning = ForegroundServiceHelper.isForegroundServiceRunning()
         lastCheckedAt = currentStatusTimestamp()
     }
 
-    LaunchedEffect(refreshIntervalMs) {
-        while (true) {
-            refreshServiceState()
-            delay(refreshIntervalMs.milliseconds)
-        }
+    LaunchedEffect(isServiceRunning) {
+        refreshServiceState()
     }
 
     Card(
@@ -70,7 +61,7 @@ internal fun HomeRuntimeControls(
         ) {
             Text("Runtime controls", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Start or stop the home screen runtime. Status updates every ${refreshIntervalMs / 1000}s.",
+                text = "Start or stop the home screen runtime. Status updates when the service changes.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -137,7 +128,7 @@ internal fun HomeRuntimeControls(
                     onClick = {
                         if (isServiceRunning) {
                             ForegroundServiceHelper.stopForegroundService(context)
-                            lastActionFeedback = "Stopped service. Result: overlay runtime is now inactive."
+                            lastActionFeedback = "Stop requested. Waiting for the service to shut down."
                         } else {
                             val started = ForegroundServiceHelper.startForegroundService(context)
                             lastActionFeedback = if (started) {
@@ -169,5 +160,4 @@ private fun currentStatusTimestamp(): String {
     val formatter = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.getDefault())
     return LocalTime.now().format(formatter)
 }
-
 
