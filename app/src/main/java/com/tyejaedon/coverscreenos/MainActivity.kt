@@ -13,6 +13,7 @@ import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
 import com.tyejaedon.coverscreenos.permissions.PermissionScreen
+import com.tyejaedon.coverscreenos.ui.appshell.AppShell
 import com.tyejaedon.coverscreenos.ui.homescreen.HomeScreen
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 
@@ -26,15 +27,19 @@ class MainActivity : ComponentActivity() {
             val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
 
             CoverOSTheme(themePreference = settings.themePreference) {
-                PermissionScreen(
-                    modifier = Modifier.fillMaxSize(),
-                    onPermissionsGranted = {
-                        ForegroundServiceHelper.startForegroundService(this)
-                    },
-                    grantedContent = {
-                        HomeScreen(modifier = Modifier.fillMaxSize())
-                    }
-                )
+                if (BuildConfig.NEW_HOME_UI) {
+                    AppShell(modifier = Modifier.fillMaxSize())
+                } else {
+                    PermissionScreen(
+                        modifier = Modifier.fillMaxSize(),
+                        onPermissionsGranted = {
+                            ForegroundServiceHelper.startForegroundService(this)
+                        },
+                        grantedContent = {
+                            HomeScreen(modifier = Modifier.fillMaxSize())
+                        }
+                    )
+                }
             }
         }
     }

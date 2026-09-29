@@ -167,6 +167,15 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="coverscreenos" android:host="dashboard" />
+                <data android:scheme="coverscreenos" android:host="customize" />
+                <data android:scheme="coverscreenos" android:host="permissions" />
+                <data android:scheme="coverscreenos" android:host="about" />
+            </intent-filter>
         </activity>
     </application>
 
