@@ -129,6 +129,19 @@ data class TextBuffer(
     }
 
     /**
+     * Commits a prediction over the composing region, selected text, or the
+     * letter word immediately before the caret. Also inserts at the caret when
+     * no word is being composed (next-word suggestions).
+     */
+    fun commitCurrentWord(candidate: String): TextBuffer {
+        if (isComposing || hasSelection) return commit(candidate)
+        val caret = selection.first
+        val prefix = text.substring(0, caret)
+        val start = prefix.indexOfLast { !it.isLetter() } + 1
+        return withSelection(start, caret).commit(candidate)
+    }
+
+    /**
      * Moves the caret to [position]. [position] is clamped into
      * `0..text.length`. Clears any active selection but preserves composing.
      */
@@ -169,4 +182,3 @@ data class TextBuffer(
         val Empty = TextBuffer()
     }
 }
-

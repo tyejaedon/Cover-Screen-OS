@@ -3,6 +3,7 @@ package com.tyejaedon.coverscreenos.overlay.input
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -69,6 +70,7 @@ class CoverInputSessionManagerDeltaTest {
                 0, delta.removedLength
             )
         }
+
         assertEquals("hello", target.calls.last().new)
         // The critical property: NOT ONE injection carried the full buffer as
         // its insert payload (that was the pre-refactor behavior).
@@ -76,6 +78,69 @@ class CoverInputSessionManagerDeltaTest {
             "no delta should re-write the full accumulated buffer",
             target.calls.none { it.insert.length > 1 }
         )
+    }
+
+    @Test
+    fun `refocusing same field after autofill replaces stale local buffer and caret`() {
+        CoverInputSessionManager.appendText("helo")
+        target.calls.clear()
+
+        CoverInputSessionManager.onFieldFocused(
+            CoverFieldMetadata(
+                packageName = "com.example.test",
+                initialText = "autofilled",
+                selectionStart = 4,
+                selectionEnd = 4
+            )
+        )
+
+        assertEquals("autofilled", CoverInputSessionManager.sessionState.value.buffer)
+        assertEquals(4, CoverInputSessionManager.sessionState.value.cursorPosition)
+        assertTrue(target.calls.isEmpty())
+
+        CoverInputSessionManager.appendText("X")
+        assertEquals("autoXfilled", CoverInputSessionManager.sessionState.value.buffer)
+        assertEquals("autofilled", target.calls.single().old)
+        assertEquals(4, target.calls.single().replaceStart)
+    }
+
+    @Test
+    fun `same field tap updates selection without changing text or injecting`() {
+        CoverInputSessionManager.appendText("hello")
+        target.calls.clear()
+
+        CoverInputSessionManager.onFieldFocused(
+            CoverFieldMetadata(
+                packageName = "com.example.test",
+                initialText = "hello",
+                selectionStart = 2,
+                selectionEnd = 2
+            )
+        )
+
+        assertEquals(2, CoverInputSessionManager.sessionState.value.cursorPosition)
+        assertTrue(target.calls.isEmpty())
+        CoverInputSessionManager.appendText("!")
+        assertEquals("he!llo", CoverInputSessionManager.sessionState.value.buffer)
+    }
+
+    @Test
+    fun `password refocus does not import editor text into secure local buffer`() {
+        CoverInputSessionManager.onFieldFocused(
+            CoverFieldMetadata(packageName = "com.example.secure", isPassword = true)
+        )
+        CoverInputSessionManager.appendText("local")
+
+        CoverInputSessionManager.onFieldFocused(
+            CoverFieldMetadata(
+                packageName = "com.example.secure",
+                isPassword = true,
+                initialText = "external"
+            )
+        )
+
+        assertEquals("local", CoverInputSessionManager.sessionState.value.buffer)
+        assertTrue(target.calls.isEmpty())
     }
 
     @Test
@@ -217,6 +282,174 @@ class CoverInputSessionManagerDeltaTest {
         assertEquals("o", d.insert)
         assertEquals(0, d.removedLength)
     }
+
+    @Test
+    fun `password edits remain local until DONE and dispatch one injection`() {
+        CoverInputSessionManager.onFieldFocused(
+            CoverFieldMetadata(packageName = "com.example.secure", isPassword = true)
+        )
+        target.method = InjectionMethod.ACTION_SET_TEXT
+        "secret".forEach { CoverInputSessionManager.appendText(it.toString()) }
+        CoverInputSessionManager.deleteBackward()
+        assertTrue(target.calls.isEmpty())
+        assertEquals("secre", CoverInputSessionManager.sessionState.value.buffer)
+
+        CoverInputSessionManager.commitAndFinish()
+        assertEquals(1, target.calls.size)
+        assertEquals("secre", target.calls.single().new)
+        assertEquals(1, target.doneDispatched)
+    }
+
+    @Test
+    fun `failed password injection does not submit or use clipboard`() {
+        CoverInputSessionManager.onFieldFocused(
+            CoverFieldMetadata(packageName = "com.example.secure", isPassword = true)
+        )
+        target.method = InjectionMethod.NONE
+        CoverInputSessionManager.appendText("secret")
+        CoverInputSessionManager.commitAndFinish()
+        assertEquals(1, target.calls.size)
+        assertEquals(0, target.doneDispatched)
+        assertFalse(CoverInputSessionManager.sessionState.value.isSuccessFeedback)
+        assertTrue(CoverInputSessionManager.sessionState.value.isActive)
+    }
+
+    @Test
+    fun `saved app mode survives refocus but numeric fields force PIN`() {
+        CoverInputSessionManager.switchMode(CoverKeyboardMode.QWERTY)
+        CoverInputSessionManager.dismissOverlay("test")
+        CoverInputSessionManager.onFieldFocused(CoverFieldMetadata(packageName = "com.example.test"))
+        assertEquals(CoverKeyboardMode.QWERTY, CoverInputSessionManager.sessionState.value.keyboardMode)
+        CoverInputSessionManager.onFieldFocused(
+            CoverFieldMetadata(packageName = "com.example.test", isNumeric = true)
+        )
+        assertEquals(CoverKeyboardMode.NUMERIC_PIN, CoverInputSessionManager.sessionState.value.keyboardMode)
+        CoverInputSessionManager.switchMode(CoverKeyboardMode.QWERTY)
+        assertEquals(CoverKeyboardMode.NUMERIC_PIN, CoverInputSessionManager.sessionState.value.keyboardMode)
+        CoverInputSessionManager.onFieldFocused(CoverFieldMetadata(packageName = "com.example.test"))
+        assertEquals(CoverKeyboardMode.QWERTY, CoverInputSessionManager.sessionState.value.keyboardMode)
+    }
+
+    @Test
+    fun `NEXT action does not overwrite a newly focused field session`() {
+        target.onDone = {
+            CoverInputSessionManager.onFieldFocused(
+                CoverFieldMetadata(packageName = "com.example.test", viewIdResourceName = "second")
+            )
+        }
+        CoverInputSessionManager.appendText("first")
+        CoverInputSessionManager.commitAndFinish()
+        assertEquals("second", CoverInputSessionManager.sessionState.value.metadata.viewIdResourceName)
+        assertTrue(CoverInputSessionManager.sessionState.value.isActive)
+    }
+
+    @Test
+    fun `candidate replaces word before caret in one delta`() {
+        CoverInputSessionManager.appendText("hel")
+        target.calls.clear()
+        CoverInputSessionManager.commitCandidate("hello")
+        assertEquals("hello", CoverInputSessionManager.sessionState.value.buffer)
+        assertEquals(1, target.calls.size)
+        assertEquals("lo", target.calls.single().insert)
+        assertEquals(0, target.calls.single().removedLength)
+    }
+
+    @Test
+    fun `delete word removes word and trailing whitespace in one delta`() {
+        CoverInputSessionManager.appendText("hello there ")
+        target.calls.clear()
+        CoverInputSessionManager.deletePreviousWord()
+        assertEquals("hello ", CoverInputSessionManager.sessionState.value.buffer)
+        assertEquals(1, target.calls.size)
+        assertEquals(6, target.calls.single().removedLength)
+    }
+
+    @Test
+    fun `secure fields ignore candidate commits`() {
+        CoverInputSessionManager.onFieldFocused(
+            CoverFieldMetadata(packageName = "com.example.secure", isPassword = true)
+        )
+        CoverInputSessionManager.appendText("sec")
+        CoverInputSessionManager.commitCandidate("secret")
+        assertEquals("sec", CoverInputSessionManager.sessionState.value.buffer)
+        assertTrue(target.calls.isEmpty())
+    }
+
+    @Test
+    fun `cursor moves clamp within the active buffer`() {
+        CoverInputSessionManager.appendText("abc")
+        CoverInputSessionManager.moveCursor(-2)
+        assertEquals(1, CoverInputSessionManager.sessionState.value.cursorPosition)
+        CoverInputSessionManager.appendText("X")
+        assertEquals("aXbc", CoverInputSessionManager.sessionState.value.buffer)
+        CoverInputSessionManager.moveCursor(100)
+        assertEquals(4, CoverInputSessionManager.sessionState.value.cursorPosition)
+    }
+
+    @Test
+    fun `predictive T9 digits wait for a candidate and commit once`() {
+        CoverInputSessionManager.setT9Predictive(true)
+        assertTrue(CoverInputSessionManager.sessionState.value.isT9Predictive)
+        "43556".forEach(CoverInputSessionManager::tapPredictiveDigit)
+        assertEquals("43556", CoverInputSessionManager.sessionState.value.t9PredictiveDigits)
+        assertEquals("", CoverInputSessionManager.sessionState.value.buffer)
+        assertTrue(target.calls.isEmpty())
+
+        CoverInputSessionManager.commitCandidate("hello")
+        assertEquals("hello", CoverInputSessionManager.sessionState.value.buffer)
+        assertEquals("", CoverInputSessionManager.sessionState.value.t9PredictiveDigits)
+        assertEquals(1, target.calls.size)
+        assertEquals("hello", target.calls.single().insert)
+    }
+
+    @Test
+    fun `pending predictive digits backspace locally and block submission`() {
+        CoverInputSessionManager.setT9Predictive(true)
+        CoverInputSessionManager.tapPredictiveDigit('4')
+        CoverInputSessionManager.tapPredictiveDigit('3')
+        CoverInputSessionManager.deleteBackward()
+        assertEquals("4", CoverInputSessionManager.sessionState.value.t9PredictiveDigits)
+        assertTrue(target.calls.isEmpty())
+        CoverInputSessionManager.appendText(" ")
+        CoverInputSessionManager.commitAndFinish()
+        assertEquals("", CoverInputSessionManager.sessionState.value.buffer)
+        assertEquals(0, target.doneDispatched)
+        CoverInputSessionManager.deleteBackward()
+        assertEquals("", CoverInputSessionManager.sessionState.value.t9PredictiveDigits)
+    }
+
+    @Test
+    fun `predictive T9 cannot activate on password or numeric fields`() {
+        CoverInputSessionManager.onFieldFocused(
+            CoverFieldMetadata(packageName = "com.example.secure", isPassword = true)
+        )
+        CoverInputSessionManager.setT9Predictive(true)
+        CoverInputSessionManager.tapPredictiveDigit('4')
+        assertFalse(CoverInputSessionManager.sessionState.value.isT9Predictive)
+        assertEquals("", CoverInputSessionManager.sessionState.value.t9PredictiveDigits)
+        CoverInputSessionManager.onFieldFocused(
+            CoverFieldMetadata(packageName = "com.example.secure", isNumeric = true)
+        )
+        CoverInputSessionManager.setT9Predictive(true)
+        assertFalse(CoverInputSessionManager.sessionState.value.isT9Predictive)
+    }
+
+    @Test
+    fun `DONE retries failed injection and does not submit if it still fails`() {
+        target.method = InjectionMethod.NONE
+        CoverInputSessionManager.appendText("hello")
+        CoverInputSessionManager.commitAndFinish()
+        assertEquals(2, target.calls.size)
+        assertEquals("hello", target.calls.last().insert)
+        assertEquals(0, target.doneDispatched)
+        assertTrue(CoverInputSessionManager.sessionState.value.isActive)
+
+        target.method = InjectionMethod.ACTION_SET_TEXT
+        CoverInputSessionManager.commitAndFinish()
+        assertEquals(3, target.calls.size)
+        assertEquals("hello", target.calls.last().insert)
+        assertEquals(1, target.doneDispatched)
+    }
 }
 
 /**
@@ -227,14 +460,16 @@ class CoverInputSessionManagerDeltaTest {
 private class RecordingInjectionTarget : TextInjectionTarget {
     val calls: MutableList<BufferDelta> = mutableListOf()
     var doneDispatched: Int = 0
+    var method: InjectionMethod = InjectionMethod.IME_INPUT_CONNECTION
+    var onDone: (() -> Unit)? = null
 
     override fun applyDelta(delta: BufferDelta): InjectionMethod {
         calls += delta
-        return InjectionMethod.IME_INPUT_CONNECTION
+        return method
     }
 
     override fun dispatchDone() {
         doneDispatched++
+        onDone?.invoke()
     }
 }
-

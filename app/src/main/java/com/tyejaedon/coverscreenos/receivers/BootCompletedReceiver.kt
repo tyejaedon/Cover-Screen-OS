@@ -16,9 +16,6 @@ class BootCompletedReceiver : BroadcastReceiver() {
 
         if (!shouldStart) return
 
-        if (!ForegroundServiceHelper.hasRequiredOverlayPermissions(context)) return
-
         ForegroundServiceHelper.startForegroundService(context)
     }
 }
-

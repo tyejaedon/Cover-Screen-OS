@@ -14,9 +14,8 @@ object ForegroundServiceHelper {
         return AppPermissionHelper.hasNotificationPermission(context)
     }
 
-    fun hasRequiredOverlayPermissions(context: Context): Boolean {
+    fun hasCoreOverlayPermissions(context: Context): Boolean {
         return hasNotificationPermission(context) &&
-            AppPermissionHelper.canDrawOverlays(context) &&
             AppPermissionHelper.isAccessibilityServiceEnabled(context) &&
             AppPermissionHelper.isNotificationListenerEnabled(context) &&
             AppPermissionHelper.isBatteryOptimizationDisabled(context)
@@ -25,11 +24,14 @@ object ForegroundServiceHelper {
     // Starts the foreground service using the canonical start intent.
     fun startForegroundService(context: Context): Boolean {
         val appContext = context.applicationContext
-        if (!hasRequiredOverlayPermissions(appContext)) {
+        if (!hasCoreOverlayPermissions(appContext)) {
             Log.w(LOG_TAG, "Foreground service start skipped: required permissions are missing.")
             return false
         }
-        ContextCompat.startForegroundService(appContext, ForegroundService.createStartIntent(appContext))
+        ContextCompat.startForegroundService(
+            appContext,
+            ForegroundService.createStartIntent(appContext)
+        )
         return true
     }
 

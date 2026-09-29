@@ -4,7 +4,5 @@ internal enum class HomeCustomizationPanel {
     DOCK,
     WALLPAPER,
     INPUT,
-    APPEARANCE,
-    DEVELOPER
+    APPEARANCE
 }
-

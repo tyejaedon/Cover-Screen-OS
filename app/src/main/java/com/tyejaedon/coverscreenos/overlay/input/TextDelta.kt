@@ -38,6 +38,9 @@ sealed interface TextDelta {
      * cleared afterwards.
      */
     data class Commit(val text: String) : TextDelta
+
+    /** Replace the word before the caret (or composing region) with a suggestion. */
+    data class CommitCurrentWord(val text: String) : TextDelta
 }
 
 /**
@@ -125,4 +128,3 @@ internal interface TextInjectionTarget {
     /** Dispatched by [CoverInputSessionManager.commitAndFinish]. */
     fun dispatchDone()
 }
-

@@ -53,6 +53,7 @@ internal fun InputCustomizationCard(
     onKeyboardStrategySelected: (KeyboardStrategy) -> Unit,
     onOpenKeyboardPicker: () -> Unit,
     onOpenKeyboardSettings: () -> Unit,
+    onResetSavedKeyboardModes: () -> Unit,
     capabilityRefreshNonce: Int,
     modifier: Modifier = Modifier
 ) {
@@ -205,6 +206,13 @@ internal fun InputCustomizationCard(
                 }
             }
 
+            OutlinedButton(
+                onClick = onResetSavedKeyboardModes,
+                modifier = Modifier.fillMaxWidth().coverMinimumTouchTarget()
+            ) {
+                Text("Reset saved keyboard preferences")
+            }
+
             Text(
                 "Tip: voice search requires microphone permission and works with either default strategy.",
                 style = MaterialTheme.typography.bodySmall,
@@ -336,4 +344,3 @@ private fun InputCapabilityStatusCard(
         }
     }
 }
-

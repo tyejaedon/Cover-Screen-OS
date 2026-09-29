@@ -59,11 +59,6 @@ fun HomeScreen(modifier: Modifier = Modifier) {
         refreshTicker += 1
     }
 
-    val openOverlaySettingsLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        refreshTicker += 1
-    }
     val openAccessibilitySettingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
@@ -80,9 +75,11 @@ fun HomeScreen(modifier: Modifier = Modifier) {
         refreshTicker += 1
     }
 
-    var overlayReady by remember(refreshTicker) { mutableStateOf(AppPermissionHelper.canDrawOverlays(context)) }
     var accessibilityReady by remember(refreshTicker) {
         mutableStateOf(AppPermissionHelper.isAccessibilityServiceEnabled(context))
+    }
+    var inputAccessibilityReady by remember(refreshTicker) {
+        mutableStateOf(AppPermissionHelper.isInputAccessibilityServiceEnabled(context))
     }
     var notificationReady by remember(refreshTicker) {
         mutableStateOf(AppPermissionHelper.hasNotificationPermission(context))
@@ -123,8 +120,8 @@ fun HomeScreen(modifier: Modifier = Modifier) {
 
     fun refreshStatus() {
         notificationReady = AppPermissionHelper.hasNotificationPermission(context)
-        overlayReady = AppPermissionHelper.canDrawOverlays(context)
         accessibilityReady = AppPermissionHelper.isAccessibilityServiceEnabled(context)
+        inputAccessibilityReady = AppPermissionHelper.isInputAccessibilityServiceEnabled(context)
         notificationListenerReady = AppPermissionHelper.isNotificationListenerEnabled(context)
         batteryOptimizationReady = AppPermissionHelper.isBatteryOptimizationDisabled(context)
         serviceRunning = ForegroundServiceHelper.isForegroundServiceRunning()
@@ -180,8 +177,8 @@ fun HomeScreen(modifier: Modifier = Modifier) {
 
                 HomeReadinessCard(
                     notificationReady = notificationReady,
-                    overlayReady = overlayReady,
                     accessibilityReady = accessibilityReady,
+                    inputAccessibilityReady = inputAccessibilityReady,
                     notificationListenerReady = notificationListenerReady,
                     batteryOptimizationReady = batteryOptimizationReady,
                     serviceRunning = serviceRunning,
@@ -189,15 +186,15 @@ fun HomeScreen(modifier: Modifier = Modifier) {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         requestNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     },
-                    onEnableOverlay = {
+                    onEnableAccessibility = {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         launchSettingsSafely(
-                            launcher = openOverlaySettingsLauncher,
-                            intent = AppPermissionHelper.createOverlaySettingsIntent(context),
-                            unavailableMessage = "Display-over-other-apps settings are unavailable on this device."
+                            launcher = openAccessibilitySettingsLauncher,
+                            intent = AppPermissionHelper.createAccessibilitySettingsIntent(),
+                            unavailableMessage = "Accessibility settings are unavailable on this device."
                         )
                     },
-                    onEnableAccessibility = {
+                    onEnableInputAccessibility = {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         launchSettingsSafely(
                             launcher = openAccessibilitySettingsLauncher,
@@ -270,4 +267,3 @@ fun HomeScreen(modifier: Modifier = Modifier) {
         }
     }
 }
-

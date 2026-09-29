@@ -3,7 +3,9 @@ package com.tyejaedon.coverscreenos.services.overlay
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityGestureEvent
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.Display
@@ -117,11 +119,7 @@ class CoverAccessibilityService : AccessibilityService() {
 
         // ---- Launcher hosting bridges ------------------------------------
         //
-        // Phase 3 additions consumed by [AccessibilityOverlayHost]. Each
-        // no-ops (returns `false` / `null` / does nothing) when the AS
-        // isn't currently bound so the [OverlayWindowController] façade
-        // can dispatch through the strategy without special-casing the
-        // "no live AS instance" state.
+        // No-op when the launcher accessibility service is not bound.
 
         /** @see CoverAccessibilityService.showLauncher */
         fun showLauncherOnActiveService(display: Display, forceReattach: Boolean): Boolean =
@@ -144,6 +142,20 @@ class CoverAccessibilityService : AccessibilityService() {
         /** @see CoverAccessibilityService.isLauncherAttached */
         fun isLauncherAttachedOnActiveService(): Boolean =
             activeServiceRef?.get()?.isLauncherAttached() == true
+
+        fun startActivityFromLauncherService(launchIntent: Intent, launchOptions: Bundle?): Boolean {
+            val service = activeServiceRef?.get() ?: return false
+            return try {
+                service.startActivity(launchIntent, launchOptions)
+                true
+            } catch (error: ActivityNotFoundException) {
+                Log.w(LOG_TAG, "Launcher accessibility-service launch target missing", error)
+                false
+            } catch (error: SecurityException) {
+                Log.w(LOG_TAG, "Launcher accessibility-service launch failed", error)
+                false
+            }
+        }
     }
 
     private inline fun logDebug(message: () -> String) {
@@ -180,11 +192,14 @@ class CoverAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        latestForegroundPackage = null
+        latestForegroundEventElapsedMs = 0L
         activeServiceRef = WeakReference(this)
         // Re-apply any host that was attached while the service was
         // between instances (AS disabled/enabled, app updated, etc.).
         pendingLauncherHost?.let { installLauncherHost(it) }
         logDebug { "Service connected; launcherHost=${if (launcherHost != null) "attached" else "none"}" }
+        if (launcherHost != null) ForegroundService.onLauncherAccessibilityConnected()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -198,6 +213,7 @@ class CoverAccessibilityService : AccessibilityService() {
             activeServiceRef?.clear()
             activeServiceRef = null
         }
+        ForegroundService.onLauncherAccessibilityDisconnected()
         return super.onUnbind(intent)
     }
 
@@ -240,8 +256,7 @@ class CoverAccessibilityService : AccessibilityService() {
     // ---- Phase 3: launcher hosting API -----------------------------------
     //
     // See `docs/architecture/Overlay-architecture-shift-plan.md` §5.2 / §7.
-    // Invoked via [AccessibilityOverlayHost] when the runtime
-    // [OverlayHostMode] resolves to [OverlayHostMode.ACCESSIBILITY].
+    // The foreground service invokes these methods through OverlayWindowController.
 
     /**
      * Build and attach a [CoverComposeSurface] hosting [CoverAppGridOverlay]
@@ -335,13 +350,7 @@ class CoverAccessibilityService : AccessibilityService() {
         detachLauncherSurface(reason = reason)
     }
 
-    /**
-     * Apply the same suppression UX used by the legacy path
-     * ([WindowManagerOverlayHost.suppressOverlayForLaunch]):
-     * `FLAG_NOT_TOUCHABLE` + `alpha = 0f`. Kept as an instance method so
-     * [AccessibilityOverlayHost.suppressOverlayForLaunch] doesn't need to
-     * know about [CoverComposeSurface].
-     */
+    /** Suppress touch and visibility while a cover app takes foreground focus. */
     fun setLauncherTouchable(touchable: Boolean) {
         launcherSurface?.setTouchable(touchable)
     }
@@ -369,6 +378,7 @@ class CoverAccessibilityService : AccessibilityService() {
         val isWindowEvent = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         if (!isWindowEvent) return
+        if (event.displayId != launcherActiveDisplayId()) return
 
         val foregroundPackage = event.packageName
             ?.toString()
@@ -376,8 +386,7 @@ class CoverAccessibilityService : AccessibilityService() {
             .takeUnless { it.isNullOrEmpty() }
             ?: return
 
-        // Never let window events emitted by our own TYPE_APPLICATION_OVERLAY
-        // surfaces (cover launcher / keyboard / media panel) refresh the
+        // Never let window events emitted by our own overlay surfaces refresh the
         // shared foreground-package state read by ForegroundService's resume
         // poller. Doing so would treat every keyboard attach on the cover
         // display as "user is back on our launcher", un-suppressing the cover
@@ -591,5 +600,3 @@ class CoverAccessibilityService : AccessibilityService() {
         return CallPackageMatchers.isIncomingCallPackage(packageName)
     }
 }
-
-

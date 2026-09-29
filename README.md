@@ -8,7 +8,7 @@
 
 **Cover Screen OS** is a specialized Android application designed to transform the outer cover display of clamshell foldable smartphones (such as the Samsung Galaxy Z Flip series) into a fully functional, customizable desktop environment.
 
-Since Android OEMs (like Samsung) do not natively allow replacing the cover screen's default Home App via standard system settings, Cover Screen OS operates as a **privileged system overlay**. It detects the presence of the secondary hardware display, attaches an interactive Jetpack Compose UI canvas directly to the outer screen's window manager, and acts as a gateway to launch full Android applications, render interactive widgets, and display notifications.
+Since Android OEMs (like Samsung) do not natively allow replacing the cover screen's default Home App via standard system settings, Cover Screen OS uses an **accessibility-service-hosted overlay** on the cover display by default. It detects the secondary hardware display and attaches an interactive Jetpack Compose UI to launch full Android applications, render interactive widgets, and display notifications.
 
 ---
 
@@ -30,8 +30,8 @@ v                                                   v
 +-------------------------+                         +-------------------------+
 | Hardware & State Subsys |                         | Window & Layout Subsys  |
 +-------------------------+                         +-------------------------+
-| • DisplayManager        |                         | • WindowManager         |
-|   (Target Cover Display)|                         |   (TYPE_APPLICATION_    |
+| • DisplayManager        |                         | • Accessibility service |
+|   (Target Cover Display)|                         |   (TYPE_ACCESSIBILITY_  |
 | • Jetpack WindowManager |                         |    OVERLAY)             |
 |   (Hinge / Fold State)  |                         | • Jetpack Compose       |
 | • Foreground Service    |                         |   (Cover UI Viewport)   |
@@ -80,20 +80,33 @@ v                                                   v
 | UI Framework | Jetpack Compose | Reactive layout rendering |
 | Concurrency | Coroutines & Flow | Async event processing |
 | Display API | `DisplayManager` | Detect secondary hardware display |
-| Window API | `WindowManager` | Overlay views with `TYPE_APPLICATION_OVERLAY` |
+| Window API | `WindowManager` | Overlay views with `TYPE_ACCESSIBILITY_OVERLAY` |
 | App Routing | `ActivityOptions` | Force app execution on cover display |
 | Widget Engine | `AppWidgetHost` | Embed third-party widgets |
-| Permissions | System Services | Accessibility, Notification Listener, Overlay |
+| Permissions | System Services | Accessibility, Notification Listener, Notifications, Battery exemption |
 
 ---
 
 ## 🔑 Required Permissions
 
-- `SYSTEM_ALERT_WINDOW` – Draw over other apps  
+- `POST_NOTIFICATIONS` – Persistent foreground notification (Android 13+)
 - `BIND_ACCESSIBILITY_SERVICE` – Intercept gestures  
 - `BIND_NOTIFICATION_LISTENER_SERVICE` – Read/dismiss notifications  
 - `QUERY_ALL_PACKAGES` – Build custom app drawer  
 - `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` – Prevent background killing  
+The inner-display setup screen guides users through notifications, **Cover Screen OS Launcher** accessibility, notification access, and battery exemption with per-step status checks and system-settings shortcuts. For the cover keyboard fallback, also enable the separate **Cover Screen OS** input accessibility service; the readiness screen tracks both services independently. The launcher can start without the input service when using a system IME. Upgrades ignore the former legacy-host preference, so users who previously enabled only the input service must enable the launcher service too. Neither overlay requires the Draw over other apps permission.
+
+---
+
+## Install and use the CoverScreenOS keyboard
+
+1. Install the app APK on the phone (or run the `app` configuration from Android Studio).
+2. Open Android **Settings → System → Keyboard → On-screen keyboard → Manage on-screen keyboards** and enable **CoverScreenOS Keyboard**. On Samsung phones, look under **General management → Keyboard list and default** instead.
+3. Open a text field and use the system keyboard picker (keyboard icon in the navigation bar or **Change keyboard** in the notification shade) to select **CoverScreenOS Keyboard**. To use it everywhere by default, set it as the default keyboard in the same system settings page.
+4. The keyboard starts in QWERTY for text and numeric mode for number, phone, and date/time fields. Tap **ABC**, **T9**, **123**, or **#+=** to change layouts while typing. From the keyboard's entry in Android's keyboard settings, open **Settings** to choose a separate default layout for each field class.
+
+The system IME writes through each app's `InputConnection`; it does not require accessibility-based text injection. Enabling the keyboard is separate from granting accessibility access for the cover launcher.
+Contact-name suggestions are optional and require explicit consent in keyboard Settings plus a `READ_CONTACTS` grant; turning either off disables them.
 
 ---
 

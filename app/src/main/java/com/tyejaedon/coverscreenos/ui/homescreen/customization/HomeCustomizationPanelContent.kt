@@ -4,9 +4,7 @@ import androidx.compose.runtime.Composable
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
 import com.tyejaedon.coverscreenos.datastore.ThemePreference
 import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
-import com.tyejaedon.coverscreenos.services.overlay.OverlayHostMode
 import com.tyejaedon.coverscreenos.ui.settings.AppearanceCustomizationCard
-import com.tyejaedon.coverscreenos.ui.settings.DeveloperCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.DockCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.InputCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.WallpaperCustomizationCard
@@ -22,12 +20,11 @@ internal fun HomeCustomizationPanelContent(
     onClearSlot: (Int) -> Unit,
     themePreference: ThemePreference,
     onThemePreferenceSelected: (ThemePreference) -> Unit,
-    overlayHostMode: OverlayHostMode,
-    onOverlayHostModeSelected: (OverlayHostMode) -> Unit,
     keyboardStrategy: KeyboardStrategy,
     onKeyboardStrategySelected: (KeyboardStrategy) -> Unit,
     onOpenKeyboardPicker: () -> Unit,
     onOpenKeyboardSettings: () -> Unit,
+    onResetSavedKeyboardModes: () -> Unit,
     capabilityRefreshNonce: Int,
     wallpaperUri: String?,
     wallpaperScaleMode: WallpaperScaleMode,
@@ -60,19 +57,13 @@ internal fun HomeCustomizationPanelContent(
         )
     }
 
-    if (activePanel == HomeCustomizationPanel.DEVELOPER) {
-        DeveloperCustomizationCard(
-            overlayHostMode = overlayHostMode,
-            onOverlayHostModeSelected = onOverlayHostModeSelected
-        )
-    }
-
     if (activePanel == HomeCustomizationPanel.INPUT) {
         InputCustomizationCard(
             keyboardStrategy = keyboardStrategy,
             onKeyboardStrategySelected = onKeyboardStrategySelected,
             onOpenKeyboardPicker = onOpenKeyboardPicker,
             onOpenKeyboardSettings = onOpenKeyboardSettings,
+            onResetSavedKeyboardModes = onResetSavedKeyboardModes,
             capabilityRefreshNonce = capabilityRefreshNonce
         )
     }

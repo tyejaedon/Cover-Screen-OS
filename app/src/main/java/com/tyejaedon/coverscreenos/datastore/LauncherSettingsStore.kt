@@ -24,7 +24,8 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import androidx.core.net.toUri
-import com.tyejaedon.coverscreenos.services.overlay.OverlayHostMode
+import com.tyejaedon.coverscreenos.overlay.input.CoverKeyboardMode
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -63,7 +64,7 @@ private object LauncherPreferencesKeys {
 	val dockVisible = booleanPreferencesKey("dock_visible")
 	val themePreference = stringPreferencesKey("theme_preference")
 	val keyboardStrategy = stringPreferencesKey("keyboard_strategy")
-	val overlayHostMode = stringPreferencesKey("overlay_host_mode")
+	val keyboardModeByPackage = stringPreferencesKey("keyboard_mode_by_package")
 	val dockSlots: List<Preferences.Key<String>> = List(COVER_DOCK_SLOT_COUNT) { slot ->
 		stringPreferencesKey("dock_slot_$slot")
 	}
@@ -78,7 +79,7 @@ data class LauncherSettings(
 	val isDockVisible: Boolean = true,
 	val themePreference: ThemePreference = ThemePreference.SYSTEM,
 	val keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
-	val overlayHostMode: OverlayHostMode = OverlayHostMode.DEFAULT
+	val keyboardModeByPackage: Map<String, CoverKeyboardMode> = emptyMap()
 )
 
 private const val SETTINGS_STORE_LOG_TAG = "LauncherSettingsStore"
@@ -87,6 +88,17 @@ private const val MANAGED_WALLPAPER_FILE_PREFIX = "selected_wallpaper_"
 private const val MANAGED_WALLPAPER_FILE_LEGACY = "selected_wallpaper"
 private const val MANAGED_WALLPAPER_FALLBACK_EXTENSION = ".img"
 private const val WALLPAPER_VALIDATION_TARGET_SIZE_PX = 512
+
+private fun decodeKeyboardModes(raw: String?): Map<String, CoverKeyboardMode> {
+	if (raw.isNullOrBlank()) return emptyMap()
+	return runCatching {
+		val json = JSONObject(raw)
+		json.keys().asSequence().mapNotNull { packageName ->
+			CoverKeyboardMode.entries.firstOrNull { it.name == json.optString(packageName) }
+				?.let { packageName to it }
+		}.toMap()
+	}.getOrDefault(emptyMap())
+}
 
 class LauncherSettingsStore(
 	context: Context,
@@ -105,8 +117,10 @@ class LauncherSettingsStore(
 			}
 			emit(emptyPreferences())
 		}
-		.map { preferences ->
-			runCatching {
+		.map(::mapStoredPreferences)
+
+	internal fun mapStoredPreferences(preferences: Preferences): LauncherSettings {
+		return runCatching {
 				val storedWallpaperUri = preferences[LauncherPreferencesKeys.wallpaperUri]
 					?.trim()
 					.takeUnless { it.isNullOrEmpty() }
@@ -136,15 +150,15 @@ class LauncherSettingsStore(
 					keyboardStrategy = KeyboardStrategy.fromStorageValue(
 						preferences[LauncherPreferencesKeys.keyboardStrategy]
 					),
-					overlayHostMode = OverlayHostMode.fromStorageValue(
-						preferences[LauncherPreferencesKeys.overlayHostMode]
+					keyboardModeByPackage = decodeKeyboardModes(
+						preferences[LauncherPreferencesKeys.keyboardModeByPackage]
 					)
 				)
-			}.getOrElse { error ->
-				Log.w(SETTINGS_STORE_LOG_TAG, "Failed to map settings. Falling back to defaults.", error)
-				LauncherSettings()
-			}
+		}.getOrElse { error ->
+			Log.w(SETTINGS_STORE_LOG_TAG, "Failed to map settings. Falling back to defaults.", error)
+			LauncherSettings()
 		}
+	}
 
 	suspend fun setDockPackage(slotIndex: Int, packageName: String?) {
 		require(slotIndex in 0 until COVER_DOCK_SLOT_COUNT) {
@@ -207,7 +221,6 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.dockVisible] = settings.isDockVisible
 				preferences[LauncherPreferencesKeys.themePreference] = settings.themePreference.name
 				preferences[LauncherPreferencesKeys.keyboardStrategy] = settings.keyboardStrategy.name
-				preferences[LauncherPreferencesKeys.overlayHostMode] = settings.overlayHostMode.name
 			}
 		}
 	}
@@ -275,23 +288,26 @@ class LauncherSettingsStore(
 		}
 	}
 
-	/**
-	 * Persist the launcher overlay hosting strategy (Phase 3 of the
-	 * `TYPE_ACCESSIBILITY_OVERLAY` migration — see
-	 * `docs/architecture/Overlay-architecture-shift-plan.md`).
-	 *
-	 * The next dispatch through [com.tyejaedon.coverscreenos.services.overlay.OverlayWindowController]
-	 * observes the change via the settings [Flow] and switches
-	 * host implementations without restarting the foreground service.
-	 */
-	suspend fun setOverlayHostMode(overlayHostMode: OverlayHostMode) {
+	suspend fun setKeyboardModeForPackage(packageName: String, mode: CoverKeyboardMode) {
+		if (packageName.isBlank()) return
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
-				preferences[LauncherPreferencesKeys.overlayHostMode] = overlayHostMode.name
+				val modes = decodeKeyboardModes(preferences[LauncherPreferencesKeys.keyboardModeByPackage])
+					.toMutableMap()
+				modes[packageName] = mode
+				preferences[LauncherPreferencesKeys.keyboardModeByPackage] =
+					JSONObject(modes.mapValues { it.value.name }).toString()
 			}
 		}
 	}
 
+	suspend fun clearSavedKeyboardModes() {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences.remove(LauncherPreferencesKeys.keyboardModeByPackage)
+			}
+		}
+	}
 
 	suspend fun moveDockPackage(fromIndex: Int, toIndex: Int) {
 		require(fromIndex in 0 until COVER_DOCK_SLOT_COUNT) {
@@ -920,4 +936,3 @@ class LauncherSettingsStore(
 		}
 	}
 }
-

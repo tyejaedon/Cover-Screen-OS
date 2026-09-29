@@ -9,11 +9,11 @@
         android:name="android.permission.FOREGROUND_SERVICE"
         tools:ignore="ForegroundServicePermission,ForegroundServiceType,ForegroundServicesPolicy" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- Required for haptic feedback in the cover overlay and T9 keypad. Without it the
          platform silently rejects vibrate() calls (AppOps "Operation not started ... op=VIBRATE"). -->
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -38,9 +38,6 @@
         </intent>
         <intent>
             <action android:name="android.settings.APPLICATION_DETAILS_SETTINGS" />
-        </intent>
-        <intent>
-            <action android:name="android.settings.action.MANAGE_OVERLAY_PERMISSION" />
         </intent>
         <intent>
             <action android:name="android.settings.ACCESSIBILITY_SETTINGS" />
@@ -76,6 +73,21 @@
         </service>
 
         <service
+            android:name=".services.overlay.CoverAccessibilityService"
+            android:enabled="true"
+            android:exported="true"
+            android:label="@string/launcher_accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            tools:ignore="AccessibilityPolicy">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/cover_launcher_accessibility_service" />
+        </service>
+
+        <service
             android:name=".overlay.input.CoverInputAccessibilityService"
             android:enabled="true"
             android:exported="true"
@@ -106,7 +118,7 @@
             android:name=".ime.CoverT9InputMethodService"
             android:enabled="true"
             android:exported="true"
-            android:label="@string/app_name"
+            android:label="@string/cover_t9_ime_name"
             android:permission="android.permission.BIND_INPUT_METHOD">
             <intent-filter>
                 <action android:name="android.view.InputMethod" />
@@ -116,6 +128,11 @@
                 android:name="android.view.im"
                 android:resource="@xml/cover_t9_input_method" />
         </service>
+
+        <activity
+            android:name=".ime.CoverImeSettingsActivity"
+            android:exported="true"
+            android:label="Keyboard settings" />
 
         <receiver
             android:name=".receivers.BootCompletedReceiver"

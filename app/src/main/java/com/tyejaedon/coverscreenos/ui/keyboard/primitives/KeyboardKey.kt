@@ -1,7 +1,8 @@
 package com.tyejaedon.coverscreenos.ui.keyboard.primitives
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -14,28 +15,35 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 
 /**
  * Visual + haptic + gesture colours for a [KeyboardKey].
@@ -51,7 +59,7 @@ data class KeyboardKeyColors(
         @Composable
         fun default(): KeyboardKeyColors = KeyboardKeyColors(
             idleBackground = MaterialTheme.colorScheme.surfaceVariant,
-            pressedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+            pressedBackground = lerp(MaterialTheme.colorScheme.surfaceVariant, Color.White, 0.08f),
             idleContent = MaterialTheme.colorScheme.onSurface,
             disabledBackground = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
             disabledContent = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
@@ -102,6 +110,8 @@ fun KeyboardKey(
     contentDescription: String? = label,
     enabled: Boolean = true,
     onLongPress: (() -> Unit)? = null,
+    onHorizontalDragStart: ((Float) -> Unit)? = null,
+    onHorizontalDrag: ((Float) -> Unit)? = null,
     repeatOnHold: Boolean = false,
     repeatInitialDelayMillis: Long = DefaultRepeatInitialDelayMillis,
     repeatIntervalMillis: Long = DefaultRepeatIntervalMillis,
@@ -120,86 +130,99 @@ fun KeyboardKey(
 
     val onClickState = rememberUpdatedState(onClick)
     val onLongPressState = rememberUpdatedState(onLongPress)
+    val onDragStartState = rememberUpdatedState(onHorizontalDragStart)
+    val onDragState = rememberUpdatedState(onHorizontalDrag)
+    val accessibleLabel = contentDescription ?: label.orEmpty()
 
     val scale by animateFloatAsState(
-        targetValue = if (isPressed && enabled) 0.94f else 1f,
-        animationSpec = spring(),
+        targetValue = if (isPressed && enabled) 0.92f else 1f,
+        animationSpec = tween(60),
         label = "KeyboardKeyScale"
     )
 
-    val bg = when {
+    val targetBackground = when {
         !enabled -> colors.disabledBackground
         isPressed -> colors.pressedBackground
         else -> colors.idleBackground
     }
+    val bg by animateColorAsState(targetBackground, animationSpec = tween(60), label = "KeyboardKeyColor")
     val content = if (enabled) colors.idleContent else colors.disabledContent
-
-    // Repeat + long-press coroutine, driven by press state.
-    LaunchedEffect(enabled, repeatOnHold, onLongPress != null) {
-        if (!enabled) return@LaunchedEffect
-        snapshotFlow { isPressed }.collectLatest { pressed ->
-            if (!pressed) return@collectLatest
-            var longPressFired = false
-            if (onLongPressState.value != null) {
-                delay(longPressThresholdMillis)
-                if (!isPressed) return@collectLatest
-                longPressFired = true
-                performHaptic()
-                onLongPressState.value?.invoke()
-            }
-            if (repeatOnHold && !longPressFired) {
-                delay(repeatInitialDelayMillis - longPressThresholdMillis.coerceAtMost(repeatInitialDelayMillis))
-                while (isPressed) {
-                    performHaptic()
-                    onClickState.value.invoke()
-                    delay(repeatIntervalMillis)
-                }
-            } else if (repeatOnHold && longPressFired) {
-                // Long-press consumed the initial fire; continue repeating.
-                delay(repeatIntervalMillis)
-                while (isPressed) {
-                    performHaptic()
-                    onClickState.value.invoke()
-                    delay(repeatIntervalMillis)
-                }
-            }
-        }
-    }
 
     Box(
         modifier = modifier
-            .defaultMinSize(minWidth = 40.dp, minHeight = 40.dp)
+            .defaultMinSize(minWidth = 40.dp, minHeight = 44.dp)
             .scale(scale)
             .clip(shape)
             .background(bg)
-            .padding(horizontal = 6.dp, vertical = 6.dp)
-            .pointerInput(enabled, repeatOnHold) {
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                this.contentDescription = accessibleLabel
+                if (enabled) onClick {
+                    onClickState.value.invoke()
+                    true
+                }
+            }
+            .pointerInput(enabled, repeatOnHold, onHorizontalDrag != null, onHorizontalDragStart != null,
+                longPressThresholdMillis,
+                repeatInitialDelayMillis, repeatIntervalMillis) {
                 if (!enabled) return@pointerInput
+                val scope = CoroutineScope(currentCoroutineContext())
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     isPressed = true
                     performHaptic()
-
-                    // Track finger up / cancel.
+                    var held = false
+                    var dragged = false
+                    var emitted = false
                     var released = false
-                    while (!released) {
-                        val event = awaitPointerEvent()
-                        val stillDown = event.changes.any { change -> change.pressed }
-                        if (!stillDown) {
-                            released = true
-                            val pointer = event.changes.firstOrNull { change -> !change.pressed }
-                            val wasTap = pointer?.previousPressed == true &&
-                                !pointer.isConsumed
-                            isPressed = false
-                            if (wasTap && !repeatOnHold) {
-                                // Only fire click on release when repeatOnHold
-                                // is off — repeat mode already fires clicks
-                                // during hold.
+                    var lastX = down.position.x
+                    if (repeatOnHold && onHorizontalDragStart == null) {
+                        emitted = true
+                        onClickState.value.invoke()
+                    }
+                    val holdJob: Job = scope.launch {
+                        if (repeatOnHold) {
+                            delay(repeatInitialDelayMillis)
+                            while (isPressed && !dragged) {
+                                emitted = true
+                                performHaptic()
                                 onClickState.value.invoke()
+                                delay(repeatIntervalMillis)
+                            }
+                        } else if (onLongPressState.value != null) {
+                            delay(longPressThresholdMillis)
+                            if (isPressed && !dragged) {
+                                held = true
+                                performHaptic()
+                                onLongPressState.value?.invoke()
                             }
                         }
                     }
-                    down.consume()
+                    while (!released) {
+                        val event = awaitPointerEvent()
+                        val pointer = event.changes.firstOrNull { it.id == down.id }
+                        if (pointer == null || !pointer.pressed) {
+                            released = true
+                            val wasTap = pointer?.previousPressed == true && !pointer.isConsumed
+                            isPressed = false
+                            holdJob.cancel()
+                            if (wasTap && !held && !dragged && !repeatOnHold) {
+                                onClickState.value.invoke()
+                            } else if (wasTap && !dragged && repeatOnHold && !emitted) {
+                                onClickState.value.invoke()
+                            }
+                        } else if (onHorizontalDrag != null || onHorizontalDragStart != null) {
+                            if (kotlin.math.abs(pointer.position.x - down.position.x) >= 24f) {
+                                if (!dragged) onDragStartState.value?.invoke(
+                                    pointer.position.x - down.position.x
+                                )
+                                dragged = true
+                                holdJob.cancel()
+                                onDragState.value?.invoke(pointer.position.x - lastX)
+                            }
+                            lastX = pointer.position.x
+                        }
+                    }
                 }
             },
         contentAlignment = Alignment.Center
@@ -216,7 +239,7 @@ fun KeyboardKey(
         } else if (icon != null) {
             Icon(
                 imageVector = icon,
-                contentDescription = contentDescription,
+                contentDescription = null,
                 tint = content
             )
         }
@@ -258,4 +281,3 @@ private fun KeyboardKeyAccentPreview() {
         }
     }
 }
-
