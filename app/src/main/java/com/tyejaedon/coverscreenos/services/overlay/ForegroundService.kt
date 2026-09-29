@@ -32,11 +32,44 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.lang.ref.WeakReference
 import kotlin.time.Duration.Companion.milliseconds
 
+data class OverlayEvent(val description: String, val elapsedRealtimeMs: Long)
+
+data class RuntimeSnapshot(
+    val serviceActive: Boolean = false,
+    val launcherHostActive: Boolean = false,
+    val overlayActive: Boolean = false,
+    val startedElapsedRealtimeMs: Long? = null,
+    val events: List<OverlayEvent> = emptyList()
+)
+
 class ForegroundService : Service() {
     companion object {
+        private val mutableRuntime = MutableStateFlow(RuntimeSnapshot())
+        val runtime = mutableRuntime.asStateFlow()
+
+        private fun publishRuntime(event: String? = null) {
+            val service = activeServiceRef?.get()
+            val previous = mutableRuntime.value
+            mutableRuntime.value = RuntimeSnapshot(
+                serviceActive = service != null,
+                launcherHostActive = CoverAccessibilityService.currentLauncherHost() != null,
+                overlayActive = isOverlayActive,
+                startedElapsedRealtimeMs = if (service == null) null
+                    else previous.startedElapsedRealtimeMs ?: SystemClock.elapsedRealtime(),
+                events = if (event == null) previous.events else
+                    (listOf(OverlayEvent(event, SystemClock.elapsedRealtime())) + previous.events).take(20)
+            )
+        }
+
+        fun onLauncherHostChanged() {
+            publishRuntime()
+        }
+
         private const val LOG_TAG = "CoverForegroundService"
         private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 60L
         private const val APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS = 120L
@@ -299,6 +332,7 @@ class ForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         activeServiceRef = WeakReference(this)
+        publishRuntime("Service created")
         createNotificationChannel()
 
         launchCoordinator = CoverLaunchCoordinator(
@@ -343,6 +377,7 @@ class ForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                publishRuntime("Service stopping")
                 teardownOverlayRuntime()
                 stopForegroundIfStarted()
                 stopSelf()
@@ -375,6 +410,7 @@ class ForegroundService : Service() {
 
                 clearAppLaunchSuppression()
                 overlayRequested = true
+                publishRuntime("Service started")
                 coverDisplayHelper.startLockStatusMonitoring()
                 registerDisplayListenerIfNeeded()
 
@@ -404,6 +440,7 @@ class ForegroundService : Service() {
         serviceScope.cancel() // Instantly terminates all polling and delays
         teardownOverlayRuntime()
         stopForegroundIfStarted()
+        publishRuntime("Service stopped")
         super.onDestroy()
     }
 
@@ -425,6 +462,7 @@ class ForegroundService : Service() {
         }
 
         suppressionState.markReclaimRequested(normalizedReason, nowElapsedMs)
+        publishRuntime("Overlay reclaim requested")
 
         logDebug { "request reason=$normalizedReason overlayActive=$isOverlayActive display=${overlayWindowController.getActiveDisplayId()} suppressed=$isOverlaySuppressedForAppLaunch" }
 
@@ -558,6 +596,7 @@ class ForegroundService : Service() {
         if (shouldHoldSuppressedOverlay) {
             overlayWindowController.suppressOverlayForLaunch()
             isOverlayActive = false
+            publishRuntime("Overlay hidden: cover display unavailable")
             Log.i(
                 OVERLAY_TRANSITION_LOG_TAG,
                 "$OVERLAY_MARKER_HELD_HIDDEN reason=$reason activeId=$activeId activeDisplayValid=$activeDisplayIsValid active=${coverDisplayHelper.describeDisplayState(activeId)} displays=${coverDisplayHelper.describeDisplays()}"
@@ -577,6 +616,7 @@ class ForegroundService : Service() {
             )
         }
         isOverlayActive = false
+        if (removedStaleOverlayState) publishRuntime("Overlay removed: cover display unavailable")
         logDebug {
             "overlay reason=$reason no_cover_available overlayStateCleared=true activeId=$activeId activeDisplayValid=$activeDisplayIsValid displays=${coverDisplayHelper.describeDisplays()}"
         }
@@ -588,6 +628,7 @@ class ForegroundService : Service() {
         val shouldForceRetarget = overlayWindowController.isOverlayAttached() && activeId != targetId
 
         isOverlayActive = overlayWindowController.showOverlay(targetDisplay, shouldForceRetarget)
+        publishRuntime(if (isOverlayActive) "Overlay attached" else "Overlay attachment failed")
         logDebug { "overlay reason=$reason targetId=$targetId activeId=${overlayWindowController.getActiveDisplayId()} forceRetarget=$shouldForceRetarget attached=$isOverlayActive displays=${coverDisplayHelper.describeDisplays()}" }
     }
 
@@ -625,6 +666,7 @@ class ForegroundService : Service() {
         unregisterDisplayListenerIfNeeded()
         overlayWindowController.removeOverlay()
         isOverlayActive = false
+        publishRuntime()
     }
 
     private fun prepareForOverlayAppLaunch(packageName: String): Boolean {
@@ -657,6 +699,7 @@ class ForegroundService : Service() {
         clearPendingDisplayWork()
         overlayWindowController.suppressOverlayForLaunch()
         isOverlayActive = false
+        publishRuntime("Overlay suppressed: ${reason.name.lowercase()}")
 
         startSuppressionResumePolling()
     }
