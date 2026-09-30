@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.homescreen
+package com.tyejaedon.coverscreenos.ui.deprecated
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -35,6 +35,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
+@Deprecated("Replaced by ui/dashboard, ui/customize, ui/permissions", level = DeprecationLevel.WARNING)
 internal fun HomeRuntimeControls(
     isServiceRunning: Boolean,
     modifier: Modifier = Modifier
@@ -160,4 +161,3 @@ private fun currentStatusTimestamp(): String {
     val formatter = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.getDefault())
     return LocalTime.now().format(formatter)
 }
-

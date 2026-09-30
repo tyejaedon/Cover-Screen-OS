@@ -21,10 +21,10 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("boolean", "NEW_HOME_UI", "false")
+            buildConfigField("boolean", "NEW_HOME_UI", "true")
         }
         release {
-            buildConfigField("boolean", "NEW_HOME_UI", "false")
+            buildConfigField("boolean", "NEW_HOME_UI", "true")
             optimization {
                 enable = false
             }

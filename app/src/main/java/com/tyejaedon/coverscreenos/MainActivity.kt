@@ -12,9 +12,9 @@ import androidx.compose.ui.Modifier
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
-import com.tyejaedon.coverscreenos.permissions.PermissionScreen
+import com.tyejaedon.coverscreenos.ui.deprecated.PermissionScreen
 import com.tyejaedon.coverscreenos.ui.appshell.AppShell
-import com.tyejaedon.coverscreenos.ui.homescreen.HomeScreen
+import com.tyejaedon.coverscreenos.ui.deprecated.HomeScreen
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 
 class MainActivity : ComponentActivity() {
