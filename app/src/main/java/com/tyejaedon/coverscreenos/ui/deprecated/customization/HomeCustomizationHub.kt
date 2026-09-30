@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.homescreen.customization
+package com.tyejaedon.coverscreenos.ui.deprecated.customization
 
 import android.content.Intent
 import android.provider.Settings
@@ -55,6 +55,7 @@ import kotlinx.coroutines.withContext
 private const val CUSTOMIZATION_HUB_LOG_TAG = "HomeCustomizationHub"
 
 @Composable
+@Deprecated("Replaced by ui/dashboard, ui/customize, ui/permissions", level = DeprecationLevel.WARNING)
 fun HomeCustomizationHub(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val appContext = context.applicationContext

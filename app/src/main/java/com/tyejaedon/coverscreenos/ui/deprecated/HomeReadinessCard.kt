@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.homescreen
+package com.tyejaedon.coverscreenos.ui.deprecated
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
+@Deprecated("Replaced by ui/dashboard, ui/customize, ui/permissions", level = DeprecationLevel.WARNING)
 internal fun hasFullHomeReadiness(
     notificationReady: Boolean,
     accessibilityReady: Boolean,
@@ -47,6 +48,7 @@ internal fun hasFullHomeReadiness(
     notificationListenerReady && batteryOptimizationReady && serviceRunning
 
 @Composable
+@Deprecated("Replaced by ui/dashboard, ui/customize, ui/permissions", level = DeprecationLevel.WARNING)
 internal fun HomeReadinessCard(
     notificationReady: Boolean,
     accessibilityReady: Boolean,

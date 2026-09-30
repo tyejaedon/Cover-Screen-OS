@@ -70,6 +70,7 @@ enum class AccentColor {
 private val Context.coverLauncherSettingsDataStore by preferencesDataStore(name = "cover_launcher_settings")
 
 private object LauncherPreferencesKeys {
+	val welcomeTourSeen = booleanPreferencesKey("welcome_tour_seen")
 	val wallpaperUri = stringPreferencesKey("wallpaper_uri")
 	val wallpaperScaleMode = stringPreferencesKey("wallpaper_scale_mode")
 	val wallpaperDimAmount = floatPreferencesKey("wallpaper_dim_amount")
@@ -124,6 +125,17 @@ class LauncherSettingsStore(
 	private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
 	private val appContext = context.applicationContext
+
+	val welcomeTourSeen: Flow<Boolean> = appContext.coverLauncherSettingsDataStore.data
+		.map { preferences -> preferences[LauncherPreferencesKeys.welcomeTourSeen] ?: false }
+
+	suspend fun markWelcomeTourSeen() {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences[LauncherPreferencesKeys.welcomeTourSeen] = true
+			}
+		}
+	}
 
 	val settings: Flow<LauncherSettings> = appContext.coverLauncherSettingsDataStore.data
 		.catch { throwable ->

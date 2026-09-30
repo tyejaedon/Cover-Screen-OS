@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.permissions
+package com.tyejaedon.coverscreenos.ui.deprecated
 
 import android.Manifest
 import android.content.Intent
@@ -38,6 +38,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
+import com.tyejaedon.coverscreenos.permissions.PermissionHeaderCard
+import com.tyejaedon.coverscreenos.permissions.PermissionInfoBanner
+import com.tyejaedon.coverscreenos.permissions.PermissionPriorityActionCard
+import com.tyejaedon.coverscreenos.permissions.PermissionRequirementCard
+import com.tyejaedon.coverscreenos.permissions.PermissionSupportActions
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
 import com.tyejaedon.coverscreenos.ui.theme.navbarPadding
 
@@ -52,6 +57,7 @@ private data class PermissionRequirementUiModel(
 
 private const val PERMISSION_SCREEN_LOG_TAG = "PermissionScreen"
 
+@Deprecated("Replaced by ui/dashboard, ui/customize, ui/permissions", level = DeprecationLevel.WARNING)
 internal fun areRequiredPermissionsGranted(
     notification: Boolean,
     accessibility: Boolean,
@@ -60,6 +66,7 @@ internal fun areRequiredPermissionsGranted(
 ): Boolean = notification && accessibility && notificationListener && batteryExemption
 
 @Composable
+@Deprecated("Replaced by ui/dashboard, ui/customize, ui/permissions", level = DeprecationLevel.WARNING)
 fun PermissionScreen(
     modifier: Modifier = Modifier,
     onPermissionsGranted: () -> Unit,

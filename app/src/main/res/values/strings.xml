@@ -4,6 +4,14 @@
     <string name="home_customize">Customize</string>
     <string name="home_permissions">Permissions</string>
     <string name="home_about">About</string>
+    <string name="home_tour_welcome">Welcome to the new home screen</string>
+    <string name="home_tour_dashboard">See your cover screen status and control the launcher from Dashboard.</string>
+    <string name="home_tour_customize">Personalize your wallpaper, dock, appearance, and input in Customize.</string>
+    <string name="home_tour_permissions">Review required and optional access at any time in Permissions. Existing grants are unchanged.</string>
+    <string name="home_tour_about">Find app information in About.</string>
+    <string name="home_tour_skip">Skip tour</string>
+    <string name="home_tour_next">Next</string>
+    <string name="home_tour_done">Get started</string>
     <string name="accessibility_service_description">Lets Cover Screen OS react to navigation and window changes on the cover display.</string>
     <string name="overlay_window_title">Cover Screen OS</string>
     <string name="overlay_window_subtitle">Overlay active</string>

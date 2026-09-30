@@ -1,5 +1,9 @@
 package com.tyejaedon.coverscreenos.ui.appshell
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -25,6 +29,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Text
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -51,11 +56,13 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.compose.navigation
 import androidx.navigation.navDeepLink
 import com.tyejaedon.coverscreenos.R
+import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
 import com.tyejaedon.coverscreenos.ui.permissions.PermissionsScreen
 import com.tyejaedon.coverscreenos.ui.dashboard.DashboardScreen
 import com.tyejaedon.coverscreenos.ui.dashboard.rememberDashboardState
 import com.tyejaedon.coverscreenos.ui.customize.CustomizeScreen
+import kotlinx.coroutines.launch
 
 private data class HomeTab(val route: String, @StringRes val title: Int, val icon: ImageVector)
 
@@ -65,6 +72,20 @@ private val homeTabs = listOf(
     HomeTab(HomeRoutes.Permissions, R.string.home_permissions, Icons.Default.VerifiedUser),
     HomeTab(HomeRoutes.About, R.string.home_about, Icons.Default.Info)
 )
+
+internal fun shouldShowWelcomeTour(seen: Boolean?, deepLinkLaunch: Boolean, dismissed: Boolean): Boolean =
+    seen == false && !deepLinkLaunch && !dismissed
+
+private fun isDeepLinkLaunch(context: Context): Boolean {
+    var current: Context? = context
+    while (current is ContextWrapper) {
+        if (current is Activity) {
+            return current.intent?.let { it.action == Intent.ACTION_VIEW && it.data != null } == true
+        }
+        current = current.baseContext
+    }
+    return false
+}
 
 private fun NavController.navigateToTab(route: String) {
     navigate(route) {
@@ -82,6 +103,10 @@ fun AppShell(
     floatingActionButton: @Composable () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val tourStore = remember(context) { LauncherSettingsStore(context) }
+    val tourSeen by tourStore.welcomeTourSeen.collectAsState(initial = null)
+    val deepLinkLaunch = remember(context) { isDeepLinkLaunch(context) }
+    var tourDismissed by rememberSaveable { mutableStateOf(false) }
     var permissionRefreshKey by remember { mutableIntStateOf(0) }
     val dashboardState = rememberDashboardState(permissionRefreshKey)
     val startDestination = remember {
@@ -243,6 +268,12 @@ fun AppShell(
                     }
                 }
             }
+        }
+        if (shouldShowWelcomeTour(tourSeen, deepLinkLaunch, tourDismissed)) {
+            WelcomeHomeTour(onDismiss = {
+                tourDismissed = true
+                customizeActionScope.launch { tourStore.markWelcomeTourSeen() }
+            })
         }
     }
 }

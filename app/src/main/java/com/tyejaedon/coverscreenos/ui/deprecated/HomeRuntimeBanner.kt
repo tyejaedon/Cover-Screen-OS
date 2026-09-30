@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.homescreen
+package com.tyejaedon.coverscreenos.ui.deprecated
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 @Composable
+@Deprecated("Replaced by ui/dashboard, ui/customize, ui/permissions", level = DeprecationLevel.WARNING)
 internal fun HomeRuntimeBanner(
     isServiceRunning: Boolean,
     modifier: Modifier = Modifier
@@ -118,5 +119,4 @@ internal fun HomeRuntimeBanner(
         }
     }
 }
-
 

@@ -3,6 +3,7 @@ package com.tyejaedon.coverscreenos.permissions
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.tyejaedon.coverscreenos.ui.deprecated.areRequiredPermissionsGranted
 
 class PermissionScreenRequirementsTest {
     @Test

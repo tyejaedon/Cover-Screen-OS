@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.homescreen.customization
+package com.tyejaedon.coverscreenos.ui.deprecated.customization
 
 import androidx.compose.runtime.Composable
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
@@ -10,6 +10,7 @@ import com.tyejaedon.coverscreenos.ui.settings.InputCustomizationCard
 import com.tyejaedon.coverscreenos.ui.settings.WallpaperCustomizationCard
 
 @Composable
+@Deprecated("Replaced by ui/dashboard, ui/customize, ui/permissions", level = DeprecationLevel.WARNING)
 internal fun HomeCustomizationPanelContent(
     activePanel: HomeCustomizationPanel,
     dockPackages: List<String?>,

@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.homescreen
+package com.tyejaedon.coverscreenos.ui.deprecated
 
 import android.Manifest
 import android.content.Intent
@@ -38,7 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
 import com.tyejaedon.coverscreenos.ui.dashboard.rememberDashboardState
-import com.tyejaedon.coverscreenos.ui.homescreen.customization.HomeCustomizationHub
+import com.tyejaedon.coverscreenos.ui.deprecated.customization.HomeCustomizationHub
 import com.tyejaedon.coverscreenos.ui.launcher.OverlayLayoutSpec
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
 import com.tyejaedon.coverscreenos.ui.theme.coverTopLevelSafeInsets
@@ -46,6 +46,7 @@ import com.tyejaedon.coverscreenos.ui.theme.coverTopLevelSafeInsets
 private const val HOME_SCREEN_LOG_TAG = "HomeScreen"
 
 @Composable
+@Deprecated("Replaced by ui/dashboard, ui/customize, ui/permissions", level = DeprecationLevel.WARNING)
 fun HomeScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val hapticFeedback = LocalHapticFeedback.current
