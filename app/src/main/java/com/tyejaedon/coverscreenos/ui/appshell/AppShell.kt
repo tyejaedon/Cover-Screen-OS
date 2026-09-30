@@ -2,6 +2,7 @@ package com.tyejaedon.coverscreenos.ui.appshell
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,17 +26,22 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
+import kotlin.math.abs
 import androidx.navigation.NavController
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.NavHost
@@ -46,9 +52,8 @@ import androidx.navigation.compose.navigation
 import androidx.navigation.navDeepLink
 import com.tyejaedon.coverscreenos.R
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
-import com.tyejaedon.coverscreenos.permissions.PermissionScreen
+import com.tyejaedon.coverscreenos.ui.permissions.PermissionsScreen
 import com.tyejaedon.coverscreenos.ui.dashboard.DashboardScreen
-import com.tyejaedon.coverscreenos.ui.dashboard.DashboardStatusDetails
 import com.tyejaedon.coverscreenos.ui.dashboard.rememberDashboardState
 import com.tyejaedon.coverscreenos.ui.customize.CustomizeScreen
 
@@ -73,12 +78,20 @@ private fun NavController.navigateToTab(route: String) {
 @Composable
 fun AppShell(
     modifier: Modifier = Modifier,
-    startDestination: String = HomeRoutes.Dashboard,
     topBarActions: @Composable () -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {}
 ) {
     val context = LocalContext.current
-    val dashboardState = rememberDashboardState()
+    var permissionRefreshKey by remember { mutableIntStateOf(0) }
+    val dashboardState = rememberDashboardState(permissionRefreshKey)
+    val startDestination = remember {
+        HomeRoutes.initialDestination(dashboardState.permissions.missing.isNotEmpty())
+    }
+    LaunchedEffect(dashboardState.permissions.missing.isEmpty()) {
+        if (dashboardState.permissions.missing.isEmpty() && !ForegroundServiceHelper.isForegroundServiceRunning()) {
+            ForegroundServiceHelper.startForegroundService(context)
+        }
+    }
     val navController = rememberNavController()
     val customizeActionScope = rememberCoroutineScope()
     val customizeSnackbar = remember { SnackbarHostState() }
@@ -89,7 +102,7 @@ fun AppShell(
     val destination = backStackEntry?.destination
     val selectedTab = homeTabs.firstOrNull { tab ->
         destination?.hierarchy?.any { it.route == tab.route } == true
-    } ?: homeTabs.first()
+    } ?: homeTabs.first { it.route == startDestination }
 
     BoxWithConstraints(modifier = modifier) {
         val expanded = maxWidth >= 600.dp
@@ -141,7 +154,22 @@ fun AppShell(
                 NavHost(
                     navController = navController,
                     startDestination = startDestination,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).testTag("home_tab_content")
+                        .pointerInput(selectedTab.route) {
+                            var distance = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { distance = 0f },
+                                onHorizontalDrag = { _, delta -> distance += delta },
+                                onDragEnd = {
+                                    if (abs(distance) >= 72.dp.toPx()) {
+                                        val index = homeTabs.indexOfFirst { it.route == selectedTab.route }
+                                        val next = (index + if (distance < 0) 1 else -1)
+                                            .coerceIn(0, homeTabs.lastIndex)
+                                        if (next != index) navController.navigateToTab(homeTabs[next].route)
+                                    }
+                                }
+                            )
+                        }
                 ) {
                     composable(
                         route = HomeRoutes.Dashboard,
@@ -164,14 +192,9 @@ fun AppShell(
                         route = HomeRoutes.Permissions,
                         deepLinks = listOf(navDeepLink { uriPattern = HomeRoutes.deepLink(HomeRoutes.Permissions) })
                     ) {
-                        PermissionScreen(
-                            onPermissionsGranted = {},
-                            grantedContent = {
-                                Column(Modifier.fillMaxSize().padding(24.dp)) {
-                                    Text("Required permissions ready", style = MaterialTheme.typography.titleLarge)
-                                    DashboardStatusDetails(dashboardState)
-                                }
-                            }
+                        PermissionsScreen(
+                            onContinue = { navController.navigateToTab(HomeRoutes.Dashboard) },
+                            onPermissionsChanged = { permissionRefreshKey++ }
                         )
                     }
                     navigation(
@@ -203,7 +226,9 @@ fun AppShell(
                                                 restoreState = true
                                             }
                                         }
-                                    }
+                                    },
+                                    permissions = dashboardState.permissions,
+                                    onPermissions = { navController.navigateToTab(HomeRoutes.Permissions) }
                                 )
                             }
                         }
