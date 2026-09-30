@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -39,7 +40,7 @@ fun QuickActionsRow(
 @Composable
 private fun QuickAction(label: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        FilledTonalIconButton(onClick = onClick) {
+        FilledTonalIconButton(onClick = onClick, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)) {
             Icon(icon, contentDescription = label)
         }
         Text(label, style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center)

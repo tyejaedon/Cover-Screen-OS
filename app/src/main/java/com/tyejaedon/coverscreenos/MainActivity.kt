@@ -11,10 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
-import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
-import com.tyejaedon.coverscreenos.ui.deprecated.PermissionScreen
 import com.tyejaedon.coverscreenos.ui.appshell.AppShell
-import com.tyejaedon.coverscreenos.ui.deprecated.HomeScreen
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 
 class MainActivity : ComponentActivity() {
@@ -31,19 +28,7 @@ class MainActivity : ComponentActivity() {
                 accentColor = settings.accentColor,
                 panelCornerRadiusDp = settings.panelCornerRadiusDp
             ) {
-                if (BuildConfig.NEW_HOME_UI) {
-                    AppShell(modifier = Modifier.fillMaxSize())
-                } else {
-                    PermissionScreen(
-                        modifier = Modifier.fillMaxSize(),
-                        onPermissionsGranted = {
-                            ForegroundServiceHelper.startForegroundService(this)
-                        },
-                        grantedContent = {
-                            HomeScreen(modifier = Modifier.fillMaxSize())
-                        }
-                    )
-                }
+                AppShell(modifier = Modifier.fillMaxSize())
             }
         }
     }

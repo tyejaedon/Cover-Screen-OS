@@ -20,11 +20,7 @@ android {
     }
 
     buildTypes {
-        debug {
-            buildConfigField("boolean", "NEW_HOME_UI", "true")
-        }
         release {
-            buildConfigField("boolean", "NEW_HOME_UI", "true")
             optimization {
                 enable = false
             }
@@ -44,6 +40,26 @@ android {
         }
     }
 }
+
+val guardRemovedHomeScreen = tasks.register("guardRemovedHomeScreen") {
+    group = "verification"
+    description = "Fails if a removed homescreen UI directory is recreated."
+    val removedDirectories = listOf("main", "test", "androidTest").map { sourceSet ->
+        layout.projectDirectory.dir(
+            "src/$sourceSet/java/com/tyejaedon/coverscreenos/ui/homescreen"
+        ).asFile
+    }
+    doLast {
+        removedDirectories.forEach { removedDirectory ->
+            check(!removedDirectory.exists()) {
+                "The removed ui/homescreen/ directory must not be recreated: $removedDirectory"
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") { dependsOn(guardRemovedHomeScreen) }
+tasks.named("check") { dependsOn(guardRemovedHomeScreen) }
 
 dependencies {
     implementation(platform(libs.androidx.compose.bom))

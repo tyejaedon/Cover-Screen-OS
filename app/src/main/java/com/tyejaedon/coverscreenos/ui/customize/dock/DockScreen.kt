@@ -20,10 +20,6 @@ import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
-import com.tyejaedon.coverscreenos.ui.settings.DockAppPickerDialog
-import com.tyejaedon.coverscreenos.ui.settings.DockCustomizationCard
-import com.tyejaedon.coverscreenos.ui.settings.normalizeDockPackageSlots
-import com.tyejaedon.coverscreenos.ui.settings.updateDockSlotSelection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 

@@ -16,7 +16,6 @@ import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKey
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.SuggestionStrip
-import com.tyejaedon.coverscreenos.ui.settings.InputCustomizationCard
 
 @Composable
 internal fun InputScreen(
