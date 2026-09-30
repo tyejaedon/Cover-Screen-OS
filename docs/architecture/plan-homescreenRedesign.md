@@ -160,8 +160,8 @@ Category pages (each in `ui/customize/<category>/`):
 - **Wallpaper**: picker card + scale/blur/dim sliders. Live preview at the
   top, controls below (recognition-based feedback).
 - **Dock**: 4 slot cards with app icons; drag-to-reorder; long-press to
-  clear. Add an "All apps" affordance in slot 4 by default per the overlay
-  restyle.
+  clear. Slot 4 can be switched to "All apps" without changing its saved
+  package; the existing four-app dock remains the default.
 - **Appearance**: theme (System/Light/Dark) as SegmentedButton, accent
   swatches, corner-radius slider (only affects overlay panels — with live
   mini preview).
@@ -172,6 +172,17 @@ Every category screen carries a `TopAppBar` with an overflow menu:
 - "Reset to defaults"
 - "Export settings" / "Import settings" (JSON, for pro users; behind
   a debug flag initially)
+
+Phase C implementation note: the category routes use
+`coverscreenos://customize/{wallpaper|dock|appearance|input}`. The new shell
+remains gated by `NEW_HOME_UI`, except that explicit Customize deep links opt
+into it for QA. Accent and panel corner radius are stored in launcher settings
+and applied by both activity and overlay themes; the overlay dock's optional
+slot-4 All apps action navigates to its existing app-grid pager. Older JSON
+imports without these fields retain the original appearance and dock. Debug
+JSON contains the current
+wallpaper URI, not the image bytes; import requires that image to remain
+readable on the device. The legacy customization hub is retained until Phase E.
 
 ### 5.5 Permissions — was blocking, now a tab
 

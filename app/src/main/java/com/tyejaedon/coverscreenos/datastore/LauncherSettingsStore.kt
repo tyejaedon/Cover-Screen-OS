@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import androidx.core.net.toUri
 import com.tyejaedon.coverscreenos.overlay.input.CoverKeyboardMode
@@ -34,6 +35,12 @@ import java.util.UUID
 import kotlin.math.max
 
 const val COVER_DOCK_SLOT_COUNT = 4
+const val MIN_PANEL_CORNER_RADIUS_DP = 0f
+const val MAX_PANEL_CORNER_RADIUS_DP = 32f
+const val DEFAULT_PANEL_CORNER_RADIUS_DP = 16f
+internal fun normalizePanelCornerRadius(radiusDp: Float): Float =
+	if (radiusDp.isFinite()) radiusDp.coerceIn(MIN_PANEL_CORNER_RADIUS_DP, MAX_PANEL_CORNER_RADIUS_DP)
+	else DEFAULT_PANEL_CORNER_RADIUS_DP
 const val MIN_WALLPAPER_DIM_AMOUNT = 0f
 const val MAX_WALLPAPER_DIM_AMOUNT = 0.8f
 const val DEFAULT_WALLPAPER_DIM_AMOUNT = 0.45f
@@ -53,6 +60,12 @@ enum class ThemePreference {
 	DARK
 }
 
+enum class AccentColor {
+	DEFAULT,
+	MINT,
+	AMBER,
+	ROSE
+}
 
 private val Context.coverLauncherSettingsDataStore by preferencesDataStore(name = "cover_launcher_settings")
 
@@ -63,6 +76,9 @@ private object LauncherPreferencesKeys {
 	val wallpaperBlurRadiusDp = floatPreferencesKey("wallpaper_blur_radius_dp")
 	val dockVisible = booleanPreferencesKey("dock_visible")
 	val themePreference = stringPreferencesKey("theme_preference")
+	val accentColor = stringPreferencesKey("accent_color")
+	val panelCornerRadiusDp = floatPreferencesKey("panel_corner_radius_dp")
+	val dockSlotFourAllApps = booleanPreferencesKey("dock_slot_four_all_apps")
 	val keyboardStrategy = stringPreferencesKey("keyboard_strategy")
 	val keyboardModeByPackage = stringPreferencesKey("keyboard_mode_by_package")
 	val dockSlots: List<Preferences.Key<String>> = List(COVER_DOCK_SLOT_COUNT) { slot ->
@@ -78,6 +94,9 @@ data class LauncherSettings(
 	val wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP,
 	val isDockVisible: Boolean = true,
 	val themePreference: ThemePreference = ThemePreference.SYSTEM,
+	val accentColor: AccentColor = AccentColor.DEFAULT,
+	val panelCornerRadiusDp: Float = DEFAULT_PANEL_CORNER_RADIUS_DP,
+	val dockSlotFourAllApps: Boolean = false,
 	val keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
 	val keyboardModeByPackage: Map<String, CoverKeyboardMode> = emptyMap()
 )
@@ -147,6 +166,14 @@ class LauncherSettingsStore(
 					themePreference = preferences[LauncherPreferencesKeys.themePreference]
 						?.let { value -> ThemePreference.entries.firstOrNull { it.name == value } }
 						?: ThemePreference.SYSTEM,
+					accentColor = preferences[LauncherPreferencesKeys.accentColor]
+						?.let { value -> AccentColor.entries.firstOrNull { it.name == value } }
+						?: AccentColor.DEFAULT,
+					panelCornerRadiusDp = preferences[LauncherPreferencesKeys.panelCornerRadiusDp]
+						?.takeIf { it.isFinite() }
+						?.coerceIn(MIN_PANEL_CORNER_RADIUS_DP, MAX_PANEL_CORNER_RADIUS_DP)
+						?: DEFAULT_PANEL_CORNER_RADIUS_DP,
+					dockSlotFourAllApps = preferences[LauncherPreferencesKeys.dockSlotFourAllApps] ?: false,
 					keyboardStrategy = KeyboardStrategy.fromStorageValue(
 						preferences[LauncherPreferencesKeys.keyboardStrategy]
 					),
@@ -195,7 +222,7 @@ class LauncherSettingsStore(
 		}
 	}
 
-	suspend fun setLauncherLayout(settings: LauncherSettings) {
+	suspend fun setLauncherLayout(settings: LauncherSettings, restoreKeyboardModes: Boolean = false) {
 		withContext(ioDispatcher) {
 			val normalizedDockPackages = normalizeDockPackages(settings.dockPackages)
 			val normalizedWallpaperUri = resolveWallpaperUriForPersistedLayout(
@@ -220,9 +247,37 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = normalizedWallpaperBlur
 				preferences[LauncherPreferencesKeys.dockVisible] = settings.isDockVisible
 				preferences[LauncherPreferencesKeys.themePreference] = settings.themePreference.name
+				preferences[LauncherPreferencesKeys.accentColor] = settings.accentColor.name
+				preferences[LauncherPreferencesKeys.panelCornerRadiusDp] =
+					normalizePanelCornerRadius(settings.panelCornerRadiusDp)
+				preferences[LauncherPreferencesKeys.dockSlotFourAllApps] = settings.dockSlotFourAllApps
 				preferences[LauncherPreferencesKeys.keyboardStrategy] = settings.keyboardStrategy.name
+				if (restoreKeyboardModes) {
+					preferences[LauncherPreferencesKeys.keyboardModeByPackage] =
+						JSONObject(settings.keyboardModeByPackage.mapValues { it.value.name }).toString()
+				}
 			}
 		}
+	}
+
+	suspend fun exportSettingsJson(): String = LauncherSettingsJson.encode(settings.first())
+
+	suspend fun importSettingsJson(raw: String) {
+		val imported = LauncherSettingsJson.decode(raw)
+		val wallpaperUri = imported.wallpaperUri
+		if (wallpaperUri != null) {
+			require(wallpaperUri.isNotBlank()) { "Wallpaper URI is empty" }
+			val uri = wallpaperUri.toUri()
+			val readable = withContext(ioDispatcher) {
+				if (isManagedWallpaperUri(uri)) {
+					isManagedWallpaperFileReadableAndDecodable(uri)
+				} else {
+					isWallpaperUriReadableAndDecodable(uri)
+				}
+			}
+			require(readable) { "Wallpaper image is unavailable on this device" }
+		}
+		setLauncherLayout(imported, restoreKeyboardModes = true)
 	}
 
 	private fun resolveWallpaperUriForPersistedLayout(rawWallpaperUri: String?): String? {
@@ -276,6 +331,28 @@ class LauncherSettingsStore(
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
 				preferences[LauncherPreferencesKeys.themePreference] = themePreference.name
+			}
+		}
+	}
+
+	suspend fun setAccentColor(accentColor: AccentColor) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { it[LauncherPreferencesKeys.accentColor] = accentColor.name }
+		}
+	}
+
+	suspend fun setPanelCornerRadiusDp(radiusDp: Float) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit {
+				it[LauncherPreferencesKeys.panelCornerRadiusDp] = normalizePanelCornerRadius(radiusDp)
+			}
+		}
+	}
+
+	suspend fun setDockSlotFourAllApps(enabled: Boolean) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit {
+				it[LauncherPreferencesKeys.dockSlotFourAllApps] = enabled
 			}
 		}
 	}
@@ -578,6 +655,7 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.wallpaperDimAmount] = DEFAULT_WALLPAPER_DIM_AMOUNT
 				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = DEFAULT_WALLPAPER_BLUR_RADIUS_DP
 				preferences[LauncherPreferencesKeys.dockVisible] = true
+				preferences.remove(LauncherPreferencesKeys.dockSlotFourAllApps)
 				// Theme preference is intentionally preserved during layout reset.
 				preferences[LauncherPreferencesKeys.keyboardStrategy] = DEFAULT_KEYBOARD_STRATEGY.name
 				// Overlay host mode is a debug/developer toggle — intentionally
@@ -586,6 +664,47 @@ class LauncherSettingsStore(
 			}
 
 			deleteManagedWallpaperFiles()
+		}
+	}
+
+	suspend fun resetWallpaperCustomization() {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences.remove(LauncherPreferencesKeys.wallpaperUri)
+				preferences[LauncherPreferencesKeys.wallpaperScaleMode] = DEFAULT_WALLPAPER_SCALE_MODE.name
+				preferences[LauncherPreferencesKeys.wallpaperDimAmount] = DEFAULT_WALLPAPER_DIM_AMOUNT
+				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = DEFAULT_WALLPAPER_BLUR_RADIUS_DP
+			}
+			deleteManagedWallpaperFiles()
+		}
+	}
+
+	suspend fun resetDockCustomization() {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				writeDockSlots(preferences, List(COVER_DOCK_SLOT_COUNT) { null })
+				preferences[LauncherPreferencesKeys.dockVisible] = true
+				preferences.remove(LauncherPreferencesKeys.dockSlotFourAllApps)
+			}
+		}
+	}
+
+	suspend fun resetAppearanceCustomization() {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences.remove(LauncherPreferencesKeys.themePreference)
+				preferences.remove(LauncherPreferencesKeys.accentColor)
+				preferences.remove(LauncherPreferencesKeys.panelCornerRadiusDp)
+			}
+		}
+	}
+
+	suspend fun resetInputCustomization() {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences[LauncherPreferencesKeys.keyboardStrategy] = DEFAULT_KEYBOARD_STRATEGY.name
+				preferences.remove(LauncherPreferencesKeys.keyboardModeByPackage)
+			}
 		}
 	}
 

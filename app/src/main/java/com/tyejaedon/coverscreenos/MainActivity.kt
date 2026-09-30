@@ -26,7 +26,11 @@ class MainActivity : ComponentActivity() {
             val settingsStore = remember { LauncherSettingsStore(applicationContext) }
             val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
 
-            CoverOSTheme(themePreference = settings.themePreference) {
+            CoverOSTheme(
+                themePreference = settings.themePreference,
+                accentColor = settings.accentColor,
+                panelCornerRadiusDp = settings.panelCornerRadiusDp
+            ) {
                 if (BuildConfig.NEW_HOME_UI) {
                     AppShell(modifier = Modifier.fillMaxSize())
                 } else {

@@ -337,6 +337,7 @@ fun CoverAppGridOverlay(
     isDeviceLocked: Boolean,
     modifier: Modifier = Modifier,
     dockPackageSlots: List<String?> = List(DOCK_SLOT_COUNT) { null },
+    dockSlotFourAllApps: Boolean = false,
     isDockVisible: Boolean = true,
     wallpaperUri: String? = null,
     wallpaperScaleMode: WallpaperScaleMode = WallpaperScaleMode.CROP,
@@ -492,6 +493,7 @@ fun CoverAppGridOverlay(
                         onAppSelected = onAppSelected,
                         isDeviceLocked = isDeviceLocked,
                         isDockVisible = isDockVisible,
+                        dockSlotFourAllApps = dockSlotFourAllApps,
                         timeLabel = timeLabel,
                         dateLabel = dateLabel,
                         totalPageCount = totalPageCount,
@@ -529,6 +531,7 @@ private fun InteractiveSection(
     onAppSelected: (AppModel) -> Unit,
     isDeviceLocked: Boolean,
     isDockVisible: Boolean,
+    dockSlotFourAllApps: Boolean,
     timeLabel: String,
     dateLabel: String,
     totalPageCount: Int,
@@ -726,6 +729,12 @@ private fun InteractiveSection(
                                         isDeviceLocked = isDeviceLocked,
                                         isDockVisible = isDockVisible,
                                         dockSlots = dockApps,
+                                        dockSlotFourAllApps = dockSlotFourAllApps,
+                                        onOpenAllApps = {
+                                            uiScope.launch {
+                                                pagerState.animateScrollToPage(FIRST_APP_GRID_PAGE_INDEX)
+                                            }
+                                        },
                                         onNotificationOpen = { model ->
                                             dismissSearchInput()
                                             CoverNotificationListenerService.openNotificationFromOverlay(context, model)
@@ -870,6 +879,8 @@ private fun LockAndDockTile(
     isDeviceLocked: Boolean,
     isDockVisible: Boolean,
     dockSlots: List<AppModel?>,
+    dockSlotFourAllApps: Boolean,
+    onOpenAllApps: () -> Unit,
     onNotificationOpen: (CoverNotificationModel) -> Unit,
     onAppSelected: (AppModel) -> Unit,
     modifier: Modifier = Modifier
@@ -966,6 +977,8 @@ private fun LockAndDockTile(
                         CoverDockRow(
                             dockSlots = dockSlots,
                             onAppSelected = onAppSelected,
+                            slotFourAllApps = dockSlotFourAllApps,
+                            onOpenAllApps = onOpenAllApps,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .offset(y = displayPolishSpec.dockVerticalOffset)

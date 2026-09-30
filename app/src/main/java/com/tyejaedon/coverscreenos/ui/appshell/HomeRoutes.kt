@@ -8,3 +8,13 @@ internal object HomeRoutes {
 
     fun deepLink(route: String): String = "coverscreenos://$route"
 }
+
+internal enum class CustomizeCategory(val segment: String, val title: String) {
+    WALLPAPER("wallpaper", "Wallpaper"),
+    DOCK("dock", "Dock"),
+    APPEARANCE("appearance", "Appearance"),
+    INPUT("input", "Input");
+
+    val route: String get() = "${HomeRoutes.Customize}/$segment"
+    val deepLink: String get() = HomeRoutes.deepLink(route)
+}

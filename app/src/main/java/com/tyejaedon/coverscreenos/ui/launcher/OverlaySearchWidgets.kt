@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
+import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayPanelBorder
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -195,11 +197,11 @@ private fun SearchWidgetTile(
     hazeState: HazeState, // Pass HazeState from the parent screen
     modifier: Modifier = Modifier
 ) {
-    val tileShape = RoundedCornerShape(24.dp)
+    val tileShape = RoundedCornerShape(LocalCoverPanelCornerRadius.current * 1.5f)
 
     // Contrast wash: Use a higher alpha (0.65f - 0.80f) so key labels pop
     val surfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
-    val borderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    val borderColor = LocalCoverOverlayPanelBorder.current ?: MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
 
     Surface(
         modifier = modifier
@@ -287,7 +289,7 @@ private fun CoverSearchInputRow(
     onOpenImePicker: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val inputFieldShape = RoundedCornerShape(16.dp)
+    val inputFieldShape = RoundedCornerShape(LocalCoverPanelCornerRadius.current)
 
     Column(
         modifier = modifier.testTag(CoverSearchUiTestTags.SEARCH_INPUT_ROW),
@@ -578,7 +580,7 @@ private fun CoverSearchKeyboardHost(
 ) {
     Surface(
         modifier = modifier.testTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(LocalCoverPanelCornerRadius.current * 1.25f),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
     ) {
         Column(
