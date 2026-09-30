@@ -194,10 +194,19 @@ Layout:
 
 - Header: **permission health ring** (0–100 %) computed from granted count.
 - LazyColumn of `PermissionRow`s grouped in sections:
-  - "Required" (overlay, accessibility, notification listener,
-    foreground service, battery exemption)
-  - "Recommended" (POST_NOTIFICATIONS, ignore-battery, biometric)
-  - "Optional" (media, microphone, gallery)
+  - "Required" (POST_NOTIFICATIONS for the foreground notification,
+    launcher accessibility for the overlay host, notification listener,
+    battery optimization exemption). These are the four existing
+    `ForegroundServiceHelper` start prerequisites; foreground service itself
+    has no separate user-grantable permission.
+  - "Recommended" (cover keyboard input accessibility).
+  - "Optional" (selected photos access for OEM wallpaper imports, microphone).
+- Health counts Required + Recommended once each; Optional never affects it.
+- Phase D keeps the legacy `permissions/PermissionScreen.kt` behind
+  `NEW_HOME_UI = false` until Phase E and reuses its support actions. In the
+  new shell, a cold launch or transition to all four required grants starts
+  the service once; stopping it manually does not trigger a restart on each
+  recomposition. Permission status refreshes on resume and request results.
 - Each row: leading icon, name + one-line rationale, trailing status chip
   and action button.
 - Sticky footer: "Continue with limited features" if ≥ 1 required is

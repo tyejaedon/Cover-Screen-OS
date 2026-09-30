@@ -7,6 +7,9 @@ internal object HomeRoutes {
     const val About = "about"
 
     fun deepLink(route: String): String = "coverscreenos://$route"
+
+    fun initialDestination(requiredMissing: Boolean): String =
+        if (requiredMissing) Permissions else Dashboard
 }
 
 internal enum class CustomizeCategory(val segment: String, val title: String) {

@@ -23,4 +23,10 @@ class HomeRoutesTest {
             assertEquals("coverscreenos://customize/${category.segment}", category.deepLink)
         }
     }
+
+    @Test
+    fun firstRunUsesSoftPermissionsDestinationOnlyForMissingRequiredGrants() {
+        assertEquals(HomeRoutes.Permissions, HomeRoutes.initialDestination(requiredMissing = true))
+        assertEquals(HomeRoutes.Dashboard, HomeRoutes.initialDestination(requiredMissing = false))
+    }
 }
