@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusSmall
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTextStyles
+import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayAccent
+import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayOnAccent
 import com.tyejaedon.coverscreenos.ui.theme.coverBackdropBlur
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
@@ -143,13 +145,13 @@ internal fun GridPageLetterTooltip(letter: String?, visible: Boolean, modifier: 
         modifier = modifier
             .size(36.dp)
             .clip(CircleShape)
-            .background(com.tyejaedon.coverscreenos.ui.theme.CoverOSPrimary),
+            .background(LocalCoverOverlayAccent.current),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = letter,
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-            color = Color.Black,
+            color = LocalCoverOverlayOnAccent.current,
             maxLines = 1
         )
     }
@@ -312,7 +314,7 @@ internal fun PageIndicator(
                     .width(activePillWidth)
                     .height(dotDiameter)
                     .clip(RoundedCornerShape(3.dp))
-                    .background(com.tyejaedon.coverscreenos.ui.theme.CoverOSPrimary)
+                    .background(LocalCoverOverlayAccent.current)
             )
         }
     }
@@ -322,7 +324,9 @@ internal fun PageIndicator(
 internal fun CoverDockRow(
     dockSlots: List<AppModel?>,
     onAppSelected: (AppModel) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    slotFourAllApps: Boolean = false,
+    onOpenAllApps: () -> Unit = {}
 ) {
     Row(
         modifier = modifier.coverScreenPadding(horizontal = 12.dp, vertical = 6.dp),
@@ -331,17 +335,26 @@ internal fun CoverDockRow(
     ) {
         repeat(DOCK_SLOT_COUNT) { index ->
             val app = dockSlots.getOrNull(index)
-            val isSlotEnabled = app != null
+            val isAllApps = index == DOCK_SLOT_COUNT - 1 && slotFourAllApps
+            val isSlotEnabled = isAllApps || app != null
 
             Box(
                 modifier = Modifier
                     .size(48.dp)
                     .coverMinimumTouchTarget()
                     .clip(RoundedCornerShape(CoverOSCornerRadiusSmall))
-                    .clickable(enabled = isSlotEnabled) { app?.let(onAppSelected) },
+                    .clickable(enabled = isSlotEnabled) {
+                        if (isAllApps) onOpenAllApps() else app?.let(onAppSelected)
+                    },
                 contentAlignment = Alignment.Center
             ) {
-                if (app != null) {
+                if (isAllApps) {
+                    Text(
+                        text = "All apps",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else if (app != null) {
                     val iconBitmap =
                         rememberPackageIconBitmap(
                             app.packageName
@@ -446,4 +459,3 @@ private fun AppGridTile(
         }
     }
 }
-

@@ -64,6 +64,9 @@ import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.theme.coverGlassSurface
+import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
+import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayPanelBorder
+import androidx.compose.foundation.BorderStroke
 import java.util.Locale
 
 private const val COMPACT_CARD_MIN_ART_EDGE_PX = 180
@@ -139,7 +142,7 @@ internal fun CompactNowPlayingCard(
     onOpenMediaApp: (() -> Boolean)? = null,
     modifier: Modifier = Modifier
 ) {
-    val containerShape = RoundedCornerShape(16.dp)
+    val containerShape = RoundedCornerShape(LocalCoverPanelCornerRadius.current)
     val hasMedia = mediaNotification != null
     val isActionEnabled = hasMedia || onOpenMediaApp != null
 
@@ -149,7 +152,7 @@ internal fun CompactNowPlayingCard(
             .clip(containerShape)
             .coverGlassSurface(
                 color = Color.White.copy(alpha = 0.12f),
-                borderColor = Color.White.copy(alpha = 0.22f),
+                borderColor = LocalCoverOverlayPanelBorder.current ?: Color.White.copy(alpha = 0.22f),
                 shape = containerShape
             )
             .clickable(enabled = isActionEnabled) {
@@ -407,7 +410,8 @@ fun ExpandedNowPlayingPanel(
                         onClick = {}
                     ),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                shape = RoundedCornerShape(24.dp)
+                shape = RoundedCornerShape(LocalCoverPanelCornerRadius.current * 1.5f),
+                border = LocalCoverOverlayPanelBorder.current?.let { BorderStroke(1.dp, it) }
             ) {
                 Column(
                     modifier = Modifier
@@ -591,4 +595,3 @@ private fun isPauseLikeActionLabel(actionLabel: String?): Boolean {
     val normalized = actionLabel?.trim()?.lowercase(Locale.getDefault()).orEmpty()
     return normalized.contains("pause") || normalized.contains("stop")
 }
-

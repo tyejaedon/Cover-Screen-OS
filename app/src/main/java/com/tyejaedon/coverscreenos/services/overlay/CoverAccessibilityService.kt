@@ -304,12 +304,17 @@ class CoverAccessibilityService : AccessibilityService() {
             val launcherSettings by host.settings
                 .collectAsStateWithLifecycle(initialValue = LauncherSettings())
 
-            CoverOSTheme(themePreference = launcherSettings.themePreference) {
+            CoverOSTheme(
+                themePreference = launcherSettings.themePreference,
+                accentColor = launcherSettings.accentColor,
+                panelCornerRadiusDp = launcherSettings.panelCornerRadiusDp
+            ) {
                 CoverAppGridOverlay(
                     repository = host.appRepository,
                     onAppSelected = { appModel -> host.onAppSelected(appModel) },
                     isDeviceLocked = isDeviceLocked,
                     dockPackageSlots = launcherSettings.dockPackages,
+                    dockSlotFourAllApps = launcherSettings.dockSlotFourAllApps,
                     isDockVisible = launcherSettings.isDockVisible,
                     wallpaperUri = launcherSettings.wallpaperUri,
                     wallpaperScaleMode = launcherSettings.wallpaperScaleMode,

@@ -56,6 +56,9 @@ import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.theme.coverBackdropBlur
 import com.tyejaedon.coverscreenos.ui.theme.coverGlassSurface
+import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
+import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayPanelBorder
+import androidx.compose.foundation.border
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
 import dev.chrisbanes.haze.HazeState
 
@@ -209,7 +212,7 @@ private fun NotificationProviderGroupCard(
     modifier: Modifier = Modifier,
     hazeState: HazeState? = null
 ) {
-    val cardShape = RoundedCornerShape(16.dp)
+    val cardShape = RoundedCornerShape(LocalCoverPanelCornerRadius.current)
     val providerIcon =
         rememberPackageIconBitmap(group.packageName)
     val providerLabel =
@@ -237,7 +240,7 @@ private fun NotificationProviderGroupCard(
     } else {
         Modifier.coverGlassSurface(
             color = Color.White.copy(alpha = 0.08f),
-            borderColor = Color.White.copy(alpha = 0.16f),
+            borderColor = LocalCoverOverlayPanelBorder.current ?: Color.White.copy(alpha = 0.16f),
             shape = cardShape
         )
     }
@@ -247,6 +250,7 @@ private fun NotificationProviderGroupCard(
             .fillMaxWidth()
             .clip(cardShape)
             .then(cardBackground)
+            .then(LocalCoverOverlayPanelBorder.current?.let { Modifier.border(1.dp, it, cardShape) } ?: Modifier)
             .animateContentSize(animationSpec = spring()),
         color = Color.Transparent,
         shape = cardShape
@@ -449,4 +453,3 @@ private fun NotificationGroupRow(
         }
     )
 }
-

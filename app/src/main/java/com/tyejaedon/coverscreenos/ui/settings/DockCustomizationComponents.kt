@@ -1,12 +1,15 @@
 package com.tyejaedon.coverscreenos.ui.settings
 
 import android.widget.ImageView
+import android.graphics.drawable.Drawable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -62,7 +65,9 @@ internal fun DockCustomizationCard(
     onReorderCommitted: (List<String?>) -> Unit,
     onPickSlot: (Int) -> Unit,
     onClearSlot: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    resolveIcon: (String) -> Drawable? = { null },
+    longPressToClear: Boolean = false
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -77,7 +82,11 @@ internal fun DockCustomizationCard(
         ) {
             Text("Dock", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Pin only the apps you open most. Drag to reorder, choose per slot, or clear what you do not need.",
+                if (longPressToClear) {
+                    "Pin your favorite apps. Drag the strip to reorder; long-press a slot to clear it."
+                } else {
+                    "Pin only the apps you open most. Drag to reorder, choose per slot, or clear what you do not need."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -95,26 +104,44 @@ internal fun DockCustomizationCard(
                     selectedAppName = packageName?.let(resolveLabel) ?: "Empty",
                     canClear = packageName != null,
                     onChoose = { onPickSlot(index) },
-                    onClear = { onClearSlot(index) }
+                    onClear = { onClearSlot(index) },
+                    icon = packageName?.let(resolveIcon),
+                    longPressToClear = longPressToClear
                 )
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DockSlotEditorRow(
     slotIndex: Int,
     selectedAppName: String,
     canClear: Boolean,
     onChoose: () -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    icon: Drawable?,
+    longPressToClear: Boolean
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().then(
+            if (longPressToClear) Modifier.combinedClickable(
+                onClick = onChoose,
+                onLongClick = if (canClear) onClear else null,
+                onLongClickLabel = if (canClear) "Clear slot ${slotIndex + 1}" else null
+            ) else Modifier
+        ),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (icon != null) {
+            AndroidView(
+                factory = { viewContext -> ImageView(viewContext) },
+                update = { it.setImageDrawable(icon) },
+                modifier = Modifier.size(32.dp)
+            )
+        }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(text = "Slot ${slotIndex + 1}", style = MaterialTheme.typography.labelLarge)
             Text(
@@ -477,4 +504,3 @@ internal fun updateDockSlotSelection(
     updated[slotIndex] = normalizedPackage
     return normalizeDockPackageSlots(updated)
 }
-

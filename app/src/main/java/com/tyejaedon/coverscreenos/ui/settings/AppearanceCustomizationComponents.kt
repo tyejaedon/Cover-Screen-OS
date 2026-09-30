@@ -9,6 +9,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -23,7 +26,8 @@ import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
 internal fun AppearanceCustomizationCard(
     themePreference: ThemePreference,
     onThemePreferenceSelected: (ThemePreference) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    useSegmentedButtons: Boolean = false
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -43,7 +47,19 @@ internal fun AppearanceCustomizationCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Row(
+            if (useSegmentedButtons) {
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    ThemePreference.entries.forEachIndexed { index, option ->
+                        SegmentedButton(
+                            selected = themePreference == option,
+                            onClick = { onThemePreferenceSelected(option) },
+                            shape = SegmentedButtonDefaults.itemShape(index, ThemePreference.entries.size)
+                        ) {
+                            Text(option.name.lowercase().replaceFirstChar { it.uppercase() })
+                        }
+                    }
+                }
+            } else Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -78,4 +94,3 @@ internal fun AppearanceCustomizationCard(
         }
     }
 }
-
