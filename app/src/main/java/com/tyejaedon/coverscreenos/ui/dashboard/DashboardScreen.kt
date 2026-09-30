@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.BuildConfig
+import com.tyejaedon.coverscreenos.ui.permissions.FeatureDegradedNotice
 
 @Composable
 fun DashboardScreen(
@@ -35,6 +36,13 @@ fun DashboardScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         DashboardHeroCard(state)
+        if (state.permissions.missing.isNotEmpty()) {
+            FeatureDegradedNotice(
+                "Cover launcher unavailable until ${state.permissions.missing.joinToString()} are enabled. " +
+                    "You can still use the other tabs.",
+                onPermissions
+            )
+        }
         QuickActionsRow(
             running = state.runtime.serviceActive,
             onToggleService = { startBlocked = !onToggleService() },

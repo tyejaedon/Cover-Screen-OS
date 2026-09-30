@@ -48,6 +48,8 @@ import com.tyejaedon.coverscreenos.BuildConfig
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.ui.appshell.CustomizeCategory
+import com.tyejaedon.coverscreenos.ui.dashboard.DashboardPermissions
+import com.tyejaedon.coverscreenos.ui.permissions.FeatureDegradedNotice
 import com.tyejaedon.coverscreenos.ui.customize.appearance.AppearanceScreen
 import com.tyejaedon.coverscreenos.ui.customize.dock.DockScreen
 import com.tyejaedon.coverscreenos.ui.customize.input.InputScreen
@@ -71,7 +73,9 @@ internal fun CustomizeScreen(
     snackbar: SnackbarHostState,
     initialScrollPosition: Int,
     onScrollPositionChanged: (CustomizeCategory, Int) -> Unit,
-    onCategorySelected: (CustomizeCategory) -> Unit
+    onCategorySelected: (CustomizeCategory) -> Unit,
+    permissions: DashboardPermissions,
+    onPermissions: () -> Unit
 ) {
     val context = LocalContext.current
     val appContext = context.applicationContext
@@ -211,6 +215,19 @@ internal fun CustomizeScreen(
                     modifier = Modifier.weight(1f).fillMaxSize().verticalScroll(scroll).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    if (permissions.missing.isNotEmpty()) {
+                        FeatureDegradedNotice(
+                            "Changes can be saved, but the cover launcher cannot show them until " +
+                                "${permissions.missing.joinToString()} are enabled.",
+                            onPermissions
+                        )
+                    }
+                    if (category == CustomizeCategory.INPUT && !permissions.inputAccessibility) {
+                        FeatureDegradedNotice(
+                            "Cover keyboard fallback and text injection need the separate input accessibility service.",
+                            onPermissions
+                        )
+                    }
                     when (category) {
                         CustomizeCategory.WALLPAPER -> WallpaperScreen(store, settings, ::runAction)
                         CustomizeCategory.DOCK -> DockScreen(store, settings, ::runAction)
