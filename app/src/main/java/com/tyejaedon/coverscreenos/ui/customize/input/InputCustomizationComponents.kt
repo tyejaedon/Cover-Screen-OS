@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.settings
+package com.tyejaedon.coverscreenos.ui.customize.input
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement

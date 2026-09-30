@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.settings
+package com.tyejaedon.coverscreenos.ui.customize.wallpaper
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -359,7 +359,7 @@ private fun WallpaperPreviewCard(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = dimAmount.coerceIn(0f, 1f)))
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = dimAmount.coerceIn(0f, 1f)))
                     )
 
                     // Simulated lock tile overlay to preview readability before applying.
@@ -389,8 +389,8 @@ private fun WallpaperPreviewCard(
                                         .width(62.dp)
                                         .height(24.dp)
                                         .clip(RoundedCornerShape(10.dp))
-                                        .background(Color.White.copy(alpha = 0.2f))
-                                        .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f))
+                                        .border(1.dp, MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
                                 )
                             }
                         }
@@ -694,4 +694,3 @@ private fun openPreviewInputStream(context: android.content.Context, uri: Uri): 
             }.getOrNull()
     }
 }
-

@@ -31,7 +31,6 @@ import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.datastore.MAX_PANEL_CORNER_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.MIN_PANEL_CORNER_RADIUS_DP
-import com.tyejaedon.coverscreenos.ui.settings.AppearanceCustomizationCard
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
 import com.tyejaedon.coverscreenos.ui.theme.coverAccentScheme
 import androidx.compose.foundation.isSystemInDarkTheme
