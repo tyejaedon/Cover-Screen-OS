@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.settings
+package com.tyejaedon.coverscreenos.ui.customize.appearance
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column

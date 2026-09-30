@@ -52,7 +52,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
-import com.tyejaedon.coverscreenos.permissions.PermissionSupportActions
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 
 private const val LOG_TAG = "PermissionsScreen"

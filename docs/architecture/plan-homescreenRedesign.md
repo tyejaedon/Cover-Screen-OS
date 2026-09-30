@@ -1,12 +1,12 @@
 # Plan — Redesign the Application Home Screen (Main-Display UI)
 
-> Status: DRAFT — 2026-09-07
+> Status: Phase F code implemented — 2026-09-30 (alpha; device QA pending)
 > Owner: cover-screen-os / main app UI
 > Related: `plan-overlayOneUI8Restyle.md`, `plan-currentApplicationSetup.prompt.md`.
 
 ## 1. Goal
 
-The current main-display UI (`ui/homescreen/HomeScreen.kt`) is a single
+The original main-display UI (`ui/homescreen/HomeScreen.kt`) was a single
 vertically scrolling `Column` that mixes readiness status, runtime controls,
 service banners, and a customization hub. It scales poorly, leaks unrelated
 concerns into one surface, and violates several core HCI principles (see §3).
@@ -30,7 +30,7 @@ progressive disclosure for advanced controls.
 - Not localizing yet. Strings live in `res/values/strings.xml`; the redesign
   audits and re-groups keys but does not add new locales.
 
-## 3. Problems With the Current Design
+## 3. Problems With the Previous Design
 
 | # | Problem                                                                                       | Symptom                                                                   | HCI principle violated                                               |
 |---|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|----------------------------------------------------------------------|
@@ -66,7 +66,7 @@ stable at implementation time; add to `libs.versions.toml` under
 `navigationCompose`.
 
 ```
-NavHost (startDestination = HomeRoutes.Dashboard)
+NavHost (startDestination = Dashboard, or Permissions if required grants are missing)
 ├── Dashboard          (icon: DashboardCustomize)
 ├── Customize          (icon: Palette)         nested graph:
 │   ├── Wallpaper                              (Wallpaper)
@@ -101,7 +101,7 @@ fun AppShell(...) {
     ) { inner ->
         NavHost(
             navController    = navController,
-            startDestination = HomeRoutes.Dashboard,
+            startDestination = HomeRoutes.initialDestination(requiredMissing),
             modifier         = Modifier.padding(inner)
         ) { … }
     }
@@ -173,10 +173,9 @@ Every category screen carries a `TopAppBar` with an overflow menu:
 - "Export settings" / "Import settings" (JSON, for pro users; behind
   a debug flag initially)
 
-Phase C implementation note: the category routes use
+Phase C implementation note (historical): the category routes use
 `coverscreenos://customize/{wallpaper|dock|appearance|input}`. The new shell
-remains gated by `NEW_HOME_UI`, except that explicit Customize deep links opt
-into it for QA. Accent and panel corner radius are stored in launcher settings
+was originally gated by a build flag, but is now the only activity UI. Accent and panel corner radius are stored in launcher settings
 and applied by both activity and overlay themes; the overlay dock's optional
 slot-4 All apps action navigates to its existing app-grid pager. Older JSON
 imports without these fields retain the original appearance and dock. Debug
@@ -202,9 +201,9 @@ Layout:
   - "Recommended" (cover keyboard input accessibility).
   - "Optional" (selected photos access for OEM wallpaper imports, microphone).
 - Health counts Required + Recommended once each; Optional never affects it.
-- Phase D keeps the legacy `permissions/PermissionScreen.kt` behind
-  `NEW_HOME_UI = false` until Phase E and reuses its support actions. In the
-  new shell, a cold launch or transition to all four required grants starts
+-   Phase D originally kept the legacy permission screen until Phase F. The
+  support actions now live in `ui/permissions/PermissionSupportActions.kt`.
+  In the new shell, a cold launch or transition to all four required grants starts
   the service once; stopping it manually does not trigger a restart on each
   recomposition. Permission status refreshes on resume and request results.
 - Each row: leading icon, name + one-line rationale, trailing status chip
@@ -221,14 +220,12 @@ First-run behaviour:
 
 ### 5.6 About / Diagnostics
 
-`ui/about/AboutScreen.kt`:
-- App name + version.
-- "How it works" 3-tile carousel.
-- Diagnostics section: last crash timestamp, active service, AS host state.
-- Legal (open-source licenses via Google's `oss-licenses-plugin` or a
-  hand-rolled screen).
-- Developer options (debug builds): overlay host mode toggle, dry-run
-  launcher intent, force reclaim, etc.
+`ui/about/AboutScreen.kt` shows app name/version, three "How it works"
+steps, live service/launcher-host/overlay state and last runtime event.
+There is no crash timestamp: crash history is not collected. The bundled
+CMU Pronouncing Dictionary license is readable in-app. Debug builds link
+to the existing Dashboard preview and Customize import/export actions;
+no new service/overlay switches or dependencies were introduced.
 
 ## 6. Design System Reuse
 
@@ -254,14 +251,13 @@ Shared **tokens** with the overlay theme:
 
 ## 7. Rollout Phases
 
-Each phase is a shippable increment. Old and new UIs coexist behind a
-`BuildConfig.NEW_HOME_UI` flag until Phase E.
+Phases A–E used a temporary build flag. As of Phase F, AppShell is the
+only main-display UI in both variants.
 
 ### Phase A — Nav shell scaffolding
 - Add `navigation-compose` dependency.
 - Create `AppShell`, `HomeRoutes`, empty destination composables.
-- MainActivity hosts `AppShell` behind the flag; existing HomeScreen used
-  when flag is off.
+- MainActivity hosted `AppShell` behind a temporary flag.
 - No behavior visible to users.
 
 ### Phase B — Dashboard + status chip
@@ -283,7 +279,7 @@ Each phase is a shippable increment. Old and new UIs coexist behind a
 - Add "Continue with limited features" sticky footer.
 
 ### Phase E — Flip the flag
-- Default `NEW_HOME_UI = true`.
+- Default the new UI on before deleting the flag.
 - Old files (`HomeScreen.kt`, `HomeReadinessCard.kt`,
   `HomeRuntimeControls.kt`, `HomeRuntimeBanner.kt`,
   `HomeCustomizationHub.kt`, `HomeCustomizationMenu.kt`,
@@ -298,9 +294,20 @@ Each phase is a shippable increment. Old and new UIs coexist behind a
   is added to this repository.
 
 ### Phase F — Delete legacy
-- Two releases after Phase E, delete `deprecated/` files, the
-  `NEW_HOME_UI` flag, and the old `ui/settings/*` files superseded by
-  `ui/customize/*`.
+- Completed during alpha by explicit authorization, without the planned
+  two-release soak: deleted the legacy files and flag, moved the still-used
+  customization components into their category packages, and extracted
+  permission support actions into `ui/permissions/`.
+- `:app:guardRemovedHomeScreen` runs from both `preBuild` and `check` and
+  fails if `ui/homescreen/` is recreated in any Java source set.
+- MainActivity always hosts AppShell under the saved appearance theme;
+  permission onboarding remains a non-blocking tab.
+- About is a real deep-linkable screen. All four top-level destinations and
+  the four Customize categories have registered deep links using
+  `coverscreenos://{dashboard|customize|permissions|about}` and
+  `coverscreenos://customize/{wallpaper|dock|appearance|input}`.
+- Screenshot baselines and device-based `adb`/TalkBack checks remain
+  unverified: this repository has no screenshot framework or device.
 
 ## 8. HCI Alignment — Checklist Per Screen
 
@@ -380,10 +387,11 @@ For each new screen, code review must confirm:
 - `androidx.navigation:navigation-compose` is a first-class dependency;
   every top-level destination is a `NavHost` entry.
 - `ui/homescreen/` deleted (or empty).
-- `permissions/PermissionScreen.kt` deleted; contents live at
+- Legacy `PermissionScreen.kt` deleted; active UI lives at
   `ui/permissions/PermissionsScreen.kt`.
 - Every screen passes the HCI checklist (§8), verified in code review.
-- Screenshot suite green on all 4 devices × 2 fontScales.
+- Screenshot suite on all 4 devices × 2 fontScales remains pending
+  screenshot infrastructure and physical/emulated devices.
 - Deep links function from an `adb shell am start -a android.intent.action.VIEW -d "coverscreenos://customize/wallpaper"`.
 - No composable in `ui/dashboard`, `ui/customize`, `ui/permissions`,
   `ui/about` uses `androidx.compose.foundation.background(Color(...))` —

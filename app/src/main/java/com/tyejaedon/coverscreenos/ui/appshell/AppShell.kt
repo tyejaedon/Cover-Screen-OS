@@ -7,7 +7,6 @@ import android.content.Intent
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -62,6 +61,7 @@ import com.tyejaedon.coverscreenos.ui.permissions.PermissionsScreen
 import com.tyejaedon.coverscreenos.ui.dashboard.DashboardScreen
 import com.tyejaedon.coverscreenos.ui.dashboard.rememberDashboardState
 import com.tyejaedon.coverscreenos.ui.customize.CustomizeScreen
+import com.tyejaedon.coverscreenos.ui.about.AboutScreen
 import kotlinx.coroutines.launch
 
 private data class HomeTab(val route: String, @StringRes val title: Int, val icon: ImageVector)
@@ -258,13 +258,14 @@ fun AppShell(
                             }
                         }
                     }
-                    homeTabs.filter { it.route == HomeRoutes.About }.forEach { tab ->
-                        composable(
-                            route = tab.route,
-                            deepLinks = listOf(navDeepLink { uriPattern = HomeRoutes.deepLink(tab.route) })
-                        ) {
-                            EmptyHomeDestination(tab.title)
-                        }
+                    composable(
+                        route = HomeRoutes.About,
+                        deepLinks = listOf(navDeepLink { uriPattern = HomeRoutes.deepLink(HomeRoutes.About) })
+                    ) {
+                        AboutScreen(
+                            onDashboard = { navController.navigateToTab(HomeRoutes.Dashboard) },
+                            onCustomize = { navController.navigateToTab(HomeRoutes.Customize) }
+                        )
                     }
                 }
             }
@@ -275,12 +276,5 @@ fun AppShell(
                 customizeActionScope.launch { tourStore.markWelcomeTourSeen() }
             })
         }
-    }
-}
-
-@Composable
-private fun EmptyHomeDestination(@StringRes title: Int) {
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        Text(stringResource(title), style = MaterialTheme.typography.headlineMedium)
     }
 }
