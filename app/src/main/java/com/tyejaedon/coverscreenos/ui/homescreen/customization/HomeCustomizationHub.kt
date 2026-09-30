@@ -337,6 +337,9 @@ fun HomeCustomizationHub(modifier: Modifier = Modifier) {
                             wallpaperBlurRadiusDp = wallpaperBlurPreview,
                             isDockVisible = settings.isDockVisible,
                             themePreference = themePreferencePreview,
+                            accentColor = settings.accentColor,
+                            panelCornerRadiusDp = settings.panelCornerRadiusDp,
+                            dockSlotFourAllApps = settings.dockSlotFourAllApps,
                             keyboardStrategy = keyboardStrategyPreview,
                         )
 

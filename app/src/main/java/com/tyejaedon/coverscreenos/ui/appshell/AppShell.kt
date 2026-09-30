@@ -18,11 +18,18 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Text
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -35,6 +42,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.navigation
 import androidx.navigation.navDeepLink
 import com.tyejaedon.coverscreenos.R
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
@@ -42,6 +50,7 @@ import com.tyejaedon.coverscreenos.permissions.PermissionScreen
 import com.tyejaedon.coverscreenos.ui.dashboard.DashboardScreen
 import com.tyejaedon.coverscreenos.ui.dashboard.DashboardStatusDetails
 import com.tyejaedon.coverscreenos.ui.dashboard.rememberDashboardState
+import com.tyejaedon.coverscreenos.ui.customize.CustomizeScreen
 
 private data class HomeTab(val route: String, @StringRes val title: Int, val icon: ImageVector)
 
@@ -71,6 +80,11 @@ fun AppShell(
     val context = LocalContext.current
     val dashboardState = rememberDashboardState()
     val navController = rememberNavController()
+    val customizeActionScope = rememberCoroutineScope()
+    val customizeSnackbar = remember { SnackbarHostState() }
+    var categoryScrollPositions by rememberSaveable {
+        mutableStateOf(IntArray(CustomizeCategory.entries.size))
+    }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
     val selectedTab = homeTabs.firstOrNull { tab ->
@@ -107,6 +121,7 @@ fun AppShell(
                 }
             },
             floatingActionButton = floatingActionButton,
+            snackbarHost = { SnackbarHost(customizeSnackbar) },
             containerColor = MaterialTheme.colorScheme.surface
         ) { innerPadding ->
             Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
@@ -159,7 +174,41 @@ fun AppShell(
                             }
                         )
                     }
-                    homeTabs.filter { it.route != HomeRoutes.Dashboard && it.route != HomeRoutes.Permissions }.forEach { tab ->
+                    navigation(
+                        route = HomeRoutes.Customize,
+                        startDestination = CustomizeCategory.WALLPAPER.route,
+                        deepLinks = listOf(navDeepLink { uriPattern = HomeRoutes.deepLink(HomeRoutes.Customize) })
+                    ) {
+                        CustomizeCategory.entries.forEach { category ->
+                            composable(
+                                route = category.route,
+                                deepLinks = listOf(navDeepLink { uriPattern = category.deepLink })
+                            ) {
+                                CustomizeScreen(
+                                    category = category,
+                                    expanded = expanded,
+                                    actionScope = customizeActionScope,
+                                    snackbar = customizeSnackbar,
+                                    initialScrollPosition = categoryScrollPositions[category.ordinal],
+                                    onScrollPositionChanged = { selected, position ->
+                                        categoryScrollPositions = categoryScrollPositions.copyOf().also {
+                                            it[selected.ordinal] = position
+                                        }
+                                    },
+                                    onCategorySelected = { selected ->
+                                        if (selected != category) {
+                                            navController.navigate(selected.route) {
+                                                popUpTo(HomeRoutes.Customize) { saveState = true }
+                                                launchSingleTop = true
+                                                restoreState = true
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    homeTabs.filter { it.route == HomeRoutes.About }.forEach { tab ->
                         composable(
                             route = tab.route,
                             deepLinks = listOf(navDeepLink { uriPattern = HomeRoutes.deepLink(tab.route) })
