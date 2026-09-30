@@ -3,6 +3,7 @@ package com.tyejaedon.coverscreenos.ui.homescreen
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.tyejaedon.coverscreenos.ui.deprecated.hasFullHomeReadiness
 
 class HomeReadinessCardTest {
     @Test

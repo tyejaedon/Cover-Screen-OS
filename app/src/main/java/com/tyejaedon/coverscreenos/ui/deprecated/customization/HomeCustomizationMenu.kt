@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.homescreen.customization
+package com.tyejaedon.coverscreenos.ui.deprecated.customization
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DarkMode
@@ -10,6 +10,7 @@ import com.tyejaedon.coverscreenos.datastore.COVER_DOCK_SLOT_COUNT
 import com.tyejaedon.coverscreenos.datastore.ThemePreference
 import com.tyejaedon.coverscreenos.ui.settings.SettingsMenuItem
 
+@Deprecated("Replaced by ui/dashboard, ui/customize, ui/permissions", level = DeprecationLevel.WARNING)
 internal fun buildHomeCustomizationMenuItems(
     activePanel: HomeCustomizationPanel,
     dockFilledCount: Int,

@@ -287,8 +287,15 @@ Each phase is a shippable increment. Old and new UIs coexist behind a
 - Old files (`HomeScreen.kt`, `HomeReadinessCard.kt`,
   `HomeRuntimeControls.kt`, `HomeRuntimeBanner.kt`,
   `HomeCustomizationHub.kt`, `HomeCustomizationMenu.kt`,
-  `HomeCustomizationPanelContent.kt`, `permissions/PermissionScreen.kt`)
-  moved to `deprecated/` with `@Deprecated` markers.
+  `HomeCustomizationPanelContent.kt`, `HomeCustomizationModels.kt`,
+  `permissions/PermissionScreen.kt`) moved to `ui/deprecated/` with
+  `@Deprecated` markers. Shared `permissions/PermissionScreenComponents.kt`
+  stays in place for the active Permissions tab.
+- The AppShell tour is shown on the first ordinary launch (including upgrades),
+  records dismissal in the launcher settings DataStore, and defers to explicit
+  deep links without marking them seen. No permission grants are changed.
+- Screenshot baselines cannot be regenerated until screenshot baseline tooling
+  is added to this repository.
 
 ### Phase F — Delete legacy
 - Two releases after Phase E, delete `deprecated/` files, the
