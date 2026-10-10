@@ -17,5 +17,7 @@ object CoverSearchUiTestTags {
     const val SEARCH_T9_KEYPAD_ROOT = "cover_search_t9_keypad"
     const val SEARCH_CONTENT_CONTAINER_WITH_IME_PADDING = "cover_search_content_with_ime_padding"
     const val SEARCH_CONTENT_CONTAINER_NO_IME_PADDING = "cover_search_content_no_ime_padding"
+    const val SEARCH_OPEN_AFFORDANCE_BUTTON = "cover_search_open_affordance_button"
+    const val QUICK_SETTINGS_PANEL = "cover_quick_settings_panel"
 }
 

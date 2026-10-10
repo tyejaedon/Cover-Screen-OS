@@ -18,6 +18,13 @@
          platform silently rejects vibrate() calls (AppOps "Operation not started ... op=VIBRATE"). -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Quick Settings overlay: WiFi/Bluetooth state + best-effort toggle, flashlight,
+         and brightness control. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -47,6 +54,15 @@
         </intent>
         <intent>
             <action android:name="android.settings.INPUT_METHOD_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.WIFI_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.BLUETOOTH_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.action.MANAGE_WRITE_SETTINGS" />
         </intent>
     </queries>
 

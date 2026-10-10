@@ -7,6 +7,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -132,6 +133,27 @@ class CoverAppGridOverlayInputModeInstrumentedTest {
     }
 
     @Test
+    fun `swipe down on lockscreen opens quick settings and tapping outside dismisses it`() {
+        launchOverlay(initialMode = KeyboardStrategy.T9)
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.LOCKSCREEN_TILE_PAGE)
+            .performTouchInput { swipeDown() }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.QUICK_SETTINGS_PANEL)
+            .assertExists()
+
+        // Tapping the scrim area outside the sheet dismisses it, mirroring the system
+        // quick-settings shade.
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.QUICK_SETTINGS_PANEL)
+            .performTouchInput { click(bottomCenter) }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.QUICK_SETTINGS_PANEL)
+            .assertDoesNotExist()
+    }
+
+    @Test
     fun `dismiss button hides T9 keypad so other widgets can be interacted with`() {
         launchOverlay(initialMode = KeyboardStrategy.T9)
         navigateToSearchWidgetPage()
@@ -200,8 +222,8 @@ class CoverAppGridOverlayInputModeInstrumentedTest {
     }
 
     private fun navigateToSearchWidgetPage() {
-        composeRule.onNodeWithTag(CoverSearchUiTestTags.LOCKSCREEN_TILE_PAGE)
-            .performTouchInput { swipeDown() }
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_OPEN_AFFORDANCE_BUTTON)
+            .performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_WIDGET_GRID_PAGE)
             .assertExists()

@@ -45,6 +45,10 @@ object AppPermissionHelper {
         return ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
+    fun hasBluetoothConnectPermission(context: Context): Boolean {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+    }
+
     fun isAccessibilityServiceEnabled(context: Context): Boolean {
         return isAccessibilityServiceEnabled(context, CoverAccessibilityService::class.java)
     }

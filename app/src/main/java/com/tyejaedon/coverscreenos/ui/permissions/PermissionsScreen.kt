@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.BatterySaver
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -65,7 +66,8 @@ internal enum class PermissionId(val group: PermissionGroup) {
     BATTERY_EXEMPTION(PermissionGroup.REQUIRED),
     INPUT_ACCESSIBILITY(PermissionGroup.RECOMMENDED),
     MEDIA(PermissionGroup.OPTIONAL),
-    MICROPHONE(PermissionGroup.OPTIONAL)
+    MICROPHONE(PermissionGroup.OPTIONAL),
+    BLUETOOTH(PermissionGroup.OPTIONAL)
 }
 
 internal data class PermissionGrants(
@@ -75,7 +77,8 @@ internal data class PermissionGrants(
     val batteryExemption: Boolean,
     val inputAccessibility: Boolean,
     val media: Boolean,
-    val microphone: Boolean
+    val microphone: Boolean,
+    val bluetooth: Boolean
 ) {
     fun granted(id: PermissionId): Boolean = when (id) {
         PermissionId.NOTIFICATIONS -> notifications
@@ -85,6 +88,7 @@ internal data class PermissionGrants(
         PermissionId.INPUT_ACCESSIBILITY -> inputAccessibility
         PermissionId.MEDIA -> media
         PermissionId.MICROPHONE -> microphone
+        PermissionId.BLUETOOTH -> bluetooth
     }
 
     val requiredMissing: Boolean get() = PermissionId.entries.any {
@@ -103,7 +107,8 @@ internal data class PermissionGrants(
             batteryExemption = AppPermissionHelper.isBatteryOptimizationDisabled(context),
             inputAccessibility = AppPermissionHelper.isInputAccessibilityServiceEnabled(context),
             media = AppPermissionHelper.hasGalleryMediaPermissions(context),
-            microphone = AppPermissionHelper.hasMicrophonePermission(context)
+            microphone = AppPermissionHelper.hasMicrophonePermission(context),
+            bluetooth = AppPermissionHelper.hasBluetoothConnectPermission(context)
         )
     }
 }
@@ -149,6 +154,9 @@ fun PermissionsScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { refresh() }
     val microphoneLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { refresh() }
+    val bluetoothLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { refresh() }
 
@@ -215,6 +223,18 @@ fun PermissionsScreen(
                     openSettings(AppPermissionHelper.createAppDetailsSettingsIntent(context))
                 } else {
                     microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            }
+        ),
+        PermissionRowModel(
+            PermissionId.BLUETOOTH, "Bluetooth access",
+            "Lets the Quick Settings panel read and toggle Bluetooth directly.",
+            Icons.Filled.Bluetooth, grants.bluetooth,
+            {
+                if (grants.bluetooth) {
+                    openSettings(AppPermissionHelper.createAppDetailsSettingsIntent(context))
+                } else {
+                    bluetoothLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
                 }
             }
         )

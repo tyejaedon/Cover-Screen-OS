@@ -18,7 +18,8 @@ class PermissionsScreenTest {
 
     private val denied = PermissionGrants(
         notifications = false, launcherAccessibility = false, notificationListener = false,
-        batteryExemption = false, inputAccessibility = false, media = false, microphone = false
+        batteryExemption = false, inputAccessibility = false, media = false, microphone = false,
+        bluetooth = false
     )
 
     @Test
