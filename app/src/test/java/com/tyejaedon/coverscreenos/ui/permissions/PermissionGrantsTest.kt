@@ -14,7 +14,8 @@ class PermissionGrantsTest {
         batteryExemption = true,
         inputAccessibility = true,
         media = false,
-        microphone = false
+        microphone = false,
+        bluetooth = false
     )
 
     @Test
@@ -31,7 +32,7 @@ class PermissionGrantsTest {
             PermissionId.entries.filter { it.group == PermissionGroup.RECOMMENDED }
         )
         assertEquals(
-            listOf(PermissionId.MEDIA, PermissionId.MICROPHONE),
+            listOf(PermissionId.MEDIA, PermissionId.MICROPHONE, PermissionId.BLUETOOTH),
             PermissionId.entries.filter { it.group == PermissionGroup.OPTIONAL }
         )
     }

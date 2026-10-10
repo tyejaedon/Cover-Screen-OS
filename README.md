@@ -94,6 +94,9 @@ v                                                   v
 - `BIND_NOTIFICATION_LISTENER_SERVICE` – Read/dismiss notifications  
 - `QUERY_ALL_PACKAGES` – Build custom app drawer  
 - `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` – Prevent background killing  
+- `ACCESS_WIFI_STATE` / `CHANGE_WIFI_STATE` – Read and best-effort toggle WiFi from Quick Settings
+- `BLUETOOTH_CONNECT` – Read and best-effort toggle Bluetooth from Quick Settings (optional; grant from the Permissions screen)
+- `WRITE_SETTINGS` – Adjust screen brightness from Quick Settings (special permission, granted via a system prompt)
 The inner-display setup screen guides users through notifications, **Cover Screen OS Launcher** accessibility, notification access, and battery exemption with per-step status checks and system-settings shortcuts. For the cover keyboard fallback, also enable the separate **Cover Screen OS** input accessibility service; the readiness screen tracks both services independently. The launcher can start without the input service when using a system IME. Upgrades ignore the former legacy-host preference, so users who previously enabled only the input service must enable the launcher service too. Neither overlay requires the Draw over other apps permission.
 
 ---
@@ -128,6 +131,20 @@ The in-app home surface now includes a launcher customization hub focused on cov
   - Settings persist and are applied live to the overlay launcher.
 
 Settings are persisted with AndroidX DataStore in `LauncherSettingsStore`.
+
+## Quick Settings Overlay
+
+Swiping down on the lock page reveals a One-UI-style Quick Settings sheet with live system
+toggles. Tap the small search icon next to the lock/battery status pills to open search instead
+(swipe-down is reserved for Quick Settings).
+
+- **WiFi / Bluetooth:** reflect live adapter state; tapping attempts a direct toggle and falls
+  back to the system WiFi/Bluetooth settings screen when Android blocks the direct call (Android
+  10+ restricts WiFi, Android 13+ restricts Bluetooth without `BLUETOOTH_CONNECT`).
+- **Flashlight:** toggles the rear camera torch directly via `CameraManager`; stays in sync if the
+  torch is toggled elsewhere.
+- **Brightness:** a slider adjusts system screen brightness. The first interaction while the
+  `WRITE_SETTINGS` permission isn't granted opens the system "Modify system settings" prompt.
 
 ## Cover Launch Validation Checklist (Real Device)
 

@@ -52,6 +52,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -560,6 +561,7 @@ private fun InteractiveSection(
     var voiceHintMessage by remember { mutableStateOf<String?>(null) }
     var isVoiceListening by remember { mutableStateOf(false) }
     var isWidgetTileVisible by remember { mutableStateOf(false) }
+    var isQuickSettingsVisible by remember { mutableStateOf(false) }
     val inputTelemetryStore = remember(context) { InputTelemetryStore(context.applicationContext) }
 
     val voiceInputHandle = rememberVoiceInputHandle(
@@ -607,8 +609,17 @@ private fun InteractiveSection(
     }
 
     fun openWidgetTileFromLockscreen() {
-        if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX || isWidgetTileVisible) return
+        if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX || isWidgetTileVisible || isQuickSettingsVisible) return
         isWidgetTileVisible = true
+    }
+
+    fun openQuickSettingsFromLockscreen() {
+        if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX || isQuickSettingsVisible || isWidgetTileVisible) return
+        isQuickSettingsVisible = true
+    }
+
+    fun closeQuickSettings() {
+        isQuickSettingsVisible = false
     }
 
     fun returnToLockscreenFromWidgetTile() {
@@ -679,7 +690,7 @@ private fun InteractiveSection(
                         .fillMaxSize()
                         .hazeSource(state = hazeState)
                         .testTag(CoverSearchUiTestTags.OVERLAY_PAGER),
-                    userScrollEnabled = !isWidgetTileVisible,
+                    userScrollEnabled = !isWidgetTileVisible && !isQuickSettingsVisible,
                     pageSpacing = 10.dp,
                     beyondViewportPageCount = 0
                 ) { pageIndex ->
@@ -704,7 +715,7 @@ private fun InteractiveSection(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .testTag(CoverSearchUiTestTags.LOCKSCREEN_TILE_PAGE)
-                                        .pointerInput(isWidgetTileVisible, widgetSwipeThresholdPx) {
+                                        .pointerInput(isQuickSettingsVisible, widgetSwipeThresholdPx) {
                                             var cumulativeDrag = 0f
                                             detectVerticalDragGestures(
                                                 onVerticalDrag = { _, dragAmount ->
@@ -712,7 +723,7 @@ private fun InteractiveSection(
                                                 },
                                                 onDragEnd = {
                                                     if (cumulativeDrag >= widgetSwipeThresholdPx) {
-                                                        openWidgetTileFromLockscreen()
+                                                        openQuickSettingsFromLockscreen()
                                                     }
                                                     cumulativeDrag = 0f
                                                 },
@@ -743,6 +754,7 @@ private fun InteractiveSection(
                                             dismissSearchInput()
                                             onAppSelected(app)
                                         },
+                                        onOpenSearch = { openWidgetTileFromLockscreen() },
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 }
@@ -847,16 +859,30 @@ private fun InteractiveSection(
                     )
                 }
 
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isQuickSettingsVisible,
+                    enter = slideInVertically(initialOffsetY = { fullHeight -> -fullHeight }) + fadeIn(),
+                    exit = slideOutVertically(targetOffsetY = { fullHeight -> -fullHeight }) + fadeOut(),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    QuickSettingsPanelTile(
+                        onDismiss = { closeQuickSettings() },
+                        swipeUpThresholdPx = widgetSwipeThresholdPx,
+                        hazeState = hazeState,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
                 GridPageLetterTooltip(
                     letter = hintedGridLetter,
-                    visible = !isWidgetTileVisible && showPageLetterTooltip && hintedGridLetter != null,
+                    visible = !isWidgetTileVisible && !isQuickSettingsVisible && showPageLetterTooltip && hintedGridLetter != null,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = 6.dp)
                 )
             }
 
-            if (!isWidgetTileVisible) {
+            if (!isWidgetTileVisible && !isQuickSettingsVisible) {
                 PageIndicator(
                     pagerState = pagerState,
                     pageCount = totalPageCount,
@@ -883,6 +909,7 @@ private fun LockAndDockTile(
     onOpenAllApps: () -> Unit,
     onNotificationOpen: (CoverNotificationModel) -> Unit,
     onAppSelected: (AppModel) -> Unit,
+    onOpenSearch: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -904,17 +931,22 @@ private fun LockAndDockTile(
             ) {
 
 
-                if (batteryStatus != null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        if (isDeviceLocked) {
-                            LockStatusPill(
-                                isDeviceLocked = true,
-                                minHeight = displayPolishSpec.statusChipMinHeight
-                            )
-                        }
-                        Spacer(modifier = Modifier.weight(1f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    if (isDeviceLocked) {
+                        LockStatusPill(
+                            isDeviceLocked = true,
+                            minHeight = displayPolishSpec.statusChipMinHeight
+                        )
+                    }
+                    SearchAffordanceButton(
+                        onClick = onOpenSearch,
+                        minHeight = displayPolishSpec.statusChipMinHeight,
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    if (batteryStatus != null) {
                         BatteryStatusPill(status = batteryStatus)
                     }
                 }
@@ -1071,6 +1103,31 @@ private fun LockStatusPill(isDeviceLocked: Boolean, minHeight: Dp) {
         Icon(
             imageVector = if (isDeviceLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
             contentDescription = if (isDeviceLocked) "Locked" else "Unlocked",
+            tint = Color.White,
+            modifier = Modifier.size(12.dp)
+        )
+    }
+}
+
+/**
+ * Small, discrete affordance that opens the search/widget tile via tap. Swiping down on the
+ * lock page is reserved for the Quick Settings panel instead.
+ */
+@Composable
+private fun SearchAffordanceButton(onClick: () -> Unit, minHeight: Dp, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .testTag(CoverSearchUiTestTags.SEARCH_OPEN_AFFORDANCE_BUTTON)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.45f))
+            .heightIn(min = minHeight)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Search,
+            contentDescription = "Open search",
             tint = Color.White,
             modifier = Modifier.size(12.dp)
         )
