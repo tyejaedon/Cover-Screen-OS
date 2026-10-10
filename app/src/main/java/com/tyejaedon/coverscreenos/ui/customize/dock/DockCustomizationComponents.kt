@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.ui.settings
+package com.tyejaedon.coverscreenos.ui.customize.dock
 
 import android.widget.ImageView
 import android.graphics.drawable.Drawable

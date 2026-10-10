@@ -18,7 +18,6 @@ import com.tyejaedon.coverscreenos.datastore.MAX_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.MAX_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_DIM_AMOUNT
-import com.tyejaedon.coverscreenos.ui.settings.WallpaperCustomizationCard
 import java.io.IOException
 
 @Composable

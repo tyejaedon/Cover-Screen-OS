@@ -15,7 +15,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -41,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.getSystemService
@@ -63,6 +71,14 @@ import java.io.IOException
 
 private const val LOG_TAG = "CustomizeScreen"
 private const val MAX_SETTINGS_JSON_BYTES = 1024 * 1024
+
+private val CustomizeCategory.icon: ImageVector
+    get() = when (this) {
+        CustomizeCategory.WALLPAPER -> Icons.Filled.Wallpaper
+        CustomizeCategory.DOCK -> Icons.Filled.GridView
+        CustomizeCategory.APPEARANCE -> Icons.Filled.Brush
+        CustomizeCategory.INPUT -> Icons.Filled.Keyboard
+    }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -152,11 +168,13 @@ internal fun CustomizeScreen(
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         DropdownMenuItem(
                             text = { Text("Reset to defaults") },
+                            leadingIcon = { Icon(Icons.Filled.RestartAlt, contentDescription = null) },
                             onClick = { menuExpanded = false; confirmReset = true }
                         )
                         if (BuildConfig.DEBUG) {
                             DropdownMenuItem(
                                 text = { Text("Export settings") },
+                                leadingIcon = { Icon(Icons.Filled.Upload, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
                                     runCatching { exportLauncher.launch("coverscreenos-settings.json") }
@@ -168,6 +186,7 @@ internal fun CustomizeScreen(
                             )
                             DropdownMenuItem(
                                 text = { Text("Import settings") },
+                                leadingIcon = { Icon(Icons.Filled.Download, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
                                     runCatching { importLauncher.launch(arrayOf("application/json", "text/plain")) }
@@ -190,7 +209,8 @@ internal fun CustomizeScreen(
                         Tab(
                             selected = category == tab,
                             onClick = { onCategorySelected(tab) },
-                            text = { Text(tab.title) }
+                            text = { Text(tab.title) },
+                            icon = { Icon(tab.icon, contentDescription = null) }
                         )
                     }
                 }
@@ -204,6 +224,7 @@ internal fun CustomizeScreen(
                         CustomizeCategory.entries.forEach { item ->
                             NavigationDrawerItem(
                                 label = { Text(item.title) },
+                                icon = { Icon(item.icon, contentDescription = null) },
                                 selected = item == category,
                                 onClick = { onCategorySelected(item) }
                             )
