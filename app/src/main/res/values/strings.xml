@@ -1,5 +1,9 @@
 <resources>
     <string name="app_name">CoverScreenOS</string>
+    <string name="home_dashboard">Dashboard</string>
+    <string name="home_customize">Customize</string>
+    <string name="home_permissions">Permissions</string>
+    <string name="home_about">About</string>
     <string name="accessibility_service_description">Lets Cover Screen OS react to navigation and window changes on the cover display.</string>
     <string name="overlay_window_title">Cover Screen OS</string>
     <string name="overlay_window_subtitle">Overlay active</string>

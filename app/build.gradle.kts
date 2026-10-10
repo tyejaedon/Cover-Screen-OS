@@ -20,7 +20,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("boolean", "NEW_HOME_UI", "false")
+        }
         release {
+            buildConfigField("boolean", "NEW_HOME_UI", "false")
             optimization {
                 enable = false
             }
@@ -32,6 +36,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     testOptions {
         unitTests {
@@ -55,6 +60,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.navigation.compose)
     implementation(libs.haze)
 // Optional preset styling:
     implementation(libs.haze.materials)
