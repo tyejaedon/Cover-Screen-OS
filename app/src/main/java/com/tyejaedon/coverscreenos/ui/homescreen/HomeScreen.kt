@@ -22,7 +22,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,12 +37,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
+import com.tyejaedon.coverscreenos.ui.dashboard.rememberDashboardState
 import com.tyejaedon.coverscreenos.ui.homescreen.customization.HomeCustomizationHub
 import com.tyejaedon.coverscreenos.ui.launcher.OverlayLayoutSpec
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
 import com.tyejaedon.coverscreenos.ui.theme.coverTopLevelSafeInsets
-import kotlinx.coroutines.delay
-import kotlin.time.Duration.Companion.seconds
 
 private const val HOME_SCREEN_LOG_TAG = "HomeScreen"
 
@@ -52,6 +50,7 @@ fun HomeScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val hapticFeedback = LocalHapticFeedback.current
     var refreshTicker by remember { mutableIntStateOf(0) }
+    val dashboardState = rememberDashboardState(refreshTicker)
 
     val requestNotificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -75,24 +74,12 @@ fun HomeScreen(modifier: Modifier = Modifier) {
         refreshTicker += 1
     }
 
-    var accessibilityReady by remember(refreshTicker) {
-        mutableStateOf(AppPermissionHelper.isAccessibilityServiceEnabled(context))
-    }
-    var inputAccessibilityReady by remember(refreshTicker) {
-        mutableStateOf(AppPermissionHelper.isInputAccessibilityServiceEnabled(context))
-    }
-    var notificationReady by remember(refreshTicker) {
-        mutableStateOf(AppPermissionHelper.hasNotificationPermission(context))
-    }
-    var notificationListenerReady by remember(refreshTicker) {
-        mutableStateOf(AppPermissionHelper.isNotificationListenerEnabled(context))
-    }
-    var batteryOptimizationReady by remember(refreshTicker) {
-        mutableStateOf(AppPermissionHelper.isBatteryOptimizationDisabled(context))
-    }
-    var serviceRunning by remember(refreshTicker) {
-        mutableStateOf(ForegroundServiceHelper.isForegroundServiceRunning())
-    }
+    val accessibilityReady = dashboardState.permissions.launcherAccessibility
+    val inputAccessibilityReady = dashboardState.permissions.inputAccessibility
+    val notificationReady = dashboardState.permissions.notifications
+    val notificationListenerReady = dashboardState.permissions.notificationListener
+    val batteryOptimizationReady = dashboardState.permissions.batteryExemption
+    val serviceRunning = dashboardState.runtime.serviceActive
     var settingsLaunchError by remember { mutableStateOf<String?>(null) }
 
     /**
@@ -119,20 +106,7 @@ fun HomeScreen(modifier: Modifier = Modifier) {
     }
 
     fun refreshStatus() {
-        notificationReady = AppPermissionHelper.hasNotificationPermission(context)
-        accessibilityReady = AppPermissionHelper.isAccessibilityServiceEnabled(context)
-        inputAccessibilityReady = AppPermissionHelper.isInputAccessibilityServiceEnabled(context)
-        notificationListenerReady = AppPermissionHelper.isNotificationListenerEnabled(context)
-        batteryOptimizationReady = AppPermissionHelper.isBatteryOptimizationDisabled(context)
-        serviceRunning = ForegroundServiceHelper.isForegroundServiceRunning()
-    }
-
-    // Keep status cards fresh even when users toggle settings outside this screen.
-    LaunchedEffect(Unit) {
-        while (true) {
-            refreshStatus()
-            delay(5.seconds)
-        }
+        refreshTicker += 1
     }
 
     BoxWithConstraints(
@@ -238,7 +212,7 @@ fun HomeScreen(modifier: Modifier = Modifier) {
                     )
                 }
 
-                HomeRuntimeControls()
+                HomeRuntimeControls(isServiceRunning = serviceRunning)
 
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(

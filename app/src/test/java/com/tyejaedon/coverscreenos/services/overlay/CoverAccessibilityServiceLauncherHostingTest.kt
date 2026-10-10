@@ -76,6 +76,7 @@ class CoverAccessibilityServiceLauncherHostingTest {
 
         assertSame(host, service.launcherHost)
         assertSame(host, CoverAccessibilityService.currentLauncherHost())
+        assertTrue(ForegroundService.runtime.value.launcherHostActive)
     }
 
     @Test
@@ -92,6 +93,7 @@ class CoverAccessibilityServiceLauncherHostingTest {
 
         assertSame(host, service.launcherHost)
         assertSame(host, CoverAccessibilityService.currentLauncherHost())
+        assertTrue(ForegroundService.runtime.value.launcherHostActive)
     }
 
     @Test
