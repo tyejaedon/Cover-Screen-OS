@@ -5,6 +5,9 @@ import com.tyejaedon.coverscreenos.ui.launcher.rememberPackageLabel
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -66,6 +69,22 @@ import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
 import dev.chrisbanes.haze.HazeState
 
 private const val NOTIFICATION_RECENT_WINDOW_MS = 60L * 60L * 1000L // "Now" vs "Earlier" boundary.
+
+private val notificationGroupExpandEnter = fadeIn(animationSpec = tween(180, delayMillis = 50)) +
+    expandVertically(
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        )
+    )
+
+private val notificationGroupExpandExit = fadeOut(animationSpec = tween(120)) +
+    shrinkVertically(
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        )
+    )
 
 private data class NotificationProviderGroup(
     val packageName: String,
@@ -394,8 +413,8 @@ private fun NotificationProviderGroupCard(
 
             AnimatedVisibility(
                 visible = providerNotifications.size > 2,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
+                enter = notificationGroupExpandEnter,
+                exit = notificationGroupExpandExit
             ) {
                 val hiddenCount = (providerNotifications.size - visibleNotifications.size).coerceAtLeast(0)
                 Box(
