@@ -53,8 +53,7 @@ class InputCapabilityDetector(context: Context) {
         val allInputMethods = inputMethodManager?.inputMethodList.orEmpty()
         val inputMethodById = allInputMethods.associateBy { normalizeImeId(it.id) }
 
-        val enabledRaw = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_INPUT_METHODS)
-        val enabledIds = parseEnabledInputMethodIds(enabledRaw)
+        val enabledIds = readEnabledInputMethodIds()
         val enabledEntries = enabledIds.map { imeId ->
             toInputMethodEntry(
                 imeId = imeId,
@@ -62,9 +61,7 @@ class InputCapabilityDetector(context: Context) {
             )
         }
 
-        val defaultImeId = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-            ?.trim()
-            ?.takeUnless { it.isEmpty() }
+        val defaultImeId = readDefaultInputMethodId()
         val defaultImeEntry = defaultImeId?.let { imeId ->
             toInputMethodEntry(
                 imeId = imeId,
@@ -132,6 +129,32 @@ class InputCapabilityDetector(context: Context) {
             label = resolvedLabel,
             packageName = packageName
         )
+    }
+
+    // Uses the public API first. Reading Settings.Secure for enabled keyboards is blocked
+    // on apps targeting SDK 34+ and throws SecurityException, so it is only a fallback.
+    private fun readEnabledInputMethodIds(): List<String> {
+        val fromManager = runCatching { inputMethodManager?.enabledInputMethodList.orEmpty() }
+            .getOrDefault(emptyList())
+            .map { it.id }
+            .distinct()
+        if (fromManager.isNotEmpty()) return fromManager
+
+        return runCatching {
+            parseEnabledInputMethodIds(
+                Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_INPUT_METHODS)
+            )
+        }.getOrDefault(emptyList())
+    }
+
+    // Default keyboard is read on a best-effort basis. Some Android versions block this
+    // setting too, so a failed read returns null instead of crashing the screen.
+    private fun readDefaultInputMethodId(): String? {
+        return runCatching {
+            Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+        }.getOrNull()
+            ?.trim()
+            ?.takeUnless { it.isEmpty() }
     }
 
     private fun isSamsungDevice(): Boolean {
