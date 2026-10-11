@@ -51,6 +51,17 @@ data class RuntimeSnapshot(
     val events: List<OverlayEvent> = emptyList()
 )
 
+/**
+ * Persistent runtime engine for display monitoring, overlay policy, and app launches.
+ *
+ * This service supplies a [LauncherOverlayHost] and delegates window commands
+ * through [OverlayWindowController]. [CoverAccessibilityService], not this
+ * service, owns the launcher Compose window and its accessibility token.
+ *
+ * A special-use foreground notification supports the started session. Normal
+ * start requests use [START_STICKY] for system-managed recovery; explicit stop
+ * and rejected setup requests do not. Android and OEM restrictions still apply.
+ */
 class ForegroundService : Service() {
     companion object {
         private val mutableRuntime = MutableStateFlow(RuntimeSnapshot())
@@ -408,6 +419,15 @@ class ForegroundService : Service() {
         CoverAccessibilityService.attachLauncherHost(host)
     }
 
+    /**
+     * Handles start, stop, and launch-suppression commands.
+     *
+     * A null Intent is a restart request and follows the normal start path,
+     * rebuilding monitoring after [onCreate] restores the runtime dependencies.
+     * Successful normal starts return [START_STICKY]; stop, hide-overlay, and
+     * failed setup paths return [START_NOT_STICKY]. The last command result
+     * controls the restart request; sticky mode does not prevent force-stop.
+     */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {

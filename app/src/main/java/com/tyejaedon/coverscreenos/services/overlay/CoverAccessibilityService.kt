@@ -23,6 +23,18 @@ import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import java.lang.ref.WeakReference
 import kotlinx.coroutines.launch
 
+/**
+ * Owns the launcher's accessibility overlay window on the selected cover display.
+ *
+ * [ForegroundService] supplies dependencies through [LauncherOverlayHost] and
+ * sends window commands through [OverlayWindowController]. This connected
+ * service provides the token for [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY];
+ * the shared [CoverComposeSurface] handles the display-scoped WindowManager,
+ * Compose lifecycle, and view cleanup. No draw-over-other-apps grant is needed.
+ *
+ * Foreground and navigation events feed runtime suppression/reclaim policy.
+ * Unbinding or destroying this service detaches its launcher surface.
+ */
 @SuppressLint("AccessibilityPolicy")
 class CoverAccessibilityService : AccessibilityService() {
     companion object {
