@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Project contributing guide
+    url: /CONTRIBUTING.md
+    about: Read the repo flow before filing a new issue.
+
