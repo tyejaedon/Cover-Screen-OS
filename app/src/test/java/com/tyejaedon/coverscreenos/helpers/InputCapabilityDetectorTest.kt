@@ -1,6 +1,8 @@
 package com.tyejaedon.coverscreenos.helpers
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class InputCapabilityDetectorTest {
@@ -16,6 +18,14 @@ class InputCapabilityDetectorTest {
             listOf("com.example.alpha/.AlphaIme", "com.example.beta/.BetaIme"),
             parsed
         )
+    }
+
+    @Test
+    fun `enabled input methods setting is only readable up to target sdk 33`() {
+        assertTrue(canReadEnabledInputMethodsSetting(30))
+        assertTrue(canReadEnabledInputMethodsSetting(33))
+        assertFalse(canReadEnabledInputMethodsSetting(34))
+        assertFalse(canReadEnabledInputMethodsSetting(37))
     }
 
     @Test

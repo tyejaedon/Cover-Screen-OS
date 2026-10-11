@@ -1,5 +1,6 @@
 package com.tyejaedon.coverscreenos.ui.customize.input
 
+import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -89,13 +91,20 @@ internal fun InputCustomizationCard(
     val inputTelemetryStore = remember(appContext) { InputTelemetryStore(appContext) }
     val telemetryCounters by inputTelemetryStore.counters.collectAsState(initial = InputTelemetryCounters())
     var localRefreshNonce by remember { mutableIntStateOf(0) }
+    var capabilityLoadFailed by remember { mutableStateOf(false) }
     val capabilitySnapshot by produceState<InputCapabilitySnapshot?>(
         initialValue = null,
         key1 = context,
         key2 = capabilityRefreshNonce,
         key3 = localRefreshNonce
     ) {
-        value = InputCapabilityDetector(context).detect()
+        // Keyboard status is informational, so a failed read must never crash the app.
+        val result = runCatching { InputCapabilityDetector(context).detect() }
+        result.exceptionOrNull()?.let { error ->
+            Log.w("InputCustomization", "Could not read input method status", error)
+        }
+        capabilityLoadFailed = result.isFailure
+        value = result.getOrNull()
     }
     val oemRestrictionHint = capabilitySnapshot?.oemRestrictionHint
 
@@ -140,6 +149,7 @@ internal fun InputCustomizationCard(
 
             InputCapabilityStatusCard(
                 capabilitySnapshot = capabilitySnapshot,
+                capabilityLoadFailed = capabilityLoadFailed,
                 telemetryCounters = telemetryCounters,
                 onRefreshRequested = {
                     localRefreshNonce += 1
@@ -420,6 +430,7 @@ private fun KeyboardSizeAndAnchorControls(
 @Composable
 private fun InputCapabilityStatusCard(
     capabilitySnapshot: InputCapabilitySnapshot?,
+    capabilityLoadFailed: Boolean,
     telemetryCounters: InputTelemetryCounters,
     onRefreshRequested: () -> Unit,
     modifier: Modifier = Modifier
@@ -445,7 +456,11 @@ private fun InputCapabilityStatusCard(
 
             if (capabilitySnapshot == null) {
                 Text(
-                    text = "Loading input-method status...",
+                    text = if (capabilityLoadFailed) {
+                        "Input-method status is unavailable on this device."
+                    } else {
+                        "Loading input-method status..."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -132,13 +132,17 @@ class InputCapabilityDetector(context: Context) {
     }
 
     // Uses the public API first. Reading Settings.Secure for enabled keyboards is blocked
-    // on apps targeting SDK 34+ and throws SecurityException, so it is only a fallback.
+    // on apps targeting SDK 34+ and throws SecurityException, so it is only a fallback
+    // for older target SDKs.
     private fun readEnabledInputMethodIds(): List<String> {
         val fromManager = runCatching { inputMethodManager?.enabledInputMethodList.orEmpty() }
             .getOrDefault(emptyList())
             .map { it.id }
             .distinct()
         if (fromManager.isNotEmpty()) return fromManager
+        if (!canReadEnabledInputMethodsSetting(appContext.applicationInfo.targetSdkVersion)) {
+            return emptyList()
+        }
 
         return runCatching {
             parseEnabledInputMethodIds(
@@ -189,6 +193,11 @@ internal fun availabilityTierForPercent(percent: Int): InputAvailabilityTier {
         percent >= 65 -> InputAvailabilityTier.MODERATE
         else -> InputAvailabilityTier.LOW
     }
+}
+
+// Android only lets apps targeting SDK 33 or lower read Settings.Secure.ENABLED_INPUT_METHODS.
+internal fun canReadEnabledInputMethodsSetting(targetSdkVersion: Int): Boolean {
+    return targetSdkVersion <= Build.VERSION_CODES.TIRAMISU
 }
 
 internal fun parseEnabledInputMethodIds(rawValue: String?): List<String> {
