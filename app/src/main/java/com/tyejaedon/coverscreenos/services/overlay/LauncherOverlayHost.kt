@@ -14,12 +14,12 @@ import kotlinx.coroutines.flow.StateFlow
  * launcher `CoverAppGridOverlay` composition without having to reach back
  * into the foreground service for anything.
  *
- * This is a **Phase 2** plumbing artefact: the AS only stores the reference
- * today. Phase 3 flips a feature flag and the AS uses this host to actually
- * mount a [com.tyejaedon.coverscreenos.overlay.surface.CoverComposeSurface].
+ * The accessibility service uses this host to mount a
+ * [com.tyejaedon.coverscreenos.overlay.surface.CoverComposeSurface] and observe
+ * settings and lock state. The foreground service owns the handoff lifetime.
  *
- * All fields are read-only. Mutation happens only through the two callbacks
- * ([onAppSelected], [persistKeyboardStrategy]), whose implementations live
+ * All fields are read-only. Runtime commands use the callbacks
+ * ([onAppSelected], [persistKeyboardStrategy], [onRequestUnlock]), whose implementations live
  * inside the foreground service so the AS never learns about
  * `CoverLaunchCoordinator` or `CoverAppLauncher` internals.
  *
@@ -55,4 +55,3 @@ class LauncherOverlayHost internal constructor(
     /** Convenience alias for `launcherSettingsStore.settings`. */
     val settings: Flow<LauncherSettings> get() = launcherSettingsStore.settings
 }
-

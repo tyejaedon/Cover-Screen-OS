@@ -1,195 +1,192 @@
-# 📱 Cover Screen OS
+# Cover Screen OS
 
-![Kotlin](https://img.shields.io/badge/Kotlin-1.9-blue?logo=kotlin)
-![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-UI-green?logo=jetpackcompose)
-![Android](https://img.shields.io/badge/Android-Overlay-orange?logo=android)
-![License](https://img.shields.io/badge/License-MIT-lightgrey)
-![Build](https://img.shields.io/badge/Build-Passing-brightgreen)
+An Android launcher surface for the outer display of clamshell foldable phones.
+Cover Screen OS uses an accessibility-owned overlay instead of replacing the
+phone's default Home app. The inner-display app handles setup and customization;
+the cover surface provides an app drawer, dock, notifications, media controls,
+search, and Quick Settings.
 
-**Cover Screen OS** is a specialized Android application designed to transform the outer cover display of clamshell foldable smartphones (such as the Samsung Galaxy Z Flip series) into a fully functional, customizable desktop environment.
+**Requirements:** Android 14+ (API 34) and a device that exposes a usable secondary
+display. Cover-display behavior depends on the phone's Android and OEM build.
 
-Since Android OEMs (like Samsung) do not natively allow replacing the cover screen's default Home App via standard system settings, Cover Screen OS uses an **accessibility-service-hosted overlay** on the cover display by default. It detects the secondary hardware display and attaches an interactive Jetpack Compose UI to launch full Android applications, render interactive widgets, and display notifications.
+## Documentation
 
----
+| Guide | Purpose |
+| --- | --- |
+| [New Project: architecture and setup](docs/architecture/new-project.md) | Current system blueprint, ownership, lifecycle, source map, and development setup |
+| [Contributing](CONTRIBUTING.md) | Issue, milestone, branch, and PR workflow |
+| [Agent protocol](docs/agent-protocol.md) | Repository rules for automated contributions |
+| [Module organization plan](docs/architecture/module-organization-plan.md) | Proposed package/module organization, not the current build structure |
+| [Overlay migration history](docs/architecture/Overlay-architecture-shift-plan.md) | How the launcher moved to accessibility hosting |
 
-## Project Organization
+The architecture guide describes implemented behavior. Older plans describe
+design goals and migration stages; they are not proof that a feature has shipped.
 
-A staged module-organization roadmap is documented in `docs/architecture/module-organization-plan.md`.
+## System architecture blueprint
 
----
+```mermaid
+flowchart TD
+    Setup["Inner display: MainActivity / AppShell"]
+    Settings["DataStore: launcher settings"]
+    Engine["ForegroundService: runtime and launch policy"]
+    Signals["DisplayManager, screen/lock events, foreground/call signals"]
+    Host["LauncherOverlayHost: flows and callbacks"]
+    Accessibility["CoverAccessibilityService: launcher window owner"]
+    Surface["CoverComposeSurface: WindowManager + ComposeView"]
+    Cover["Cover display: launcher UI"]
+    Notifications["CoverNotificationListenerService"]
+    Apps["CoverAppLauncher: ActivityOptions launch display"]
 
-## 🏗 System Architecture Blueprint
+    Setup --> Settings
+    Setup -->|"start / stop"| Engine
+    Signals --> Engine
+    Engine --> Host
+    Settings --> Host
+    Host --> Accessibility
+    Engine -->|"show / suppress / detach"| Accessibility
+    Accessibility --> Surface
+    Surface --> Cover
+    Notifications -->|"notifications and media"| Cover
+    Notifications -->|"call state"| Engine
+    Cover -->|"app selection"| Engine
+    Engine --> Apps
+```
 
-+-----------------------------------------------------------------------+
-|                            COVER Screen OS ENGINE                            |
-+-----------------------------------------------------------------------+
-|
-+-------------------------+-------------------------+
-|                                                   |
-v                                                   v
-+-------------------------+                         +-------------------------+
-| Hardware & State Subsys |                         | Window & Layout Subsys  |
-+-------------------------+                         +-------------------------+
-| • DisplayManager        |                         | • Accessibility service |
-|   (Target Cover Display)|                         |   (TYPE_ACCESSIBILITY_  |
-| • Jetpack WindowManager |                         |    OVERLAY)             |
-|   (Hinge / Fold State)  |                         | • Jetpack Compose       |
-| • Foreground Service    |                         |   (Cover UI Viewport)   |
-+-------------------------+                         +-------------------------+
-|                                                   |
-+-------------------------+-------------------------+
-|
-+-------------------------+-------------------------+
-|                                                   |
-v                                                   v
-+-------------------------+                         +-------------------------+
-| App & Widget Engine     |                         | System Intercept Subsys |
-+-------------------------+                         +-------------------------+
-| • ActivityLauncher      |                         | • AccessibilityService  |
-|   (setLaunchDisplayId)  |                         |   (Back / Home Gestures)|
-| • AppWidgetHost         |                         | • NotificationListener  |
-|   (3rd-Party Widgets)   |                         |   (Read / Dismiss / UI) |
-+-------------------------+                         +-------------------------+
+The foreground service is the persistent runtime engine, **not the window
+owner**. The launcher accessibility service attaches a `TYPE_ACCESSIBILITY_OVERLAY`
+window on the selected display. The shared surface supplies the lifecycle and
+saved-state owners that Compose needs outside an Activity.
 
+App launches request a display through `ActivityOptions`. The runtime hides the
+launcher while another app or a system prompt needs focus, then restores it when
+the relevant policy allows. A foreground notification and `START_STICKY` support
+recovery; neither guarantees survival of force-stop or OEM process restrictions.
+See the [lifecycle details](docs/architecture/new-project.md#foreground-service-lifecycle).
 
-### 🔍 Core Subsystem Breakdown
-1. **Hardware & State Subsystem**
-   - Detects secondary display via `DisplayManager`
-   - Monitors hinge/fold state with Jetpack `WindowManager`
-   - Runs persistent Foreground Service to survive OEM battery optimizations  
+## Build and install
 
-2. **Window & Layout Subsystem**
-   - Attaches `ComposeView` overlays to secondary display
-   - Provides adaptive grid layouts optimized for cover screen  
+Use Android Studio with JDK 21 and the Android SDK platform matching
+`compileSdk` 37. The app targets API 37. Versions are pinned in the
+[version catalog](gradle/libs.versions.toml) and
+[Gradle wrapper](gradle/wrapper/gradle-wrapper.properties).
 
-3. **App & Widget Execution Engine**
-   - Routes apps to cover display via `ActivityOptions.setLaunchDisplayId()`
-   - Hosts third-party widgets using `AppWidgetHost`  
+1. Clone the repository and open it in Android Studio.
+2. Set `ANDROID_HOME` to your Android SDK, or set `sdk.dir` in an untracked `local.properties`.
+3. Build the debug APK with the wrapper:
 
-4. **System Intercept Subsystem**
-   - Captures navigation gestures with `AccessibilityService`
-   - Displays and manages notifications via `NotificationListenerService`
+```sh
+bash gradlew :app:assembleDebug
+```
 
----
+The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. Install it
+through Android Studio or, with an authorized device connected:
 
-## ⚙️ Technical Stack & Android APIs
+```sh
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-| **Layer** | **Technology / API** | **Function** |
-|-----------|-----------------------|--------------|
-| Language | Kotlin | Core application development |
-| UI Framework | Jetpack Compose | Reactive layout rendering |
-| Concurrency | Coroutines & Flow | Async event processing |
-| Display API | `DisplayManager` | Detect secondary hardware display |
-| Window API | `WindowManager` | Overlay views with `TYPE_ACCESSIBILITY_OVERLAY` |
-| App Routing | `ActivityOptions` | Force app execution on cover display |
-| Widget Engine | `AppWidgetHost` | Embed third-party widgets |
-| Permissions | System Services | Accessibility, Notification Listener, Notifications, Battery exemption |
+## Required setup and permissions
 
----
+Open the inner-display app's **Permissions** screen and complete the core
+readiness checklist before starting the launcher:
 
-## 🔑 Required Permissions
+- [ ] Allow notifications (`POST_NOTIFICATIONS`).
+- [ ] Enable **Cover Screen OS Launcher** in Android Accessibility settings.
+- [ ] Grant Cover Screen OS notification access.
+- [ ] Allow the app to ignore battery optimizations.
 
-- `POST_NOTIFICATIONS` – Persistent foreground notification (Android 13+)
-- `BIND_ACCESSIBILITY_SERVICE` – Intercept gestures  
-- `BIND_NOTIFICATION_LISTENER_SERVICE` – Read/dismiss notifications  
-- `QUERY_ALL_PACKAGES` – Build custom app drawer  
-- `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` – Prevent background killing  
-- `ACCESS_WIFI_STATE` / `CHANGE_WIFI_STATE` – Read and best-effort toggle WiFi from Quick Settings
-- `BLUETOOTH_CONNECT` – Read and best-effort toggle Bluetooth from Quick Settings (optional; grant from the Permissions screen)
-- `WRITE_SETTINGS` – Adjust screen brightness from Quick Settings (special permission, granted via a system prompt)
-The inner-display setup screen guides users through notifications, **Cover Screen OS Launcher** accessibility, notification access, and battery exemption with per-step status checks and system-settings shortcuts. For the cover keyboard fallback, also enable the separate **Cover Screen OS** input accessibility service; the readiness screen tracks both services independently. The launcher can start without the input service when using a system IME. Upgrades ignore the former legacy-host preference, so users who previously enabled only the input service must enable the launcher service too. Neither overlay requires the Draw over other apps permission.
+The foreground-service start helper checks all four. Permission revocation can
+stop the runtime. Battery exemption reduces restrictions; it does not prevent
+every OEM background kill.
 
----
+### Manifest declarations and service access
 
-## Install and use the CoverScreenOS keyboard
+| Permission or declaration | How it is used |
+| --- | --- |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Declared for the persistent engine; its service uses the `specialUse` type |
+| `BIND_ACCESSIBILITY_SERVICE` | Guards the two accessibility service components; users enable them in Settings, not a runtime permission dialog |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | Guards the notification listener; users grant notification access in Settings |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Allows the app to open the battery-exemption request |
+| `RECEIVE_BOOT_COMPLETED` | Allows boot and package-update startup requests, subject to readiness and Android restrictions |
+| Launcher-intent `<queries>` | Makes launchable apps visible to the app scanner without `QUERY_ALL_PACKAGES` |
 
-1. Install the app APK on the phone (or run the `app` configuration from Android Studio).
-2. Open Android **Settings → System → Keyboard → On-screen keyboard → Manage on-screen keyboards** and enable **CoverScreenOS Keyboard**. On Samsung phones, look under **General management → Keyboard list and default** instead.
-3. Open a text field and use the system keyboard picker (keyboard icon in the navigation bar or **Change keyboard** in the notification shade) to select **CoverScreenOS Keyboard**. To use it everywhere by default, set it as the default keyboard in the same system settings page.
-4. The keyboard starts in QWERTY for text and numeric mode for number, phone, and date/time fields. Tap **ABC**, **T9**, **123**, or **#+=** to change layouts while typing. From the keyboard's entry in Android's keyboard settings, open **Settings** to choose a separate default layout for each field class.
+**`SYSTEM_ALERT_WINDOW` is not required or declared.** Both overlays use
+accessibility-service-owned windows. There is no legacy "Draw over other apps"
+launcher mode.
 
-The system IME writes through each app's `InputConnection`; it does not require accessibility-based text injection. Enabling the keyboard is separate from granting accessibility access for the cover launcher.
-Contact-name suggestions are optional and require explicit consent in keyboard Settings plus a `READ_CONTACTS` grant; turning either off disables them.
+### Optional feature access
 
----
+| Permission or access | Feature |
+| --- | --- |
+| Separate **Cover Screen OS** input accessibility service | Cover typing fallback in other apps; not required just to run the launcher |
+| Enable/select **CoverScreenOS Keyboard** in keyboard settings (`BIND_INPUT_METHOD` service guard) | System IME using the target app's `InputConnection` |
+| `RECORD_AUDIO` | Voice input |
+| `READ_CONTACTS` plus explicit consent in keyboard settings | Contact-name suggestions |
+| `READ_MEDIA_VISUAL_USER_SELECTED` | Selected-image access offered by setup; wallpaper selection uses an image URI |
+| `BLUETOOTH_CONNECT` | Bluetooth state and best-effort Quick Settings actions |
+| `WRITE_SETTINGS` | Brightness control; granted through "Modify system settings" |
+| `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE` | WiFi state and best-effort actions; Android may require opening system settings instead |
+| `USE_BIOMETRIC` | System unlock bridge where available |
+| `VIBRATE` | Haptic feedback |
 
-## Launcher Customization Hub
+The [manifest](app/src/main/AndroidManifest.xml) is the source of truth for
+declarations. Optional access is not part of the core launcher-start checklist.
 
-The in-app home surface now includes a launcher customization hub focused on cover-display ergonomics.
+## Using the launcher
 
-- **Dock management:**
-  - Long-press + drag to reorder four dock slots.
-  - Haptic feedback and lift/shadow animation while dragging for tactile precision.
-  - Neighboring slots softly "snap" aside during drag to clarify insertion target.
-  - Choose and clear apps per slot.
-  - Dock slot choices persist across restarts.
-- **Wallpaper controls:**
-  - Pick any local image URI as cover wallpaper.
-  - Choose wallpaper scale mode: `Crop` or `Fit`.
-  - Tune readability with dim overlay and blur sliders.
-  - One-tap reset restores dock + wallpaper style defaults, with an Undo snackbar.
-  - Settings persist and are applied live to the overlay launcher.
+Fold the phone with the runtime enabled and a usable cover display available.
+The cover launcher has notification, lock, and app-grid pages. Tap a grid or dock
+entry to request an app launch; locked-device launches use the system unlock
+bridge. On the lock page, swipe down for Quick Settings or tap search for the
+search/input surface.
 
-Settings are persisted with AndroidX DataStore in `LauncherSettingsStore`.
+Use **Customize** on the inner display to select and reorder dock apps, show or
+hide the dock, choose wallpaper and its crop/fit mode, adjust dim/blur, and tune
+appearance or input settings. Changes are persisted in DataStore and observed
+by the launcher.
 
-## Quick Settings Overlay
+Quick Settings reflects WiFi and Bluetooth state, offers flashlight control,
+and adjusts brightness when allowed. Restricted actions can open system
+settings instead of changing a toggle directly.
 
-Swiping down on the lock page reveals a One-UI-style Quick Settings sheet with live system
-toggles. Tap the small search icon next to the lock/battery status pills to open search instead
-(swipe-down is reserved for Quick Settings).
+### System keyboard
 
-- **WiFi / Bluetooth:** reflect live adapter state; tapping attempts a direct toggle and falls
-  back to the system WiFi/Bluetooth settings screen when Android blocks the direct call (Android
-  10+ restricts WiFi, Android 13+ restricts Bluetooth without `BLUETOOTH_CONNECT`).
-- **Flashlight:** toggles the rear camera torch directly via `CameraManager`; stays in sync if the
-  torch is toggled elsewhere.
-- **Brightness:** a slider adjusts system screen brightness. The first interaction while the
-  `WRITE_SETTINGS` permission isn't granted opens the system "Modify system settings" prompt.
+Enable **CoverScreenOS Keyboard** under Android keyboard settings, then select
+it with the system keyboard picker. On Samsung phones, look under
+**General management > Keyboard list and default**. Keyboard settings allow
+separate defaults for field classes; the keyboard also offers QWERTY, T9,
+numeric, and symbol layouts.
 
-## Cover Launch Validation Checklist (Real Device)
+The system IME is separate from the launcher search keypad and the input
+accessibility fallback. It writes through `InputConnection` and does not require
+accessibility-based text injection.
 
-Validate multi-display launch routing on target foldable hardware after each launcher-routing change:
+## Validation
 
-- **Overlay hide/recover timing:**
-  - Tap app from grid, dock, and search.
-  - Confirm launcher overlay hides immediately before app focus transfer.
-  - Confirm overlay resumes only when lock/system foreground signals indicate safe restoration.
-- **Window focus transfer:**
-  - Confirm launched app receives input focus instantly on the cover panel.
-  - Verify back/home gestures return cleanly without stuck overlay suppression.
-- **Cover viewport + density mapping:**
-  - Confirm app windows open with correct bounds, scale, and density on the outer display.
-  - Verify inner-display tasks remain untouched (no task migration from inner to cover).
+```sh
+# Local JVM / Robolectric tests
+bash gradlew :app:testDebugUnitTest
 
----
+# Instrumented UI tests: requires a connected Android device or emulator
+bash gradlew :app:connectedDebugAndroidTest
+```
 
-## 🚀 Development Roadmap
+Real foldable hardware is required to verify cover-display routing and OEM
+behavior. After launcher changes, check:
 
-**Phase 1:** Display detection & overlay boilerplate  
-**Phase 2:** Multi-display app routing & launcher drawer  
-**Phase 3:** Widget integration & dashboard  
-**Phase 4:** Gesture navigation & notification center  
-**Phase 5:** Input handling & edge case hardening  
+- App launches from grid, dock, and search, with correct cover bounds and input focus.
+- Overlay suppression and recovery after app navigation, locking, unlocking, and calls.
+- Fold/unfold and screen-off transitions without a launcher window appearing on the inner display.
+- Media updates, Quick Settings fallbacks, keyboard routing, and permission revocation.
+- Inner-display tasks remain usable and are not unexpectedly moved to the cover.
 
----
+## Current scope
 
-## ⚡ Technical Challenges & Mitigations
+The project builds as one Android application module (`:app`). Third-party
+`AppWidgetHost` hosting is planned in #7, #8, and #9; it is not implemented.
+Display and screen events drive current topology handling; the app does not
+currently use Jetpack WindowManager hinge tracking.
 
-1. **Keyboard Lockout Issue**  
-   - Mitigation: Custom T9 keypad or voice-to-text  
-
-2. **OEM Background Process Killing**  
-   - Mitigation: Persistent Foreground Service + user onboarding  
-
-3. **Window Focus Conflicts**  
-   - Mitigation: Pause overlay interception for secure windows  
-
----
-
-## 🎓 Skills Demonstrated
-
-- Advanced Android architecture (multi-display, WindowManager, IPC)  
-- Modern UI engineering (Jetpack Compose + AndroidView interop)  
-- System privilege operations (Accessibility, Notification Listener, Intent routing)  
-
----
+New work must follow the [repository protocol](docs/agent-protocol.md): use an
+issue with a milestone, create a descriptive branch before editing, and open a
+linked PR. Do not work directly on `main`.

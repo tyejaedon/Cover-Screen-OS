@@ -11,6 +11,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/**
+ * Discovers usable secondary displays and publishes the device's keyguard state.
+ *
+ * Display discovery is based on [DisplayManager], not a hinge sensor. The runtime
+ * owns topology listeners and pairs [startLockStatusMonitoring] with
+ * [stopLockStatusMonitoring] to release this helper's receiver and polling work.
+ */
 class CoverDisplayHelper(private val context: Context) {
 
     private companion object {
@@ -36,8 +43,14 @@ class CoverDisplayHelper(private val context: Context) {
     val isDeviceLocked: StateFlow<Boolean> = _isDeviceLocked.asStateFlow()
 
     /**
-     * Discovers and returns the secondary display (the cover screen).
-     * Returns null if no secondary display is currently connected.
+     * Returns the first usable non-default display, preferring presentation displays.
+     *
+     * Candidates must be valid and in ON, VR, ON_SUSPEND, or DOZE state. This
+     * tolerates transient power changes during fold/unfold without selecting the
+     * default display as a fallback. A secondary display is not necessarily an
+     * OEM cover panel; callers must validate the target on supported hardware.
+     *
+     * @return a usable secondary display, or null when none is available.
      */
     fun getCoverDisplay(): Display? {
         // Prefer active presentation displays first.
