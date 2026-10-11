@@ -112,7 +112,6 @@ private fun OngoingCollapseToggle(collapseOngoing: Boolean, ongoingCount: Int, o
     }
 }
 
-/** Sticky "Now" / "Earlier" section header, one-row tall, sits above each recency bucket. */
 @Composable
 private fun NotificationSectionHeader(title: String) {
     Box(
@@ -124,6 +123,28 @@ private fun NotificationSectionHeader(title: String) {
             text = title,
             style = CoverOneUIType.sectionTitle.copy(fontSize = 14.sp),
             color = Color.White.copy(alpha = 0.85f)
+        )
+    }
+}
+
+@Composable
+private fun NotificationClearAllButton(
+    enabled: Boolean,
+    onClearAll: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.CenterEnd
+    ) {
+        Text(
+            text = "Clear all",
+            style = CoverOneUIType.chipLabel,
+            color = if (enabled) Color.White else Color.White.copy(alpha = 0.45f),
+            modifier = Modifier
+                .oneUiChip()
+                .clickable(enabled = enabled, onClick = onClearAll)
+                .padding(horizontal = 10.dp, vertical = 4.dp)
         )
     }
 }
@@ -193,6 +214,18 @@ internal fun NotificationsPanelTile(
             contentPadding = coverScreenContentPadding(horizontal = 4.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            if (notifications.any { it.isClearable }) {
+                item(key = "clear_all") {
+                    NotificationClearAllButton(
+                        enabled = true,
+                        onClearAll = {
+                            CoverNotificationListenerService.clearAllNotificationsFromOverlay()
+                        },
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
+            }
+
             if (ongoingNotifications.isNotEmpty()) {
                 item(key = "ongoing_toggle") {
                     OngoingCollapseToggle(
@@ -266,10 +299,8 @@ private fun NotificationProviderGroupCard(
     hazeState: HazeState? = null
 ) {
     val cardShape = RoundedCornerShape(LocalCoverPanelCornerRadius.current)
-    val providerIcon =
-        rememberPackageIconBitmap(group.packageName)
-    val providerLabel =
-        rememberPackageLabel(group.packageName)
+    val providerIcon = rememberPackageIconBitmap(group.packageName)
+    val providerLabel = rememberPackageLabel(group.packageName)
     var isExpanded by remember(group.packageName) { mutableStateOf(false) }
     val providerNotifications = group.notifications
 
@@ -395,8 +426,6 @@ private fun NotificationGroupRow(
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
         initialValue = SwipeToDismissBoxValue.Settled,
-        // One UI's higher swipe-to-commit threshold (60% vs Material's default 50%) so
-        // accidental swipes on the small cover-screen notification tiles are rarer.
         positionalThreshold = { totalDistance -> totalDistance * 0.6f }
     )
 
@@ -408,7 +437,7 @@ private fun NotificationGroupRow(
 
     SwipeToDismissBox(
         state = dismissState,
-        enableDismissFromEndToStart = false, // Critical: preserves horizontal pager gesture
+        enableDismissFromEndToStart = false,
         enableDismissFromStartToEnd = notification.isClearable,
         backgroundContent = {
             val color by animateColorAsState(
@@ -485,3 +514,4 @@ private fun NotificationGroupRow(
         }
     )
 }
+
