@@ -40,6 +40,8 @@ import kotlinx.coroutines.flow.StateFlow
  *   launch was dispatched (Activity/Task fired), `false` otherwise.
  * @property persistKeyboardStrategy `suspend` callback that persists a
  *   newly-picked [KeyboardStrategy] through [launcherSettingsStore].
+ * @property onRequestUnlock opens the system unlock prompt. Called when the
+ *   user taps the lock icon on the lock page.
  */
 class LauncherOverlayHost internal constructor(
     val appRepository: PackageManagerAppScannerRepository,
@@ -47,7 +49,8 @@ class LauncherOverlayHost internal constructor(
     internal val launchCoordinator: CoverLaunchCoordinator,
     val deviceLockState: StateFlow<Boolean>,
     val onAppSelected: (AppModel) -> Boolean,
-    val persistKeyboardStrategy: suspend (KeyboardStrategy) -> Unit
+    val persistKeyboardStrategy: suspend (KeyboardStrategy) -> Unit,
+    val onRequestUnlock: () -> Unit = {}
 ) {
     /** Convenience alias for `launcherSettingsStore.settings`. */
     val settings: Flow<LauncherSettings> get() = launcherSettingsStore.settings

@@ -13,6 +13,7 @@ import io.mockk.unmockkObject
 import io.mockk.verify
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -132,6 +133,28 @@ class UnlockBridgeActivityTest {
             PACKAGE_NAME,
             intentSlot.captured.getStringExtra("com.tyejaedon.coverscreenos.extra.UNLOCK_PACKAGE_NAME")
         )
+    }
+
+    @Test
+    fun `startUnlockRequest without a package sends an unlock-only request`() {
+        val intentSlot = slot<Intent>()
+
+        val started = UnlockBridgeActivity.startUnlockRequest(
+            context = context,
+            packageName = null,
+            displayId = REQUEST_DISPLAY_ID
+        )
+
+        assertTrue(started)
+        verify(exactly = 1) {
+            CoverAppLauncher.dispatchActivityStartBalExempt(
+                context = context,
+                launchIntent = capture(intentSlot),
+                launchOptions = any(),
+                launchDisplayId = RESOLVED_DISPLAY_ID
+            )
+        }
+        assertFalse(intentSlot.captured.hasExtra("com.tyejaedon.coverscreenos.extra.UNLOCK_PACKAGE_NAME"))
     }
 
     @Test

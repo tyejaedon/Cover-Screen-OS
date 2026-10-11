@@ -4,13 +4,16 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.Display
@@ -24,6 +27,7 @@ import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.services.CallPackageMatchers
 import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
+import com.tyejaedon.coverscreenos.ui.controllers.UnlockBridgeActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -155,6 +159,15 @@ class ForegroundService : Service() {
             activeServiceRef?.get()?.updateCallNotificationStateInternal(isActive, packageName)
         }
 
+        /**
+         * Hides the launcher while the system unlock prompt is open so the overlay
+         * does not draw on top of it. The overlay comes back once the prompt closes.
+         */
+        fun setUnlockPromptActive(active: Boolean) {
+            val service = activeServiceRef?.get() ?: return
+            service.runOnMainThread { service.setUnlockPromptActiveInternal(active) }
+        }
+
         fun createStartIntent(context: Context): Intent = Intent(context, ForegroundService::class.java).apply {
             action = ACTION_START
         }
@@ -201,6 +214,18 @@ class ForegroundService : Service() {
     private var overlayRequested = false
     private var isDisplayListenerRegistered = false
     private var hasEnteredForeground = false
+    private var isScreenStateReceiverRegistered = false
+    private var isScreenInteractive = true
+    private var isUnlockPromptActive = false
+
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> onScreenTurnedOff()
+                Intent.ACTION_SCREEN_ON -> onScreenTurnedOn()
+            }
+        }
+    }
 
     private var pendingDisplayRetargetJob: Job? = null
     private var suppressionResumePollerJob: Job? = null
@@ -368,6 +393,15 @@ class ForegroundService : Service() {
             },
             persistKeyboardStrategy = { strategy ->
                 launcherSettingsStore.setKeyboardStrategy(strategy)
+            },
+            onRequestUnlock = {
+                val displayId = overlayWindowController.getActiveDisplayId()
+                    ?: coverDisplayHelper.getCoverDisplayId()
+                UnlockBridgeActivity.startUnlockRequest(
+                    context = appContext,
+                    packageName = null,
+                    displayId = displayId
+                )
             }
         )
         launcherOverlayHost = host
@@ -524,6 +558,38 @@ class ForegroundService : Service() {
         }
     }
 
+    private fun setUnlockPromptActiveInternal(active: Boolean) {
+        if (isUnlockPromptActive == active) return
+        isUnlockPromptActive = active
+        if (active) {
+            clearPendingDisplayWork()
+            overlayWindowController.suppressOverlayForLaunch()
+            isOverlayActive = false
+            publishRuntime("Overlay hidden: unlock prompt open")
+            return
+        }
+        publishRuntime("Unlock prompt closed")
+        if (overlayRequested && !isOverlaySuppressedForAppLaunch) {
+            scheduleRetarget(reason = "unlock_prompt_closed")
+        }
+    }
+
+    private fun onScreenTurnedOff() {
+        isScreenInteractive = false
+        clearPendingDisplayWork()
+        // Fully detach the launcher so nothing is drawn over the doze / always-on
+        // state and the panel can go dark. It is rebuilt on ACTION_SCREEN_ON.
+        overlayWindowController.removeOverlay()
+        isOverlayActive = false
+        publishRuntime("Overlay removed: screen off")
+    }
+
+    private fun onScreenTurnedOn() {
+        isScreenInteractive = true
+        if (!overlayRequested || isOverlaySuppressedForAppLaunch) return
+        scheduleRetarget(reason = "screen_on")
+    }
+
     private inline fun runOnMainThread(crossinline block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             block()
@@ -573,6 +639,16 @@ class ForegroundService : Service() {
         if (isOverlaySuppressedForAppLaunch) return
         if (!hasRuntimePrerequisites()) {
             stopServiceForMissingPrerequisites(reason = "$reason prerequisites_lost")
+            return
+        }
+        if (!isScreenInteractive) {
+            logDebug { "overlay reason=$reason skipped: screen off" }
+            return
+        }
+        if (isUnlockPromptActive) {
+            overlayWindowController.suppressOverlayForLaunch()
+            isOverlayActive = false
+            logDebug { "overlay reason=$reason held hidden: unlock prompt open" }
             return
         }
 
@@ -643,13 +719,33 @@ class ForegroundService : Service() {
         pendingDisplayRetargetJob?.cancel()
     }
 
+    private fun registerScreenStateReceiverIfNeeded() {
+        if (isScreenStateReceiverRegistered) return
+        isScreenInteractive = getSystemService(PowerManager::class.java)?.isInteractive ?: true
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        registerReceiver(screenStateReceiver, filter, RECEIVER_NOT_EXPORTED)
+        isScreenStateReceiverRegistered = true
+    }
+
+    private fun unregisterScreenStateReceiverIfNeeded() {
+        if (!isScreenStateReceiverRegistered) return
+        runCatching { unregisterReceiver(screenStateReceiver) }
+        isScreenStateReceiverRegistered = false
+        isScreenInteractive = true
+    }
+
     private fun registerDisplayListenerIfNeeded() {
+        registerScreenStateReceiverIfNeeded()
         if (isDisplayListenerRegistered) return
         displayManager.registerDisplayListener(displayListener, null) // Handled safely by DisplayManager internals
         isDisplayListenerRegistered = true
     }
 
     private fun unregisterDisplayListenerIfNeeded() {
+        unregisterScreenStateReceiverIfNeeded()
         if (!isDisplayListenerRegistered) return
         displayManager.unregisterDisplayListener(displayListener)
         isDisplayListenerRegistered = false
@@ -661,6 +757,7 @@ class ForegroundService : Service() {
     private fun teardownOverlayRuntime() {
         clearAppLaunchSuppression()
         overlayRequested = false
+        isUnlockPromptActive = false
         clearPendingDisplayWork()
         coverDisplayHelper.stopLockStatusMonitoring()
         unregisterDisplayListenerIfNeeded()
