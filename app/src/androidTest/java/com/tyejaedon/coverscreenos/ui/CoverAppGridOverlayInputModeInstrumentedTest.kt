@@ -84,6 +84,24 @@ class CoverAppGridOverlayInputModeInstrumentedTest {
     }
 
     @Test
+    fun `switching to system IME auto-focuses the field without a second manual tap`() {
+        launchOverlay(initialMode = KeyboardStrategy.T9)
+        navigateToSearchWidgetPage()
+
+        composeRule.onNodeWithTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_TOGGLE_BUTTON)
+            .performClick()
+        composeRule.waitForIdle()
+
+        // Regression guard for the Phase A focus/show bug: the system-IME field must
+        // already be focused immediately after the toggle tap, with no further manual
+        // tap required before Gboard/Samsung Keyboard appears.
+        composeRule.onNodeWithTag(
+            CoverSearchUiTestTags.SEARCH_SYSTEM_IME_FIELD,
+            useUnmergedTree = true
+        ).assertIsFocused()
+    }
+
+    @Test
     fun `switching back to T9 restores keypad and removes IME-padding container`() {
         val inputModeState = launchOverlay(initialMode = KeyboardStrategy.T9)
         navigateToSearchWidgetPage()

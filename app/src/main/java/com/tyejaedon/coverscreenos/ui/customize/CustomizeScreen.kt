@@ -283,6 +283,30 @@ internal fun CustomizeScreen(
                                 keyboardRefreshNonce++
                             },
                             onResetModes = { runAction("Saved keyboard preferences reset") { store.clearSavedKeyboardModes() } },
+                            onHapticStrength = { strength ->
+                                runAction { store.setHapticStrength(strength) }
+                            },
+                            onKeyPressSoundEnabledChanged = { enabled ->
+                                runAction { store.setKeyPressSoundEnabled(enabled) }
+                            },
+                            onSuggestionStripVisibleChanged = { visible ->
+                                runAction { store.setSuggestionStripVisible(visible) }
+                            },
+                            onAutocorrectEnabledChanged = { enabled ->
+                                runAction { store.setAutocorrectEnabled(enabled) }
+                            },
+                            onPopupKeyPreviewEnabledChanged = { enabled ->
+                                runAction { store.setPopupKeyPreviewEnabled(enabled) }
+                            },
+                            onKeyboardExtraHeightChanged = { extraDp ->
+                                runAction { store.setKeyboardExtraHeightDp(extraDp) }
+                            },
+                            onKeyboardOneHandedEnabledChanged = { enabled ->
+                                runAction { store.setKeyboardOneHandedEnabled(enabled) }
+                            },
+                            onKeyboardOneHandedAnchorChanged = { anchor ->
+                                runAction { store.setKeyboardOneHandedAnchor(anchor) }
+                            },
                             refreshNonce = keyboardRefreshNonce
                         )
                     }

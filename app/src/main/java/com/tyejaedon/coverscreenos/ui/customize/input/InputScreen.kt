@@ -13,6 +13,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.BuildConfig
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
+import com.tyejaedon.coverscreenos.datastore.HapticStrength
+import com.tyejaedon.coverscreenos.datastore.KeyboardAnchor
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKey
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.SuggestionStrip
@@ -24,6 +26,14 @@ internal fun InputScreen(
     onPicker: () -> Unit,
     onSettings: () -> Unit,
     onResetModes: () -> Unit,
+    onHapticStrength: (HapticStrength) -> Unit,
+    onKeyPressSoundEnabledChanged: (Boolean) -> Unit,
+    onSuggestionStripVisibleChanged: (Boolean) -> Unit,
+    onAutocorrectEnabledChanged: (Boolean) -> Unit,
+    onPopupKeyPreviewEnabledChanged: (Boolean) -> Unit,
+    onKeyboardExtraHeightChanged: (Float) -> Unit,
+    onKeyboardOneHandedEnabledChanged: (Boolean) -> Unit,
+    onKeyboardOneHandedAnchorChanged: (KeyboardAnchor) -> Unit,
     refreshNonce: Int
 ) {
     InputCustomizationCard(
@@ -32,6 +42,22 @@ internal fun InputScreen(
         onOpenKeyboardPicker = onPicker,
         onOpenKeyboardSettings = onSettings,
         onResetSavedKeyboardModes = onResetModes,
+        hapticStrength = settings.hapticStrength,
+        onHapticStrengthSelected = onHapticStrength,
+        keyPressSoundEnabled = settings.keyPressSoundEnabled,
+        onKeyPressSoundEnabledChanged = onKeyPressSoundEnabledChanged,
+        suggestionStripVisible = settings.suggestionStripVisible,
+        onSuggestionStripVisibleChanged = onSuggestionStripVisibleChanged,
+        autocorrectEnabled = settings.autocorrectEnabled,
+        onAutocorrectEnabledChanged = onAutocorrectEnabledChanged,
+        popupKeyPreviewEnabled = settings.popupKeyPreviewEnabled,
+        onPopupKeyPreviewEnabledChanged = onPopupKeyPreviewEnabledChanged,
+        keyboardExtraHeightDp = settings.keyboardExtraHeightDp,
+        onKeyboardExtraHeightChanged = onKeyboardExtraHeightChanged,
+        keyboardOneHandedEnabled = settings.keyboardOneHandedEnabled,
+        onKeyboardOneHandedEnabledChanged = onKeyboardOneHandedEnabledChanged,
+        keyboardOneHandedAnchor = settings.keyboardOneHandedAnchor,
+        onKeyboardOneHandedAnchorChanged = onKeyboardOneHandedAnchorChanged,
         capabilityRefreshNonce = refreshNonce
     )
     if (BuildConfig.DEBUG) {

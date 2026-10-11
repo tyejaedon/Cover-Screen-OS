@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -46,11 +47,13 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.SpaceBar
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -66,6 +69,8 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
@@ -79,6 +84,9 @@ import com.tyejaedon.coverscreenos.ui.keyboard.CoverCompactQwertyKeyboard
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9PredictionToggle
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9SuggestionStrip
 import com.tyejaedon.coverscreenos.ui.keyboard.previousWordLength
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardHistory
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardToolbar
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ComposingTextPreview
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.HapticTier
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberHapticPerformer
 import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
@@ -192,6 +200,15 @@ data class CoverFieldMetadata(
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
 
+            // AccessibilityNodeInfo.getText() returns the *hint* text (not the actual
+            // field content) while the field is empty and showing its placeholder on
+            // many apps. Without this guard, that placeholder gets seeded into the
+            // cover keyboard's buffer as if the user had already typed it, forcing a
+            // confusing manual delete before composing. isShowingHintText() is the
+            // authoritative signal that node.text is hint, not content.
+            val isShowingHint = node.isShowingHintText
+            val rawText = node.text?.toString() ?: ""
+
             return CoverFieldMetadata(
                 packageName = node.packageName?.toString() ?: "",
                 viewIdResourceName = node.viewIdResourceName,
@@ -201,7 +218,7 @@ data class CoverFieldMetadata(
                 isPhoneNumber = isPhoneClass,
                 isMultiLine = node.isMultiLine,
                 imeAction = resolveImeAction(node.extras, inputType, node.isMultiLine),
-                initialText = node.text?.toString() ?: "",
+                initialText = if (isShowingHint) "" else rawText,
                 selectionStart = node.textSelectionStart,
                 selectionEnd = node.textSelectionEnd,
                 boundsInScreen = bounds
@@ -321,6 +338,11 @@ object CoverInputSessionManager {
 
     private val _sessionState = MutableStateFlow(CoverInputSessionState())
     val sessionState: StateFlow<CoverInputSessionState> = _sessionState.asStateFlow()
+
+    private val clipboardHistoryBuffer = ClipboardHistory()
+    private val _clipboardHistory = MutableStateFlow<List<String>>(emptyList())
+    /** Most-recent-first clipboard snippets for the Phase H clipboard-history strip. */
+    val clipboardHistory: StateFlow<List<String>> = _clipboardHistory.asStateFlow()
 
     private var activeAccessibilityService: CoverInputAccessibilityService? = null
     private var overlayManager: CoverKeyboardOverlayManager? = null
@@ -547,6 +569,37 @@ object CoverInputSessionManager {
             return
         }
         applyDelta(TextDelta.Insert(text))
+    }
+
+    /**
+     * Phase H: copies the focused field's current selection via the accessibility
+     * `ACTION_COPY` channel and records it in [clipboardHistory]. No-ops (returns false)
+     * when there's no bound service, no active selection, or the field is secure.
+     */
+    fun copySelection(): Boolean {
+        val copied = activeAccessibilityService?.copySelectionFromFocusedNode() ?: return false
+        clipboardHistoryBuffer.record(copied)
+        _clipboardHistory.value = clipboardHistoryBuffer.snippets
+        return true
+    }
+
+    /** Phase H: cuts the focused field's current selection, mirroring [copySelection]. */
+    fun cutSelection(): Boolean {
+        val cut = activeAccessibilityService?.cutSelectionFromFocusedNode() ?: return false
+        clipboardHistoryBuffer.record(cut)
+        _clipboardHistory.value = clipboardHistoryBuffer.snippets
+        return true
+    }
+
+    /**
+     * Phase H: pastes [text] into the focused field. When [text] is null, pastes whatever is
+     * currently on the system clipboard (used by the toolbar's primary Paste button); when
+     * non-null, re-pastes a specific entry from [clipboardHistory] (used by its history chips).
+     */
+    fun pasteText(text: String? = null): Boolean {
+        val service = activeAccessibilityService ?: return false
+        val toPaste = text ?: service.currentClipboardText() ?: return false
+        return service.pasteTextIntoFocusedNode(toPaste)
     }
 
     fun replacePreviousChar(char: Char) {
@@ -1435,12 +1488,75 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return ok
     }
 
+    /**
+     * Phase H: copies the focused field's current selection via the accessibility
+     * `ACTION_COPY` action, then reads back whatever landed on the system clipboard so the
+     * cover keyboard's clipboard-history strip can show it. Returns `null` (and does nothing)
+     * for secure fields or nodes that don't advertise copy support (no active selection).
+     */
+    fun copySelectionFromFocusedNode(): String? {
+        val node = resolveTargetInputNode() ?: return null
+        if (CoverFieldMetadata.fromNode(node).isPassword) {
+            Log.w(TAG, "copySelectionFromFocusedNode: refused for secure target node")
+            return null
+        }
+        if (node.actionList.none { it.id == AccessibilityNodeInfo.ACTION_COPY }) {
+            Log.w(
+                TAG,
+                "copySelectionFromFocusedNode: node does not advertise ACTION_COPY " +
+                    "pkg=${node.packageName} actions=${describeNodeActions(node)}"
+            )
+            return null
+        }
+        if (!node.performAction(AccessibilityNodeInfo.ACTION_COPY)) return null
+        return readClipboardText()
+    }
+
+    /**
+     * Phase H: cuts the focused field's current selection via `ACTION_CUT`, mirroring
+     * [copySelectionFromFocusedNode]. Refuses secure fields the same way.
+     */
+    fun cutSelectionFromFocusedNode(): String? {
+        val node = resolveTargetInputNode() ?: return null
+        if (CoverFieldMetadata.fromNode(node).isPassword) {
+            Log.w(TAG, "cutSelectionFromFocusedNode: refused for secure target node")
+            return null
+        }
+        if (node.actionList.none { it.id == AccessibilityNodeInfo.ACTION_CUT }) {
+            Log.w(
+                TAG,
+                "cutSelectionFromFocusedNode: node does not advertise ACTION_CUT " +
+                    "pkg=${node.packageName} actions=${describeNodeActions(node)}"
+            )
+            return null
+        }
+        if (!node.performAction(AccessibilityNodeInfo.ACTION_CUT)) return null
+        return readClipboardText()
+    }
+
+    /** Pastes [text] into the focused field by staging it on the clipboard then dispatching
+     * `ACTION_PASTE` — used by the clipboard-history strip to re-paste an older snippet. */
+    fun pasteTextIntoFocusedNode(text: String): Boolean = injectViaClipboard(text)
+
+    /** Current system-clipboard text, or null if empty/unavailable — used by the toolbar's
+     * primary Paste button when pasting without picking a specific history entry. */
+    fun currentClipboardText(): String? = readClipboardText()
+
+    private fun readClipboardText(): String? {
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = clipboard.primaryClip ?: return null
+        if (clip.itemCount == 0) return null
+        return runCatching { clip.getItemAt(0).coerceToText(this)?.toString() }.getOrNull()
+    }
+
     private fun describeNodeActions(node: AccessibilityNodeInfo): String =
         runCatching {
             node.actionList.joinToString(",") { action ->
                 when (action.id) {
                     AccessibilityNodeInfo.ACTION_SET_TEXT -> "SET_TEXT"
                     AccessibilityNodeInfo.ACTION_PASTE -> "PASTE"
+                    AccessibilityNodeInfo.ACTION_COPY -> "COPY"
+                    AccessibilityNodeInfo.ACTION_CUT -> "CUT"
                     AccessibilityNodeInfo.ACTION_FOCUS -> "FOCUS"
                     AccessibilityNodeInfo.ACTION_CLICK -> "CLICK"
                     AccessibilityNodeInfo.ACTION_SET_SELECTION -> "SET_SELECTION"
@@ -1937,6 +2053,13 @@ fun CoverKeyboardOverlayRoot(
                 }
 
                 CoverKeyboardMode.QWERTY -> {
+                    val clipboardHistory by CoverInputSessionManager.clipboardHistory.collectAsState()
+                    val clipboardManager = LocalContext.current
+                        .getSystemService(ClipboardManager::class.java)
+                    var canPasteFromClipboard by remember { mutableStateOf(false) }
+                    LaunchedEffect(sessionState.isActive) {
+                        canPasteFromClipboard = clipboardManager?.hasPrimaryClip() == true
+                    }
                     CoverCompactQwertyKeyboard(
                         onChar = { char ->
                             CoverInputSessionManager.appendText(char.toString())
@@ -1960,6 +2083,25 @@ fun CoverKeyboardOverlayRoot(
                         suggestionsEnabled = !sessionState.metadata.isPassword &&
                             !sessionState.metadata.isNumeric &&
                             !sessionState.metadata.isPhoneNumber,
+                        clipboardToolbar = if (sessionState.metadata.isPassword) null else {
+                            {
+                                ClipboardToolbar(
+                                    onCopy = { CoverInputSessionManager.copySelection() },
+                                    onCut = { CoverInputSessionManager.cutSelection() },
+                                    onPaste = {
+                                        if (CoverInputSessionManager.pasteText()) {
+                                            canPasteFromClipboard = true
+                                        }
+                                    },
+                                    canPaste = canPasteFromClipboard,
+                                    history = clipboardHistory,
+                                    onHistorySnippetSelected = { snippet ->
+                                        CoverInputSessionManager.pasteText(snippet)
+                                    },
+                                    modifier = Modifier.testTag("clipboard_toolbar")
+                                )
+                            }
+                        },
                         modifier = Modifier
                     )
                 }
@@ -2091,37 +2233,29 @@ private fun CoverLiveBufferDisplay(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(38.dp)
+            .heightIn(min = 38.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF1D1D21))
             .border(1.dp, Color(0xFF2C2C32), RoundedCornerShape(8.dp))
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         contentAlignment = Alignment.CenterStart
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = displayString,
-                color = if (buffer.isEmpty()) Color(0xFF757580) else Color.White,
+        ComposingTextPreview(
+            // Password masking / empty-state hint text are already resolved above, so the
+            // primitive only ever sees the final display string — no double-masking.
+            text = displayString,
+            textStyle = LocalTextStyle.current.copy(
                 fontSize = if (isPassword) 18.sp else 14.sp,
                 fontFamily = if (isPassword) FontFamily.Monospace else FontFamily.Default,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-
-            if (buffer.isNotEmpty()) {
-                Text(
-                    text = "${buffer.length} chars",
-                    color = Color(0xFF6B7280),
-                    fontSize = 10.sp
-                )
-            }
-        }
+                fontWeight = FontWeight.SemiBold
+            ),
+            textColor = if (buffer.isEmpty()) Color(0xFF757580) else Color.White,
+            counterColor = Color(0xFF6B7280),
+            // The empty-state placeholder is already baked into displayString above; don't
+            // show a redundant "0 chars" counter while it's showing.
+            showCharCount = buffer.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 

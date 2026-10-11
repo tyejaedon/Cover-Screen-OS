@@ -18,6 +18,7 @@ dataStorePreferences = "1.2.1"
 material3 = "1.4.0"
 navigationCompose = "2.10.2"
 robolectric = "4.16.1"
+symspellkt = "3.4.0"
 
 [libraries]
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
@@ -45,6 +46,7 @@ androidx-compose-animation-core = { group = "androidx.compose.animation", name =
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "dataStorePreferences" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
 robolectric-core = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+symspellkt = { group = "com.darkrockstudios", name = "symspellkt", version.ref = "symspellkt" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

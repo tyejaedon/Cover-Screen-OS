@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
 import com.tyejaedon.coverscreenos.ui.CoverSearchUiTestTags
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverCompactQwertyKeyboard
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ComposingTextPreview
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
@@ -314,20 +315,33 @@ private fun CoverSearchInputRow(
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
                         shape = inputFieldShape
                     ) {
-                        Text(
-                            text = if (query.isBlank()) "Tap to search apps" else query,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (query.isBlank()) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .coverScreenPadding(horizontal = 12.dp, vertical = 10.dp),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        if (query.isBlank()) {
+                            Text(
+                                text = "Tap to search apps",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .coverScreenPadding(horizontal = 12.dp, vertical = 10.dp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        } else {
+                            // Scrolled to the end by default so the most recently typed
+                            // characters of a long query stay visible, with a tap-to-expand
+                            // affordance instead of silently ellipsizing the query's start.
+                            ComposingTextPreview(
+                                text = query,
+                                maxCollapsedLines = 1,
+                                textStyle = MaterialTheme.typography.bodyLarge,
+                                textColor = MaterialTheme.colorScheme.onSurface,
+                                counterColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                showCharCount = false,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .coverScreenPadding(horizontal = 12.dp, vertical = 10.dp)
+                            )
+                        }
                     }
                 }
 

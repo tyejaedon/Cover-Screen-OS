@@ -48,7 +48,7 @@ class AppShellDeepLinksTest {
         rule.onNodeWithText("How it works").assertExists()
         rule.onNodeWithText("Version ${BuildConfig.VERSION_NAME}").assertExists()
         rule.onNodeWithText("Diagnostics").assertExists()
-        rule.onNodeWithText("CMU Pronouncing Dictionary license", substring = true).performClick()
+        rule.onNodeWithText("Dictionary license", substring = true).performClick()
         rule.onNodeWithText("Copyright (C) 1993-2015", substring = true).assertExists()
     }
 }

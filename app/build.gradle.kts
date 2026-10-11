@@ -80,6 +80,7 @@ dependencies {
     implementation(libs.haze)
 // Optional preset styling:
     implementation(libs.haze.materials)
+    implementation(libs.symspellkt)
 
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

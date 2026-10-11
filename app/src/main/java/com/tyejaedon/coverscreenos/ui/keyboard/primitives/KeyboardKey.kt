@@ -127,6 +127,13 @@ fun KeyboardKey(
 
     var isPressed by remember { mutableStateOf(false) }
     val performHaptic = rememberHapticPerformer(hapticTier)
+    val playKeySound = rememberKeySoundPerformer()
+    val performFeedback = remember(performHaptic, playKeySound) {
+        {
+            performHaptic()
+            playKeySound()
+        }
+    }
 
     val onClickState = rememberUpdatedState(onClick)
     val onLongPressState = rememberUpdatedState(onLongPress)
@@ -170,7 +177,7 @@ fun KeyboardKey(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     isPressed = true
-                    performHaptic()
+                    performFeedback()
                     var held = false
                     var dragged = false
                     var emitted = false
@@ -185,7 +192,7 @@ fun KeyboardKey(
                             delay(repeatInitialDelayMillis)
                             while (isPressed && !dragged) {
                                 emitted = true
-                                performHaptic()
+                                performFeedback()
                                 onClickState.value.invoke()
                                 delay(repeatIntervalMillis)
                             }
@@ -193,7 +200,7 @@ fun KeyboardKey(
                             delay(longPressThresholdMillis)
                             if (isPressed && !dragged) {
                                 held = true
-                                performHaptic()
+                                performFeedback()
                                 onLongPressState.value?.invoke()
                             }
                         }

@@ -48,7 +48,7 @@ fun AboutScreen(
     val runtime by ForegroundService.runtime.collectAsState()
     var showLicense by rememberSaveable { mutableStateOf(false) }
     val license = remember(context) {
-        context.assets.open("CMU_DICT_LICENSE.txt").bufferedReader().use { it.readText() }
+        context.assets.open("DICTIONARY_LICENSE.txt").bufferedReader().use { it.readText() }
     }
 
     Column(
@@ -93,8 +93,8 @@ fun AboutScreen(
                     modifier = Modifier.fillMaxWidth().coverMinimumTouchTarget()
                 ) {
                     Icon(Icons.Filled.Info, contentDescription = null)
-                    Text(if (showLicense) " Hide CMU Pronouncing Dictionary license"
-                        else " CMU Pronouncing Dictionary license")
+                    Text(if (showLicense) " Hide dictionary license"
+                        else " Dictionary license")
                 }
                 if (showLicense) {
                     Text(license, style = MaterialTheme.typography.bodySmall)
