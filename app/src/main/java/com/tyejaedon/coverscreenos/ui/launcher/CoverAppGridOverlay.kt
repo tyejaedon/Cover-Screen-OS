@@ -21,6 +21,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -162,7 +164,7 @@ private val WIDGET_TILE_VERTICAL_SWIPE_THRESHOLD = 72.dp
 
 private data class CoverDisplayPolishSpec(
     val statusChipMinHeight: Dp,
-    val dockVerticalOffset: Dp
+    val dockBottomPadding: Dp
 )
 
 private data class BatteryStatusSnapshot(
@@ -179,15 +181,15 @@ private fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
         when {
             containerHeightDp <= 680.dp -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 28.dp,
-                dockVerticalOffset = (-2).dp
+                dockBottomPadding = 8.dp
             )
             containerHeightDp <= 760.dp -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 30.dp,
-                dockVerticalOffset = (-4).dp
+                dockBottomPadding = 10.dp
             )
             else -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 32.dp,
-                dockVerticalOffset = (-6).dp
+                dockBottomPadding = 12.dp
             )
         }
     }
@@ -705,8 +707,6 @@ private fun InteractiveSection(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    // Shrink the pager region so the PageIndicator below sits higher in the viewport.
-                    .padding(bottom = 20.dp)
             ) {
                 HorizontalPager(
                     state = pagerState,
@@ -955,18 +955,22 @@ private fun LockAndDockTile(
 ) {
     val context = LocalContext.current
     val mediaNotification = remember(notifications) {
-        notifications.filter { it.isMediaNotification && it.isOngoing }.maxByOrNull { it.postTime }
+        notifications.filter { it.isMediaNotification }.maxByOrNull { it.postTime }
     }
     var showExpandedMedia by remember(mediaNotification?.notificationKey) { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical)),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
                     .coverScreenPadding(horizontal = 14.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
@@ -1024,41 +1028,31 @@ private fun LockAndDockTile(
                         )
                     }
 
-                    CompactNowPlayingCard(
-                        mediaNotification = mediaNotification,
-                        onOpenExpanded = { showExpandedMedia = true },
-                        onOpenMediaApp = {
-                            openMediaApplicationFromOverlay(
-                                context,
-                                notifications
-                            )
-                        },
-                        modifier = Modifier.weight(1.2f)
-                    )
                 }
             }
 
-            if (isDockVisible) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .coverScreenPadding(horizontal = 8.dp, vertical = 0.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        OneUiDockRow(
-                            dockSlots = dockSlots,
-                            onAppSelected = onAppSelected,
-                            slotFourAllApps = dockSlotFourAllApps,
-                            onOpenAllApps = onOpenAllApps,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .offset(y = displayPolishSpec.dockVerticalOffset)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                    }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                    .padding(horizontal = 8.dp)
+                    .padding(bottom = displayPolishSpec.dockBottomPadding),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CompactNowPlayingCard(
+                    mediaNotification = mediaNotification,
+                    onOpenExpanded = { showExpandedMedia = true },
+                    onOpenMediaApp = { openMediaApplicationFromOverlay(context, notifications) },
+                    modifier = Modifier.fillMaxWidth(0.9f)
+                )
+                if (isDockVisible) {
+                    OneUiDockRow(
+                        dockSlots = dockSlots,
+                        onAppSelected = onAppSelected,
+                        slotFourAllApps = dockSlotFourAllApps,
+                        onOpenAllApps = onOpenAllApps
+                    )
                 }
             }
         }

@@ -5,6 +5,20 @@
 > Related: `plan-launcherAccessibilityOverlayMigration` (surface migration),
 > `Keyboard_Implementation_Plan.md` (keyboard primitives).
 
+## Lockscreen media follow-up (#122)
+
+The compact player is a 48dp pill above the bottom dock, not a tall card beside
+the clock. Both rows share centered widths and an 8dp gap. The lockscreen
+reserves their height before laying out its scrollable header, applies safe
+insets, and uses bottom padding rather than visual dock offsets.
+
+The expanded player crops the current album art across the entire panel,
+including playback controls. A dark gradient keeps white text and icons readable;
+missing or recycled art uses a neutral background. Layout uses the panel's
+available height, and content can scroll on short screens or with large fonts.
+Playback controls retain at least 48dp targets. Unknown actions do not become
+play/pause controls.
+
 ## 1. Goal
 
 Retire the current ad-hoc mix of translucent black tiles, hardcoded 0.45-alpha
@@ -339,4 +353,3 @@ Repeat for each of the 4 wallpaper luminances.
 
 Excludes buffer for palette-lib evaluation and Samsung device-specific
 tuning (Flip 5 vs Flip 6 wallpaper decoding path differs).
-
