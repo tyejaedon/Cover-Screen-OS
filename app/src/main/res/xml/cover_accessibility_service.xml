@@ -6,7 +6,6 @@
     android:canPerformGestures="true"
     android:canRequestFilterKeyEvents="true"
     android:canRetrieveWindowContent="true"
-    android:description="@string/app_name"
+    android:description="@string/accessibility_service_description"
     android:notificationTimeout="250"
     android:settingsActivity="com.tyejaedon.coverscreenos.MainActivity" />
-

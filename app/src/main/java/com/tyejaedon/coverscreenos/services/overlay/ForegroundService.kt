@@ -86,7 +86,7 @@ class ForegroundService : Service() {
         }
 
         private const val LOG_TAG = "CoverForegroundService"
-        private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 60L
+        private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 250L
         private const val APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS = 120L
         private const val APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS = 2_500L
         private const val APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT = 2

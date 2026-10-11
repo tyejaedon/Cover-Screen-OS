@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -52,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.tyejaedon.coverscreenos.R
 import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 
@@ -282,6 +284,11 @@ internal fun PermissionsContent(
                 items(rows.filter { it.id.group == group }, key = { it.id }) { row ->
                     PermissionRow(row)
                 }
+                if (group == PermissionGroup.REQUIRED && !grants.launcherAccessibility) {
+                    item(key = "restricted-accessibility-help") {
+                        RestrictedAccessibilityHelp(onOpenAppSettings)
+                    }
+                }
             }
             item {
                 PermissionSupportActions(
@@ -298,6 +305,31 @@ internal fun PermissionsContent(
                 ) {
                     Text("Continue with limited features")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RestrictedAccessibilityHelp(onOpenAppSettings: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.restricted_accessibility_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                text = stringResource(R.string.restricted_accessibility_message),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            OutlinedButton(
+                onClick = onOpenAppSettings,
+                modifier = Modifier.align(Alignment.End).coverMinimumTouchTarget()
+            ) {
+                Text(stringResource(R.string.restricted_accessibility_open_settings))
             }
         }
     }

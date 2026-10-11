@@ -99,6 +99,13 @@ The foreground-service start helper checks all four. Permission revocation can
 stop the runtime. Battery exemption reduces restrictions; it does not prevent
 every OEM background kill.
 
+On Android 13 and newer, the system may block accessibility for an app
+installed outside a trusted store. If the service is marked **Restricted
+setting**, open **Settings > Apps > Cover Screen OS**, tap the menu, choose
+**Allow restricted settings**, then return to **Settings > Accessibility** and
+enable **Cover Screen OS Launcher**. Use the official store listing when it is
+available for your device.
+
 ### Manifest declarations and service access
 
 | Permission or declaration | How it is used |
