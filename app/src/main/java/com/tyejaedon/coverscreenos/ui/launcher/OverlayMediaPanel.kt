@@ -7,10 +7,6 @@ import android.content.pm.PackageManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -63,10 +59,16 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
-import com.tyejaedon.coverscreenos.ui.theme.coverGlassSurface
+import com.tyejaedon.coverscreenos.ui.theme.CoverOSMediaPlaceholderGradientEnd
+import com.tyejaedon.coverscreenos.ui.theme.CoverOSMediaPlaceholderGradientStart
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
-import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayPanelBorder
-import androidx.compose.foundation.BorderStroke
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUITokens
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiElevatedPanel
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiIconSquircle
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiPanel
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiSlideDown
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiSlideUp
 import java.util.Locale
 
 private const val COMPACT_CARD_MIN_ART_EDGE_PX = 180
@@ -149,12 +151,7 @@ internal fun CompactNowPlayingCard(
     Surface(
         modifier = modifier
             .heightIn(min = 52.dp)
-            .clip(containerShape)
-            .coverGlassSurface(
-                color = Color.White.copy(alpha = 0.12f),
-                borderColor = LocalCoverOverlayPanelBorder.current ?: Color.White.copy(alpha = 0.22f),
-                shape = containerShape
-            )
+            .oneUiPanel(shape = containerShape)
             .clickable(enabled = isActionEnabled) {
                 if (hasMedia) {
                     onOpenExpanded()
@@ -173,7 +170,10 @@ internal fun CompactNowPlayingCard(
                         .fillMaxHeight()
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(Color.White.copy(alpha = 0.05f), Color.Black.copy(alpha = 0.15f))
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.05f),
+                                    MaterialTheme.colorScheme.scrim.copy(alpha = 0.15f)
+                                )
                             )
                         )
                         .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -223,7 +223,10 @@ internal fun CompactNowPlayingCard(
                                 .fillMaxSize()
                                 .background(
                                     Brush.verticalGradient(
-                                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f))
+                                        colors = listOf(
+                                            Color.Transparent,
+                                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.65f)
+                                        )
                                     )
                                 )
                         )
@@ -234,8 +237,8 @@ internal fun CompactNowPlayingCard(
                                 .background(
                                     Brush.linearGradient(
                                         colors = listOf(
-                                            Color(0xFF2C3E50).copy(alpha = 0.8f),
-                                            Color(0xFF000000).copy(alpha = 0.8f)
+                                            CoverOSMediaPlaceholderGradientStart.copy(alpha = 0.8f),
+                                            CoverOSMediaPlaceholderGradientEnd.copy(alpha = 0.8f)
                                         )
                                     )
                                 )
@@ -248,8 +251,8 @@ internal fun CompactNowPlayingCard(
                                 .align(Alignment.TopEnd)
                                 .padding(top = 6.dp, end = 6.dp)
                                 .size(22.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color.Black.copy(alpha = 0.35f))
+                                .oneUiIconSquircle(6.dp)
+                                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.35f))
                                 .padding(2.dp)
                         ) {
                             Image(
@@ -266,7 +269,10 @@ internal fun CompactNowPlayingCard(
                             .fillMaxWidth()
                             .background(
                                 Brush.verticalGradient(
-                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f))
+                                    colors = listOf(
+                                        Color.Transparent,
+                                        MaterialTheme.colorScheme.scrim.copy(alpha = 0.75f)
+                                    )
                                 )
                             )
                             .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -275,14 +281,14 @@ internal fun CompactNowPlayingCard(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = titleText,
-                                style = MaterialTheme.typography.labelMedium,
+                                style = CoverOneUIType.tileTitle,
                                 color = Color.White,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = subtitleText,
-                                style = MaterialTheme.typography.labelSmall,
+                                style = CoverOneUIType.tileSubtitle,
                                 color = Color.White.copy(alpha = 0.8f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -307,10 +313,8 @@ fun ExpandedNowPlayingPanel(
 ) {
     AnimatedVisibility(
         visible = visible && mediaNotification != null,
-        enter = fadeIn(animationSpec = tween(durationMillis = 180)) +
-            slideInVertically(animationSpec = tween(durationMillis = 260), initialOffsetY = { it / 3 }),
-        exit = fadeOut(animationSpec = tween(durationMillis = 150)) +
-            slideOutVertically(animationSpec = tween(durationMillis = 220), targetOffsetY = { it / 3 }),
+        enter = oneUiSlideUp(),
+        exit = oneUiSlideDown(),
         modifier = modifier.fillMaxSize()
     ) {
         if (mediaNotification == null) return@AnimatedVisibility
@@ -399,19 +403,20 @@ fun ExpandedNowPlayingPanel(
                     onClick = onDismiss
                 )
         ) {
+            val expandedShape = RoundedCornerShape(CoverOneUITokens.radiusHero)
             Surface(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .fillMaxWidth(layoutSpec.panelWidthFraction)
                     .fillMaxHeight(layoutSpec.panelHeightFraction)
+                    .oneUiElevatedPanel(shape = expandedShape)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         onClick = {}
                     ),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                shape = RoundedCornerShape(LocalCoverPanelCornerRadius.current * 1.5f),
-                border = LocalCoverOverlayPanelBorder.current?.let { BorderStroke(1.dp, it) }
+                color = Color.Transparent,
+                shape = expandedShape
             ) {
                 Column(
                     modifier = Modifier
@@ -477,7 +482,7 @@ fun ExpandedNowPlayingPanel(
 
                     Text(
                         text = titleText,
-                        style = MaterialTheme.typography.titleLarge,
+                        style = CoverOneUIType.sectionTitle,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -485,7 +490,7 @@ fun ExpandedNowPlayingPanel(
 
                     Text(
                         text = subtitleText,
-                        style = if (layoutSpec.showArtwork) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                        style = CoverOneUIType.tileSubtitle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,

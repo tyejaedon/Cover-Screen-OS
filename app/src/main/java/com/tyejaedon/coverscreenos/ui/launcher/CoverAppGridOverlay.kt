@@ -106,7 +106,7 @@ import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.AppGridPageTile
 import com.tyejaedon.coverscreenos.ui.CompactNowPlayingCard
-import com.tyejaedon.coverscreenos.ui.CoverDockRow
+import com.tyejaedon.coverscreenos.ui.OneUiDockRow
 import com.tyejaedon.coverscreenos.ui.CoverSearchUiTestTags
 import com.tyejaedon.coverscreenos.ui.CoverWallpaperLayer
 import com.tyejaedon.coverscreenos.ui.ExpandedNowPlayingPanel
@@ -132,6 +132,11 @@ import com.tyejaedon.coverscreenos.ui.launcher.WidgetGridPageTile
 import com.tyejaedon.coverscreenos.ui.launcher.rememberVoiceInputHandle
 import com.tyejaedon.coverscreenos.ui.openMediaApplicationFromOverlay
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTextStyles
+import com.tyejaedon.coverscreenos.ui.theme.CoverOSBatteryChargingColor
+import com.tyejaedon.coverscreenos.ui.theme.CoverOSCallActiveColor
+import com.tyejaedon.coverscreenos.ui.theme.CoverOSDestructiveColor
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiChip
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 
@@ -467,7 +472,7 @@ fun CoverAppGridOverlay(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = constrainedWallpaperDim * 0.25f))
+                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = constrainedWallpaperDim * 0.25f))
                 )
             }
 
@@ -1006,7 +1011,7 @@ private fun LockAndDockTile(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        CoverDockRow(
+                        OneUiDockRow(
                             dockSlots = dockSlots,
                             onAppSelected = onAppSelected,
                             slotFourAllApps = dockSlotFourAllApps,
@@ -1050,15 +1055,14 @@ private fun BatteryStatusPill(status: BatteryStatusSnapshot, modifier: Modifier 
     val levelFraction = (status.levelPercent / 100f).coerceIn(0f, 1f)
     val trackColor = Color.White.copy(alpha = 0.18f)
     val fillColor = when {
-        status.levelPercent <= 15 -> Color(0xFFD32F2F)
-        status.isCharging -> Color(0xFF4CAF50)
+        status.levelPercent <= 15 -> CoverOSDestructiveColor
+        status.isCharging -> CoverOSBatteryChargingColor
         else -> Color.White
     }
 
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(Color.Black.copy(alpha = 0.45f))
+            .oneUiChip()
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -1082,7 +1086,7 @@ private fun BatteryStatusPill(status: BatteryStatusSnapshot, modifier: Modifier 
 
         Text(
             text = if (status.isCharging) "${status.levelPercent}% CHG" else "${status.levelPercent}%",
-            style = MaterialTheme.typography.labelSmall,
+            style = CoverOneUIType.chipLabel,
             color = Color.White,
             maxLines = 1
         )
@@ -1094,8 +1098,7 @@ private fun BatteryStatusPill(status: BatteryStatusSnapshot, modifier: Modifier 
 private fun LockStatusPill(isDeviceLocked: Boolean, minHeight: Dp) {
     Box(
         modifier = Modifier
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.45f))
+            .oneUiChip()
             .heightIn(min = minHeight)
             .padding(horizontal = 10.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
@@ -1118,8 +1121,7 @@ private fun SearchAffordanceButton(onClick: () -> Unit, minHeight: Dp, modifier:
     Box(
         modifier = modifier
             .testTag(CoverSearchUiTestTags.SEARCH_OPEN_AFFORDANCE_BUTTON)
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.45f))
+            .oneUiChip()
             .heightIn(min = minHeight)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 4.dp),
@@ -1157,7 +1159,7 @@ private fun LockTopNotificationHighlights(
                     .size(30.dp)
                     .clip(CircleShape)
                     .clickable { onNotificationOpen(notification) },
-                color = Color(0xFF1B5E20).copy(alpha = 0.6f),
+                color = CoverOSCallActiveColor.copy(alpha = 0.6f),
                 shape = CircleShape
             ) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

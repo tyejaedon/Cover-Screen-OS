@@ -5,11 +5,11 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -25,8 +25,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
-import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayPanelBorder
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -37,7 +37,6 @@ import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
@@ -63,10 +63,11 @@ import com.tyejaedon.coverscreenos.ui.keyboard.CoverCompactQwertyKeyboard
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUITokens
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiChip
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiPanel
 import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
 import java.util.Locale
 
 private val SEARCH_GRID_TILE_GAP = 6.dp
@@ -197,38 +198,18 @@ private fun SearchWidgetTile(
     hazeState: HazeState, // Pass HazeState from the parent screen
     modifier: Modifier = Modifier
 ) {
-    val tileShape = RoundedCornerShape(LocalCoverPanelCornerRadius.current * 1.5f)
-
-    // Contrast wash: Use a higher alpha (0.65f - 0.80f) so key labels pop
-    val surfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
-    val borderColor = LocalCoverOverlayPanelBorder.current ?: MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    val tileShape = RoundedCornerShape(CoverOneUITokens.radiusHero)
 
     Surface(
         modifier = modifier
-            // 1. Shape clipping first so the blur and borders don't bleed
-            .clip(tileShape)
-            // 2. Hardware backdrop blur sampled from the background behind it
-            .hazeEffect(
-                state = hazeState,
-                style = HazeStyle(
-                    tints = listOf(HazeTint(surfaceColor)),
-                    blurRadius = 24.dp,
-                    noiseFactor = 0.05f
-                )
-            )
-            // 3. Subtle glass stroke outline for depth separation
-            .border(
-                width = 1.dp,
-                color = borderColor,
-                shape = tileShape
-            )
-            // 4. Click handling inside clipped bounds
+            .oneUiPanel(shape = tileShape, hazeState = hazeState, blurRadius = 24.dp)
+            // Click handling inside clipped bounds
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onDismissInputTap
             ),
-        color = Color.Transparent, // Let the hazeEffect handle the background wash
+        color = Color.Transparent, // Let oneUiPanel's hazeEffect handle the background wash
         shape = tileShape
     ) {
         Column(
@@ -302,17 +283,15 @@ private fun CoverSearchInputRow(
         ) {
             when (keyboardStrategy) {
                 KeyboardStrategy.T9 -> {
-                    Surface(
+                    Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(inputFieldShape)
+                            .oneUiPanel(shape = inputFieldShape)
                             .clickable(onClick = onSearchFieldTapped)
                             .focusRequester(focusRequester)
                             .coverMinimumTouchTarget()
                             .padding(horizontal = 2.dp, vertical = 1.dp)
-                            .testTag(CoverSearchUiTestTags.SEARCH_T9_FIELD),
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
-                        shape = inputFieldShape
+                            .testTag(CoverSearchUiTestTags.SEARCH_T9_FIELD)
                     ) {
                         Text(
                             text = if (query.isBlank()) "Tap to search apps" else query,
@@ -332,15 +311,33 @@ private fun CoverSearchInputRow(
                 }
 
                 KeyboardStrategy.SYSTEM_IME -> {
-                    OutlinedTextField(
+                    BasicTextField(
                         value = query,
                         onValueChange = onQueryChanged,
                         singleLine = true,
-                        shape = inputFieldShape,
-                        placeholder = { Text("Search apps") },
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier.coverScreenPadding(horizontal = 12.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (query.isEmpty()) {
+                                    Text(
+                                        text = "Search apps",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        },
                         modifier = Modifier
                             .weight(1f)
+                            .oneUiPanel(shape = inputFieldShape)
                             .focusRequester(focusRequester)
                             .coverMinimumTouchTarget()
                             .testTag(CoverSearchUiTestTags.SEARCH_SYSTEM_IME_FIELD)
@@ -348,13 +345,17 @@ private fun CoverSearchInputRow(
                 }
             }
 
-            IconButton(
-                onClick = onVoiceInputTap,
-                modifier = Modifier.coverMinimumTouchTarget()
+            Box(
+                modifier = Modifier
+                    .coverMinimumTouchTarget()
+                    .oneUiChip(selected = isVoiceListening)
+                    .clickable(onClick = onVoiceInputTap),
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = if (isVoiceListening) Icons.Filled.MicOff else Icons.Filled.Mic,
-                    contentDescription = if (isVoiceListening) "Stop voice input" else "Start voice input"
+                    contentDescription = if (isVoiceListening) "Stop voice input" else "Start voice input",
+                    tint = Color.White
                 )
             }
 
@@ -386,7 +387,7 @@ private fun CoverSearchInputRow(
             ) {
                 Text(
                     text = "Input:",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = CoverOneUIType.chipLabel,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
@@ -394,18 +395,20 @@ private fun CoverSearchInputRow(
                         KeyboardStrategy.T9 -> "T9"
                         KeyboardStrategy.SYSTEM_IME -> "system keyboard"
                     },
-                    style = MaterialTheme.typography.labelSmall,
+                    style = CoverOneUIType.chipLabel,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            IconButton(
-                onClick = onKeyboardStrategyToggle,
+            Box(
                 modifier = Modifier
                     .coverMinimumTouchTarget()
-                    .testTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_TOGGLE_BUTTON)
+                    .oneUiChip(selected = keyboardStrategy == KeyboardStrategy.T9)
+                    .clickable(onClick = onKeyboardStrategyToggle)
+                    .testTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_TOGGLE_BUTTON),
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = when (keyboardStrategy) {
@@ -415,19 +418,23 @@ private fun CoverSearchInputRow(
                     contentDescription = when (keyboardStrategy) {
                         KeyboardStrategy.T9 -> "Switch to system keyboard"
                         KeyboardStrategy.SYSTEM_IME -> "Switch to cover keyboard"
-                    }
+                    },
+                    tint = Color.White
                 )
             }
 
-            IconButton(
-                onClick = onOpenImePicker,
+            Box(
                 modifier = Modifier
                     .coverMinimumTouchTarget()
-                    .testTag(CoverSearchUiTestTags.SEARCH_IME_PICKER_BUTTON)
+                    .oneUiChip()
+                    .clickable(onClick = onOpenImePicker)
+                    .testTag(CoverSearchUiTestTags.SEARCH_IME_PICKER_BUTTON),
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Filled.Keyboard,
-                    contentDescription = "Choose input method"
+                    contentDescription = "Choose input method",
+                    tint = Color.White
                 )
             }
         }
@@ -578,10 +585,13 @@ private fun CoverSearchKeyboardHost(
     onClearPressed: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val keyboardShape = RoundedCornerShape(CoverOneUITokens.radiusPanel)
     Surface(
-        modifier = modifier.testTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT),
-        shape = RoundedCornerShape(LocalCoverPanelCornerRadius.current * 1.25f),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+        modifier = modifier
+            .testTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT)
+            .oneUiPanel(shape = keyboardShape),
+        shape = keyboardShape,
+        color = Color.Transparent
     ) {
         Column(
             modifier = Modifier

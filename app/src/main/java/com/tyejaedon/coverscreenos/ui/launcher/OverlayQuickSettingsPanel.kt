@@ -60,10 +60,12 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.tyejaedon.coverscreenos.helpers.QuickSettingsController
 import com.tyejaedon.coverscreenos.ui.CoverSearchUiTestTags
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTextStyles
-import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayPanelBorder
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
-import com.tyejaedon.coverscreenos.ui.theme.coverBackdropBlur
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUITokens
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiChip
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiPanel
 import dev.chrisbanes.haze.HazeState
 
 /**
@@ -130,7 +132,7 @@ internal fun QuickSettingsPanelTile(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.35f))
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.35f))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -144,13 +146,7 @@ internal fun QuickSettingsPanelTile(
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
                 .padding(12.dp)
-                .coverBackdropBlur(
-                    hazeState = hazeState,
-                    shape = cardShape,
-                    tint = Color.Black.copy(alpha = 0.5f),
-                    blurRadius = 26.dp
-                )
-                .border(1.dp, LocalCoverOverlayPanelBorder.current ?: Color.White.copy(alpha = 0.16f), cardShape)
+                .oneUiPanel(shape = cardShape, hazeState = hazeState, blurRadius = 26.dp)
                 // Swallow taps on the sheet itself so they don't fall through to the scrim.
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -260,7 +256,7 @@ private fun QuickSettingsToggleTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(CoverOneUITokens.radiusChip)
     val fillAlpha = if (!isAvailable) 0.04f else if (isEnabled) 0.30f else 0.08f
     val borderAlpha = if (!isAvailable) 0.08f else if (isEnabled) 0.4f else 0.14f
     val contentTint = when {
@@ -348,8 +344,7 @@ private fun QuickSettingsBrightnessControl(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.White.copy(alpha = 0.1f))
+                    .oneUiChip()
                     .clickable(onClick = onRequestWritePermission)
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -357,7 +352,7 @@ private fun QuickSettingsBrightnessControl(
             ) {
                 Text(
                     text = "Tap to allow brightness control",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = CoverOneUIType.chipLabel,
                     color = Color.White.copy(alpha = 0.85f)
                 )
             }
