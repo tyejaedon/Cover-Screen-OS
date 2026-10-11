@@ -23,6 +23,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -79,6 +80,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -350,7 +352,9 @@ fun CoverAppGridOverlay(
     wallpaperDimAmount: Float = DEFAULT_WALLPAPER_DIM_AMOUNT,
     wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP,
     keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
-    onKeyboardStrategyChanged: (KeyboardStrategy) -> Unit = {}
+    onKeyboardStrategyChanged: (KeyboardStrategy) -> Unit = {},
+    onRequestUnlock: () -> Unit = {},
+    onRequestScreenOff: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -514,6 +518,8 @@ fun CoverAppGridOverlay(
                         },
                         keyboardStrategy = keyboardStrategy,
                         onKeyboardStrategyChanged = onKeyboardStrategyChanged,
+                        onRequestUnlock = onRequestUnlock,
+                        onRequestScreenOff = onRequestScreenOff,
                         pagerState = pagerState,
                         hazeState = hazeState,
                         modifier = Modifier
@@ -548,6 +554,8 @@ private fun InteractiveSection(
     onCoverKeyboardVisibilityChanged: (Boolean) -> Unit,
     keyboardStrategy: KeyboardStrategy,
     onKeyboardStrategyChanged: (KeyboardStrategy) -> Unit,
+    onRequestUnlock: () -> Unit,
+    onRequestScreenOff: () -> Unit,
     pagerState: PagerState,
     hazeState: HazeState,
     modifier: Modifier = Modifier
@@ -746,6 +754,18 @@ private fun InteractiveSection(
                                                 onDragCancel = { cumulativeDrag = 0f }
                                             )
                                         }
+                                        // Double tap on empty space turns the screen off. Buttons,
+                                        // apps and notifications consume their own taps first.
+                                        .pointerInput(isQuickSettingsVisible, isWidgetTileVisible) {
+                                            detectTapGestures(
+                                                onDoubleTap = {
+                                                    if (!isQuickSettingsVisible && !isWidgetTileVisible) {
+                                                        dismissSearchInput()
+                                                        onRequestScreenOff()
+                                                    }
+                                                }
+                                            )
+                                        }
                                 ) {
                                     LockAndDockTile(
                                         notifications = notifications,
@@ -771,6 +791,10 @@ private fun InteractiveSection(
                                             onAppSelected(app)
                                         },
                                         onOpenSearch = { openWidgetTileFromLockscreen() },
+                                        onRequestUnlock = {
+                                            dismissSearchInput()
+                                            onRequestUnlock()
+                                        },
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 }
@@ -926,6 +950,7 @@ private fun LockAndDockTile(
     onNotificationOpen: (CoverNotificationModel) -> Unit,
     onAppSelected: (AppModel) -> Unit,
     onOpenSearch: () -> Unit,
+    onRequestUnlock: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -953,7 +978,8 @@ private fun LockAndDockTile(
                     if (isDeviceLocked) {
                         LockStatusPill(
                             isDeviceLocked = true,
-                            minHeight = displayPolishSpec.statusChipMinHeight
+                            minHeight = displayPolishSpec.statusChipMinHeight,
+                            onClick = onRequestUnlock
                         )
                     }
                     SearchAffordanceButton(
@@ -1106,11 +1132,16 @@ private fun BatteryStatusPill(status: BatteryStatusSnapshot, modifier: Modifier 
 
 
 @Composable
-private fun LockStatusPill(isDeviceLocked: Boolean, minHeight: Dp) {
+private fun LockStatusPill(isDeviceLocked: Boolean, minHeight: Dp, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .oneUiChip()
             .heightIn(min = minHeight)
+            .clickable(
+                onClickLabel = if (isDeviceLocked) "Unlock" else null,
+                role = Role.Button,
+                onClick = onClick
+            )
             .padding(horizontal = 10.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
     ) {

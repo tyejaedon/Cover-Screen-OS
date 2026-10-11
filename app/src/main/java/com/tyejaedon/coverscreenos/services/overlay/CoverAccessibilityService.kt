@@ -321,6 +321,8 @@ class CoverAccessibilityService : AccessibilityService() {
                     wallpaperDimAmount = launcherSettings.wallpaperDimAmount,
                     wallpaperBlurRadiusDp = launcherSettings.wallpaperBlurRadiusDp,
                     keyboardStrategy = launcherSettings.keyboardStrategy,
+                    onRequestUnlock = { host.onRequestUnlock() },
+                    onRequestScreenOff = { requestScreenOff() },
                     onKeyboardStrategyChanged = { nextStrategy ->
                         overlayScope.launch {
                             runCatching {
@@ -363,6 +365,13 @@ class CoverAccessibilityService : AccessibilityService() {
     }
 
     fun launcherActiveDisplayId(): Int? = launcherSurface?.activeDisplayId()
+
+    /** Turns the screen off and locks the device, like a power-key press. */
+    private fun requestScreenOff() {
+        if (shouldThrottleGlobalAction()) return
+        val result = performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+        logDebug { "Double tap screen off result=$result" }
+    }
 
     fun isLauncherAttached(): Boolean = launcherSurface?.isAttached() == true
 

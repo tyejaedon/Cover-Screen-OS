@@ -14,13 +14,15 @@ import android.view.Display
 import android.view.WindowManager
 import androidx.annotation.VisibleForTesting
 import androidx.fragment.app.FragmentActivity
+import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 class UnlockBridgeActivity : FragmentActivity() {
 
+    /** [packageName] is null for an unlock-only request (lock icon tap). */
     private data class UnlockLaunchRequest(
-        val packageName: String,
+        val packageName: String?,
         val displayId: Int?,
         val requestId: String,
         val requestedAtElapsedMs: Long
@@ -36,12 +38,18 @@ class UnlockBridgeActivity : FragmentActivity() {
         private const val REQUEST_STALE_TIMEOUT_MS = 15_000L
         private const val UNLOCK_PROMPT_TITLE = "Unlock to continue"
         private const val UNLOCK_PROMPT_SUBTITLE = "Authenticate with your device security to open the app"
+        private const val UNLOCK_ONLY_PROMPT_TITLE = "Unlock your phone"
+        private const val UNLOCK_ONLY_PROMPT_SUBTITLE = "Authenticate with your device security"
 
         @Volatile
         private var requestInProgress: Boolean = false
 
         @Synchronized
-        fun startUnlockRequest(context: Context, packageName: String, displayId: Int?): Boolean {
+        /**
+         * Shows the system unlock prompt. When [packageName] is set, that app is opened after a
+         * successful unlock. When it is null, the device is only unlocked.
+         */
+        fun startUnlockRequest(context: Context, packageName: String?, displayId: Int?): Boolean {
             if (requestInProgress) {
                 Log.d(LOG_TAG, "Unlock request already in progress; skipping duplicate package=$packageName")
                 return true
@@ -58,7 +66,7 @@ class UnlockBridgeActivity : FragmentActivity() {
                         Intent.FLAG_ACTIVITY_NO_ANIMATION or
                         Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
                 )
-                putExtra(EXTRA_PACKAGE_NAME, packageName)
+                packageName?.let { putExtra(EXTRA_PACKAGE_NAME, it) }
                 putExtra(EXTRA_DISPLAY_ID, displayId ?: Display.INVALID_DISPLAY)
                 putExtra(EXTRA_REQUEST_ID, UUID.randomUUID().toString())
                 putExtra(EXTRA_REQUEST_ELAPSED_MS, SystemClock.elapsedRealtime())
@@ -127,6 +135,7 @@ class UnlockBridgeActivity : FragmentActivity() {
         }
 
         unlockRequest = request
+        ForegroundService.setUnlockPromptActive(true)
 
         if (isStaleRequest(request)) {
             Log.w(LOG_TAG, "Ignoring stale unlock requestId=${request.requestId} package=${request.packageName}")
@@ -141,6 +150,7 @@ class UnlockBridgeActivity : FragmentActivity() {
         authenticationCancellationSignal?.cancel()
         authenticationCancellationSignal = null
         clearRequestInProgress()
+        if (unlockRequest != null) ForegroundService.setUnlockPromptActive(false)
         super.onDestroy()
     }
 
@@ -156,9 +166,10 @@ class UnlockBridgeActivity : FragmentActivity() {
             return
         }
 
+        val isUnlockOnly = request.packageName == null
         val prompt = BiometricPrompt.Builder(this)
-            .setTitle(UNLOCK_PROMPT_TITLE)
-            .setSubtitle(UNLOCK_PROMPT_SUBTITLE)
+            .setTitle(if (isUnlockOnly) UNLOCK_ONLY_PROMPT_TITLE else UNLOCK_PROMPT_TITLE)
+            .setSubtitle(if (isUnlockOnly) UNLOCK_ONLY_PROMPT_SUBTITLE else UNLOCK_PROMPT_SUBTITLE)
             .setAllowedAuthenticators(authenticators)
             .setConfirmationRequired(false)
             .build()
@@ -198,13 +209,18 @@ class UnlockBridgeActivity : FragmentActivity() {
     }
 
     private fun dispatchLaunchAfterUnlock(request: UnlockLaunchRequest) {
+        val packageName = request.packageName
+        if (packageName == null) {
+            Log.d(LOG_TAG, "Unlock-only request completed requestId=${request.requestId}")
+            return
+        }
         // Deliberately use the Activity context (not applicationContext). This Activity is still
         // focused and resumed at this point, which grants it the privilege to start activities.
         // Using applicationContext here would discard that privilege and the launch would be
         // silently dropped by background-activity-launch enforcement.
         val launched = CoverAppLauncher.launchPackageOnDisplayAfterUnlock(
             context = this,
-            packageName = request.packageName,
+            packageName = packageName,
             displayId = request.displayId
         )
 
@@ -268,7 +284,6 @@ class UnlockBridgeActivity : FragmentActivity() {
         val packageName = sourceIntent.getStringExtra(EXTRA_PACKAGE_NAME)
             ?.trim()
             ?.takeUnless { it.isEmpty() }
-            ?: return null
         val displayId = sourceIntent.getIntExtra(EXTRA_DISPLAY_ID, Display.INVALID_DISPLAY)
             .takeUnless { it == Display.INVALID_DISPLAY }
         val requestId = sourceIntent.getStringExtra(EXTRA_REQUEST_ID)
