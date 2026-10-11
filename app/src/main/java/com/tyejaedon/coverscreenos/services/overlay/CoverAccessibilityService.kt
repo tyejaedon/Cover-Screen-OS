@@ -509,13 +509,26 @@ class CoverAccessibilityService : AccessibilityService() {
         if (!ForegroundService.isOverlayActive) return super.onKeyEvent(event)
 
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (shouldThrottleGlobalAction()) return true
-            val result = performGlobalAction(GLOBAL_ACTION_BACK)
-            logDebug { "Back key intercepted result=$result" }
-            return result
+            return handleHardwareBackPress()
         }
 
         return super.onKeyEvent(event)
+    }
+
+    private fun handleHardwareBackPress(): Boolean {
+        if (shouldThrottleGlobalAction()) {
+            logDebug { "Hardware back press throttled while overlay is active" }
+            return true
+        }
+
+        val result = performGlobalAction(GLOBAL_ACTION_BACK)
+        if (!result) {
+            logDebug { "Global ACTION_BACK unavailable; reclaiming overlay for hardware back fallback" }
+            ForegroundService.requestOverlayReclaim(reason = "hardware_back_fallback")
+        } else {
+            logDebug { "Hardware back routed through GLOBAL_ACTION_BACK result=$result" }
+        }
+        return true
     }
 
     override fun onInterrupt() {
