@@ -26,9 +26,26 @@ object CoverAppLauncher {
         val launchOptions = ActivityOptions.makeBasic().apply {
             this.launchDisplayId = launchDisplayId
         }.toBundle()
+        dispatchActivityStartBalExempt(context, launchIntent, launchOptions, launchDisplayId)
+    }
 
-        // A connected AccessibilityService is BAL-exempt; the input service may be disabled
-        // even while the launcher accessibility service is enabled.
+    /**
+     * Starts [launchIntent] through a background-activity-launch (BAL) exempt channel when
+     * possible, falling back to a direct [Context.startActivity] otherwise.
+     *
+     * Any caller whose `context` is a Service (e.g. [ForegroundService], a notification
+     * listener) is subject to BAL restrictions on modern Android: a plain `startActivity` call
+     * from such a context can be silently discarded by the system while the device is locked or
+     * the app has no visible UI. A connected AccessibilityService is one of the few contexts
+     * still allowed to start activities from the background, so we prefer dispatching through
+     * it whenever one is bound.
+     */
+    internal fun dispatchActivityStartBalExempt(
+        context: Context,
+        launchIntent: Intent,
+        launchOptions: android.os.Bundle?,
+        launchDisplayId: Int
+    ) {
         val dispatchedViaAccessibility = CoverInputAccessibilityService.startActivityFromAccessibilityService(
             launchIntent = launchIntent,
             launchOptions = launchOptions
@@ -178,7 +195,7 @@ object CoverAppLauncher {
         }
     }
 
-    private fun resolveLaunchDisplayId(context: Context, displayId: Int?): Int {
+    internal fun resolveLaunchDisplayId(context: Context, displayId: Int?): Int {
         if (displayId != null && displayId != Display.INVALID_DISPLAY) {
             return displayId
         }

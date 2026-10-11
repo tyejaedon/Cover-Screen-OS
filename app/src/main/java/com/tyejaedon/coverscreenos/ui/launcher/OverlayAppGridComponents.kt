@@ -54,10 +54,13 @@ import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusSmall
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTextStyles
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayAccent
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayOnAccent
-import com.tyejaedon.coverscreenos.ui.theme.coverBackdropBlur
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUITokens
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiIconSquircle
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiPanel
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -321,15 +324,23 @@ internal fun PageIndicator(
 }
 
 @Composable
-internal fun CoverDockRow(
+internal fun OneUiDockRow(
     dockSlots: List<AppModel?>,
     onAppSelected: (AppModel) -> Unit,
     modifier: Modifier = Modifier,
     slotFourAllApps: Boolean = false,
     onOpenAllApps: () -> Unit = {}
 ) {
+    // Pill shape: fully rounded regardless of measured height, matching One UI's dock pill
+    // rather than one of the fixed canonical panel radii (a dock is not a "panel").
+    val pillShape = RoundedCornerShape(percent = 50)
+
     Row(
-        modifier = modifier.coverScreenPadding(horizontal = 12.dp, vertical = 6.dp),
+        modifier = modifier
+            .fillMaxWidth(0.9f)
+            .height(76.dp)
+            .oneUiPanel(shape = pillShape)
+            .coverScreenPadding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -340,9 +351,9 @@ internal fun CoverDockRow(
 
             Box(
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(56.dp)
                     .coverMinimumTouchTarget()
-                    .clip(RoundedCornerShape(CoverOSCornerRadiusSmall))
+                    .oneUiIconSquircle(14.dp)
                     .clickable(enabled = isSlotEnabled) {
                         if (isAllApps) onOpenAllApps() else app?.let(onAppSelected)
                     },
@@ -351,8 +362,9 @@ internal fun CoverDockRow(
                 if (isAllApps) {
                     Text(
                         text = "All apps",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
+                        style = CoverOneUIType.chipLabel,
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center
                     )
                 } else if (app != null) {
                     val iconBitmap =
@@ -363,7 +375,7 @@ internal fun CoverDockRow(
                         Image(
                             bitmap = iconBitmap,
                             contentDescription = app.name,
-                            modifier = Modifier.size(40.dp)
+                            modifier = Modifier.size(48.dp)
                         )
                     }
                 }
@@ -434,10 +446,9 @@ private fun AppGridTile(
             // legible over any wallpaper. Falls back to no backdrop when no
             // HazeState is threaded through (e.g. isolated previews).
             val labelBackdrop = if (hazeState != null) {
-                Modifier.coverBackdropBlur(
+                Modifier.oneUiPanel(
+                    shape = RoundedCornerShape(CoverOneUITokens.radiusChip),
                     hazeState = hazeState,
-                    shape = RoundedCornerShape(10.dp),
-                    tint = Color.Black.copy(alpha = 0.42f),
                     blurRadius = 18.dp
                 )
             } else {

@@ -64,6 +64,13 @@ val LocalCoverOverlayAccent = staticCompositionLocalOf { CoverOSPrimary }
 val LocalCoverOverlayOnAccent = staticCompositionLocalOf { Color.Black }
 val LocalCoverOverlayPanelBorder = staticCompositionLocalOf<Color?> { null }
 
+/**
+ * True when the user has explicitly picked a non-default accent color in settings. One UI's
+ * "one signal color per page" pillar (see `ui/theme/oneui`) only applies its own per-page
+ * accents when this is false — an explicit user choice always wins everywhere.
+ */
+val LocalCoverAccentIsCustomized = staticCompositionLocalOf { false }
+
 internal fun coverAccentScheme(accent: AccentColor, dark: Boolean): androidx.compose.material3.ColorScheme {
     val base = if (dark) CoverOSDarkColorScheme else CoverOSLightColorScheme
     if (accent == AccentColor.DEFAULT) return base
@@ -100,7 +107,8 @@ fun CoverOSTheme(
         LocalCoverOverlayAccent provides if (accentColor == AccentColor.DEFAULT) CoverOSPrimary else scheme.primary,
         LocalCoverOverlayOnAccent provides if (accentColor == AccentColor.DEFAULT) Color.Black else scheme.onPrimary,
         LocalCoverOverlayPanelBorder provides
-            if (accentColor == AccentColor.DEFAULT) null else scheme.primary.copy(alpha = 0.45f)
+            if (accentColor == AccentColor.DEFAULT) null else scheme.primary.copy(alpha = 0.45f),
+        LocalCoverAccentIsCustomized provides (accentColor != AccentColor.DEFAULT)
     ) {
         MaterialTheme(
             colorScheme = scheme,

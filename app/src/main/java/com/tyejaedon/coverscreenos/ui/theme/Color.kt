@@ -22,6 +22,18 @@ val CoverOSTertiaryContainer = Color(0xFF4A2B0A)
 val CoverOSOnTertiary = Color(0xFF2A1400)
 
 // ---------------------------------------------------------------------------
+// Semantic status colors — battery/call/destructive-action indicators used
+// across the overlay. Named here (rather than inlined as magic hex literals
+// at each call site) per the One UI restyle's "no Color(0xFF...) outside
+// Color.kt" rule.
+// ---------------------------------------------------------------------------
+val CoverOSDestructiveColor = Color(0xFFD32F2F)
+val CoverOSBatteryChargingColor = Color(0xFF4CAF50)
+val CoverOSCallActiveColor = Color(0xFF1B5E20)
+val CoverOSMediaPlaceholderGradientStart = Color(0xFF2C3E50)
+val CoverOSMediaPlaceholderGradientEnd = Color(0xFF000000)
+
+// ---------------------------------------------------------------------------
 // Dark palette — true, AMOLED-friendly black rather than a tinted navy, so
 // the wallpaper and blur layers read as the actual surface of the screen.
 // ---------------------------------------------------------------------------

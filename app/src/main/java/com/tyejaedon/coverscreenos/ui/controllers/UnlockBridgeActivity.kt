@@ -1,5 +1,6 @@
 package com.tyejaedon.coverscreenos.ui.controllers
 
+import android.app.ActivityOptions
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.hardware.biometrics.BiometricPrompt
 import android.util.Log
 import android.view.Display
 import android.view.WindowManager
+import androidx.annotation.VisibleForTesting
 import androidx.fragment.app.FragmentActivity
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -46,6 +48,10 @@ class UnlockBridgeActivity : FragmentActivity() {
             }
 
             requestInProgress = true
+            // Resolve onto the same display the launch was requested for (the cover display,
+            // not necessarily the context's own display) so the biometric prompt surfaces where
+            // the user actually tapped.
+            val launchDisplayId = CoverAppLauncher.resolveLaunchDisplayId(context = context, displayId = displayId)
             val launchIntent = Intent(context, UnlockBridgeActivity::class.java).apply {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -57,9 +63,23 @@ class UnlockBridgeActivity : FragmentActivity() {
                 putExtra(EXTRA_REQUEST_ID, UUID.randomUUID().toString())
                 putExtra(EXTRA_REQUEST_ELAPSED_MS, SystemClock.elapsedRealtime())
             }
+            val launchOptions = ActivityOptions.makeBasic().apply {
+                this.launchDisplayId = launchDisplayId
+            }.toBundle()
 
             val started = runCatching {
-                context.startActivity(launchIntent)
+                // `context` here is frequently a Service's applicationContext (ForegroundService,
+                // CoverNotificationListenerService), which is background-activity-launch (BAL)
+                // restricted on modern Android: a plain startActivity call can be silently
+                // dropped while the device is locked and the app has no visible foreground UI.
+                // Route through the same BAL-exempt accessibility-service channel CoverAppLauncher
+                // uses for ordinary app launches so the unlock prompt reliably appears.
+                CoverAppLauncher.dispatchActivityStartBalExempt(
+                    context = context,
+                    launchIntent = launchIntent,
+                    launchOptions = launchOptions,
+                    launchDisplayId = launchDisplayId
+                )
                 true
             }.getOrElse { error ->
                 Log.w(LOG_TAG, "Unable to start unlock bridge package=$packageName error=${error.message}")
@@ -75,6 +95,12 @@ class UnlockBridgeActivity : FragmentActivity() {
 
         @Synchronized
         private fun clearRequestInProgress() {
+            requestInProgress = false
+        }
+
+        /** Test-only hook to reset the in-progress dedup guard between test cases. */
+        @VisibleForTesting
+        internal fun resetForTesting() {
             requestInProgress = false
         }
     }

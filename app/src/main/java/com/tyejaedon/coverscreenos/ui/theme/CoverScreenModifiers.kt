@@ -1,7 +1,5 @@
 package com.tyejaedon.coverscreenos.ui.theme
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -11,19 +9,10 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
 
 private val CoverScreenHorizontalPadding = 8.dp
 private val CoverScreenVerticalPadding = 8.dp
@@ -58,57 +47,3 @@ fun coverScreenContentPadding(
     horizontal: Dp = CoverScreenHorizontalPadding,
     vertical: Dp = CoverScreenVerticalPadding
 ): PaddingValues = PaddingValues(horizontal = horizontal, vertical = vertical)
-
-/**
- * A frosted "glass" surface: a translucent fill over a hairline stroke, the
- * visual language One UI uses for cards floating above wallpaper/blur —
- * as opposed to stock Material's flat, opaque surface fill.
- */
-fun Modifier.coverGlassSurface(
-    color: Color,
-    borderColor: Color,
-    shape: Shape = RoundedCornerShape(CoverOSCornerRadiusLarge),
-    borderWidth: Dp = 1.dp
-): Modifier = this
-    .clip(shape)
-    .background(color)
-    .border(borderWidth, borderColor, shape)
-
-/** Convenience overload that pulls glass colors from the current color scheme. */
-@Composable
-fun Modifier.coverGlassSurface(
-    fillAlpha: Float = 0.4f,
-    borderAlpha: Float = 0.5f,
-    shape: Shape = RoundedCornerShape(CoverOSCornerRadiusLarge),
-    borderWidth: Dp = 1.dp
-): Modifier {
-    val scheme = MaterialTheme.colorScheme
-    return this.coverGlassSurface(
-        color = scheme.surface.copy(alpha = fillAlpha),
-        borderColor = scheme.outline.copy(alpha = borderAlpha),
-        shape = shape,
-        borderWidth = borderWidth
-    )
-}
-
-/**
- * Frosted-glass backdrop blur that samples from a shared [HazeState] (typically the
- * wallpaper layer). Use behind text or small cards to guarantee legibility against
- * arbitrary wallpapers without hiding the wallpaper entirely.
- */
-fun Modifier.coverBackdropBlur(
-    hazeState: HazeState,
-    shape: Shape = RoundedCornerShape(CoverOSCornerRadiusSmall),
-    tint: Color = Color.Black.copy(alpha = 0.38f),
-    blurRadius: Dp = 20.dp,
-    noiseFactor: Float = 0.04f
-): Modifier = this
-    .clip(shape)
-    .hazeEffect(
-        state = hazeState,
-        style = HazeStyle(
-            tints = listOf(HazeTint(tint)),
-            blurRadius = blurRadius,
-            noiseFactor = noiseFactor
-        )
-    )

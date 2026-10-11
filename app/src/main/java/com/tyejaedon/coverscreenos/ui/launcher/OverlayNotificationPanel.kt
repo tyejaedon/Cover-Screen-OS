@@ -5,11 +5,11 @@ import com.tyejaedon.coverscreenos.ui.launcher.rememberPackageLabel
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,7 +36,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxDefaults
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberSwipeToDismissBoxState
@@ -52,15 +51,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
-import com.tyejaedon.coverscreenos.ui.theme.coverBackdropBlur
-import com.tyejaedon.coverscreenos.ui.theme.coverGlassSurface
+import com.tyejaedon.coverscreenos.ui.theme.CoverOSDestructiveColor
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
-import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayPanelBorder
-import androidx.compose.foundation.border
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
+import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUITokens
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiChip
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiIconSquircle
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiPanel
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiSpring
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
 import dev.chrisbanes.haze.HazeState
+
+private const val NOTIFICATION_RECENT_WINDOW_MS = 60L * 60L * 1000L // "Now" vs "Earlier" boundary.
 
 private data class NotificationProviderGroup(
     val packageName: String,
@@ -86,8 +91,7 @@ private fun OngoingCollapseToggle(collapseOngoing: Boolean, ongoingCount: Int, o
     ) {
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(Color.White.copy(alpha = 0.12f))
+                .oneUiChip()
                 .clickable(onClick = onToggle)
                 .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -95,7 +99,7 @@ private fun OngoingCollapseToggle(collapseOngoing: Boolean, ongoingCount: Int, o
         ) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelSmall,
+                style = CoverOneUIType.chipLabel,
                 color = Color.White.copy(alpha = 0.9f)
             )
             Icon(
@@ -108,6 +112,23 @@ private fun OngoingCollapseToggle(collapseOngoing: Boolean, ongoingCount: Int, o
     }
 }
 
+/** Sticky "Now" / "Earlier" section header, one-row tall, sits above each recency bucket. */
+@Composable
+private fun NotificationSectionHeader(title: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        Text(
+            text = title,
+            style = CoverOneUIType.sectionTitle.copy(fontSize = 14.sp),
+            color = Color.White.copy(alpha = 0.85f)
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun NotificationsPanelTile(
     notifications: List<CoverNotificationModel>,
@@ -128,6 +149,12 @@ internal fun NotificationsPanelTile(
     }
     val importantGroupedNotifications = remember(importantNotifications) {
         groupNotificationsByProvider(importantNotifications)
+    }
+    val nowGroups = remember(importantGroupedNotifications) {
+        importantGroupedNotifications.filter { isRecentGroup(it) }
+    }
+    val earlierGroups = remember(importantGroupedNotifications) {
+        importantGroupedNotifications.filterNot { isRecentGroup(it) }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -189,20 +216,46 @@ internal fun NotificationsPanelTile(
                 }
             }
 
-            items(
-                items = importantGroupedNotifications,
-                key = { "important_${it.packageName}" }
-            ) { group ->
-                NotificationProviderGroupCard(
-                    group = group,
-                    onNotificationOpen = onNotificationOpen,
-                    hazeState = hazeState
-                )
+            if (nowGroups.isNotEmpty()) {
+                stickyHeader(key = "header_now") {
+                    NotificationSectionHeader("Now")
+                }
+                items(
+                    items = nowGroups,
+                    key = { "important_${it.packageName}" }
+                ) { group ->
+                    NotificationProviderGroupCard(
+                        group = group,
+                        onNotificationOpen = onNotificationOpen,
+                        hazeState = hazeState
+                    )
+                }
+            }
+
+            if (earlierGroups.isNotEmpty()) {
+                stickyHeader(key = "header_earlier") {
+                    NotificationSectionHeader("Earlier")
+                }
+                items(
+                    items = earlierGroups,
+                    key = { "important_earlier_${it.packageName}" }
+                ) { group ->
+                    NotificationProviderGroupCard(
+                        group = group,
+                        onNotificationOpen = onNotificationOpen,
+                        hazeState = hazeState
+                    )
+                }
             }
 
             item { Spacer(modifier = Modifier.height(16.dp)) }
         }
     }
+}
+
+private fun isRecentGroup(group: NotificationProviderGroup): Boolean {
+    val latestPostTime = group.notifications.maxOfOrNull { it.postTime } ?: return true
+    return (System.currentTimeMillis() - latestPostTime) <= NOTIFICATION_RECENT_WINDOW_MS
 }
 
 @Composable
@@ -226,32 +279,11 @@ private fun NotificationProviderGroupCard(
         providerNotifications.take(2)
     }
 
-    // When a shared HazeState is available (the overlay's wallpaper), sample it
-    // for a frosted-glass backdrop so notification titles/text stay legible against
-    // any wallpaper. Otherwise fall back to the flat glass surface.
-    val cardBackground = if (hazeState != null) {
-        Modifier
-            .coverBackdropBlur(
-                hazeState = hazeState,
-                shape = cardShape,
-                tint = Color.Black.copy(alpha = 0.40f),
-                blurRadius = 24.dp
-            )
-    } else {
-        Modifier.coverGlassSurface(
-            color = Color.White.copy(alpha = 0.08f),
-            borderColor = LocalCoverOverlayPanelBorder.current ?: Color.White.copy(alpha = 0.16f),
-            shape = cardShape
-        )
-    }
-
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(cardShape)
-            .then(cardBackground)
-            .then(LocalCoverOverlayPanelBorder.current?.let { Modifier.border(1.dp, it, cardShape) } ?: Modifier)
-            .animateContentSize(animationSpec = spring()),
+            .oneUiPanel(shape = cardShape, hazeState = hazeState)
+            .animateContentSize(animationSpec = oneUiSpring()),
         color = Color.Transparent,
         shape = cardShape
     ) {
@@ -268,8 +300,8 @@ private fun NotificationProviderGroupCard(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
+                        .size(40.dp)
+                        .oneUiIconSquircle(12.dp)
                         .background(Color.White.copy(alpha = 0.1f)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -277,14 +309,14 @@ private fun NotificationProviderGroupCard(
                         androidx.compose.foundation.Image(
                             bitmap = providerIcon,
                             contentDescription = null,
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(26.dp)
                         )
                     }
                 }
 
                 Text(
                     text = providerLabel,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = CoverOneUIType.tileTitle,
                     color = Color.White.copy(alpha = 0.9f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -294,11 +326,10 @@ private fun NotificationProviderGroupCard(
                 if (providerNotifications.size > 1) {
                     Text(
                         text = providerNotifications.size.toString(),
-                        style = MaterialTheme.typography.labelSmall,
+                        style = CoverOneUIType.chipLabel,
                         color = Color.White,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color.White.copy(alpha = 0.16f))
+                            .oneUiChip()
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
@@ -342,10 +373,10 @@ private fun NotificationProviderGroupCard(
                 ) {
                     Text(
                         text = if (isExpanded) "Show less" else "Show $hiddenCount more",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = CoverOneUIType.chipLabel,
                         color = Color.White.copy(alpha = 0.7f),
                         modifier = Modifier
-                            .clip(RoundedCornerShape(50))
+                            .oneUiChip()
                             .clickable { isExpanded = !isExpanded }
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     )
@@ -364,7 +395,9 @@ private fun NotificationGroupRow(
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
         initialValue = SwipeToDismissBoxValue.Settled,
-        positionalThreshold = SwipeToDismissBoxDefaults.positionalThreshold
+        // One UI's higher swipe-to-commit threshold (60% vs Material's default 50%) so
+        // accidental swipes on the small cover-screen notification tiles are rarer.
+        positionalThreshold = { totalDistance -> totalDistance * 0.6f }
     )
 
     LaunchedEffect(dismissState.currentValue) {
@@ -380,17 +413,17 @@ private fun NotificationGroupRow(
         backgroundContent = {
             val color by animateColorAsState(
                 targetValue = when (dismissState.targetValue) {
-                    SwipeToDismissBoxValue.StartToEnd -> Color(0xFFD32F2F).copy(alpha = 0.5f)
+                    SwipeToDismissBoxValue.StartToEnd -> CoverOSDestructiveColor.copy(alpha = 0.5f)
                     else -> Color.Transparent
                 },
-                animationSpec = spring(),
+                animationSpec = oneUiSpring(),
                 label = "dismissColor"
             )
 
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(CoverOneUITokens.radiusChip))
                     .background(color)
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.CenterStart
@@ -409,7 +442,7 @@ private fun NotificationGroupRow(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(CoverOneUITokens.radiusChip))
                     .clickable(onClick = onOpen)
                     .padding(horizontal = 4.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -421,14 +454,14 @@ private fun NotificationGroupRow(
                 ) {
                     Text(
                         text = notification.title,
-                        style = MaterialTheme.typography.labelLarge,
+                        style = CoverOneUIType.tileTitle,
                         color = Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = notification.previewText.ifBlank { "Tap to open" },
-                        style = MaterialTheme.typography.bodySmall,
+                        style = CoverOneUIType.tileSubtitle,
                         color = Color.White.copy(alpha = 0.75f),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
@@ -438,13 +471,12 @@ private fun NotificationGroupRow(
                 if (notification.isOngoing || !notification.isClearable) {
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color.White.copy(alpha = 0.1f))
+                            .oneUiChip()
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text(
                             text = "Ongoing",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = CoverOneUIType.chipLabel,
                             color = Color.White.copy(alpha = 0.85f)
                         )
                     }

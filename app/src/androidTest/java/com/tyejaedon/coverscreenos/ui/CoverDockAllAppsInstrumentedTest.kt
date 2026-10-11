@@ -20,7 +20,7 @@ class CoverDockAllAppsInstrumentedTest {
         var opened = 0
         composeRule.setContent {
             CoverOSTheme {
-                CoverDockRow(
+                OneUiDockRow(
                     dockSlots = listOf(null, null, null, null),
                     onAppSelected = { error("Empty slot launched a package") },
                     slotFourAllApps = true,
@@ -36,7 +36,7 @@ class CoverDockAllAppsInstrumentedTest {
     fun `legacy dock does not show all apps`() {
         composeRule.setContent {
             CoverOSTheme {
-                CoverDockRow(
+                OneUiDockRow(
                     dockSlots = listOf(null, null, null, null),
                     onAppSelected = { error("Empty slot launched a package") }
                 )
