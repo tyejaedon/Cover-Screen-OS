@@ -88,6 +88,17 @@ class CoverNotificationListenerService : NotificationListenerService() {
             }
         }
 
+        fun clearAllNotificationsFromOverlay(): Boolean {
+            val service = activeService ?: return false
+            return runCatching {
+                service.cancelAllNotifications()
+                true
+            }.getOrElse { error ->
+                Log.w(NOTIFICATION_LOG_TAG, "Clear all failed error=${error.message}")
+                false
+            }
+        }
+
         fun openNotificationFromOverlay(context: Context, model: CoverNotificationModel): Boolean {
             if (isDeviceLocked(context)) {
                 Log.d(NOTIFICATION_LOG_TAG, "Blocked notification open while locked key=${model.notificationKey}")
@@ -570,4 +581,3 @@ class CoverNotificationListenerService : NotificationListenerService() {
     }
 
 }
-
