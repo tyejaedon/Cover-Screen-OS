@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -35,20 +36,20 @@ import com.tyejaedon.coverscreenos.datastore.TALL_EXTRA_KEY_HEIGHT_DP
 import com.tyejaedon.coverscreenos.datastore.normalizeExtraKeyHeightDp
 import kotlin.math.abs
 
+// Used only for resize haptic ticks. The preset buttons live in Customize > Input.
 private val HEIGHT_PRESETS = listOf(
-    COMPACT_EXTRA_KEY_HEIGHT_DP to "Compact",
-    STANDARD_EXTRA_KEY_HEIGHT_DP to "Standard",
-    TALL_EXTRA_KEY_HEIGHT_DP to "Tall"
+    COMPACT_EXTRA_KEY_HEIGHT_DP,
+    STANDARD_EXTRA_KEY_HEIGHT_DP,
+    TALL_EXTRA_KEY_HEIGHT_DP
 )
-private const val PRESET_SNAP_TOLERANCE_DP = 2f
 private const val ONE_HANDED_WIDTH_FRACTION = 0.8f
 
 /**
- * Phase D: the grip-handle + size-preset + one-handed-mode control row rendered above a
- * keyboard's key rows. Dragging the grip vertically free-resizes [extraHeightDp] within
+ * Phase D: the slim control row rendered above a keyboard's key rows. It holds the resize
+ * grip, the one-handed toggle and an optional [trailingContent] slot (used for the small
+ * copy/cut/paste icons). Dragging the grip vertically free-resizes [extraHeightDp] within
  * `[MIN_EXTRA_KEY_HEIGHT_DP, MAX_EXTRA_KEY_HEIGHT_DP]`, firing [onHaptic] whenever the drag
- * crosses a preset boundary (mirroring Samsung Keyboard's resize-tick feedback). Tapping a
- * preset chip jumps straight to that height.
+ * crosses a preset boundary (mirroring Samsung Keyboard's resize-tick feedback).
  */
 @Composable
 fun ResizableKeyboardSurfaceControls(
@@ -59,7 +60,8 @@ fun ResizableKeyboardSurfaceControls(
     oneHandedAnchor: KeyboardAnchor,
     onAnchorToggle: () -> Unit,
     modifier: Modifier = Modifier,
-    onHaptic: () -> Unit = {}
+    onHaptic: () -> Unit = {},
+    trailingContent: (@Composable RowScope.() -> Unit)? = null
 ) {
     val density = LocalDensity.current
     val onExtraHeightChangedState = rememberUpdatedState(onExtraHeightChanged)
@@ -106,22 +108,7 @@ fun ResizableKeyboardSurfaceControls(
             )
         }
 
-        HEIGHT_PRESETS.forEach { (presetDp, label) ->
-            val selected = abs(extraHeightDp - presetDp) <= PRESET_SNAP_TOLERANCE_DP
-            SizePresetChip(
-                label = label,
-                selected = selected,
-                onClick = {
-                    onExtraHeightChanged(presetDp)
-                    onHaptic()
-                },
-                modifier = Modifier.testTag("keyboard_size_preset_$label")
-            )
-        }
-
-        Box(modifier = Modifier.weight(1f))
-
-        SizePresetChip(
+        ControlChip(
             label = if (oneHandedEnabled) "1-hand: on" else "1-hand",
             selected = oneHandedEnabled,
             onClick = {
@@ -145,11 +132,15 @@ fun ResizableKeyboardSurfaceControls(
                     .testTag("keyboard_one_handed_anchor_swap")
             )
         }
+
+        Box(modifier = Modifier.weight(1f))
+
+        trailingContent?.invoke(this)
     }
 }
 
 @Composable
-private fun SizePresetChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun ControlChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
@@ -203,4 +194,4 @@ fun OneHandedKeyboardBox(
 }
 
 private fun roundToNearestPreset(extraDp: Float): Float =
-    HEIGHT_PRESETS.map { it.first }.minByOrNull { abs(it - extraDp) } ?: COMPACT_EXTRA_KEY_HEIGHT_DP
+    HEIGHT_PRESETS.minByOrNull { abs(it - extraDp) } ?: COMPACT_EXTRA_KEY_HEIGHT_DP

@@ -6,7 +6,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
@@ -34,6 +35,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.datastore.KeyboardAnchor
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
@@ -61,6 +63,13 @@ internal fun nextShiftMode(current: ShiftMode, lastTap: Long, now: Long): ShiftM
 internal fun shouldAutoCap(text: String): Boolean =
     text.isBlank() || Regex("[.!?]\\s*$").containsMatchIn(text)
 
+private const val KEY_ROW_COUNT = 4
+private val KEY_ROW_SPACING = 4.dp
+
+/** Height the four key rows want before they shrink to fit the screen. */
+internal fun keyRowsHeight(keyHeight: Dp): Dp =
+    keyHeight * KEY_ROW_COUNT + KEY_ROW_SPACING * (KEY_ROW_COUNT - 1)
+
 internal fun previousWordLength(textBeforeCursor: String): Int =
     Regex("\\S+\\s*$").find(textBeforeCursor)?.value?.length ?: 0
 
@@ -83,10 +92,12 @@ internal fun CoverCompactQwertyKeyboard(
     suggestionsEnabled: Boolean = true,
     onCandidateCommitted: ((String) -> Unit)? = null,
     predictiveDigits: String? = null,
-    // Phase H: optional slot so hosts with accessibility-node clipboard access (the cover
-    // overlay path) can render copy/cut/paste + history above the suggestion strip, without
-    // this shared primitive needing to know about accessibility services itself.
-    clipboardToolbar: (@Composable () -> Unit)? = null
+    // Phase H: optional slots so hosts with accessibility-node clipboard access (the cover
+    // overlay path) can add copy/cut/paste without this shared primitive needing to know
+    // about accessibility services. [clipboardActions] goes at the end of the top control
+    // row (keep it small); [clipboardHistory] goes just below that row.
+    clipboardActions: (@Composable () -> Unit)? = null,
+    clipboardHistory: (@Composable () -> Unit)? = null
 ) {
     val context = LocalContext.current
     val contactRevision = rememberContactSuggestionRevision(suggestionsEnabled)
@@ -180,7 +191,7 @@ internal fun CoverCompactQwertyKeyboard(
             showKeyPreview = preview && customization.popupKeyPreviewEnabled,
             hapticTier = tier,
             colors = if (accent) KeyboardKeyColors.accent() else KeyboardKeyColors.default(),
-            modifier = Modifier.weight(weight).height(keyHeight).testTag(tag)
+            modifier = Modifier.weight(weight).fillMaxHeight().testTag(tag)
         )
     }
 
@@ -211,9 +222,10 @@ internal fun CoverCompactQwertyKeyboard(
                 coroutineScope.launch { settingsStore.setKeyboardOneHandedAnchor(next) }
             },
             onHaptic = resizeHapticPerformer,
-            modifier = Modifier.testTag("keyboard_resize_controls")
+            modifier = Modifier.testTag("keyboard_resize_controls"),
+            trailingContent = clipboardActions?.let { actions -> { actions() } }
         )
-        clipboardToolbar?.invoke()
+        clipboardHistory?.invoke()
         if (suggestionsEnabled && customization.suggestionStripVisible) {
             SuggestionStrip(
                 suggestions = candidates,
@@ -236,7 +248,16 @@ internal fun CoverCompactQwertyKeyboard(
                 modifier = Modifier.testTag("keyboard_suggestions")
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        // All four key rows share one box. They ask for [keyHeight] each but shrink evenly
+        // when the screen is short, so the bottom row is never squished or cut off.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = keyRowsHeight(keyHeight)),
+            verticalArrangement = Arrangement.spacedBy(KEY_ROW_SPACING)
+        ) {
+        val rowModifier = Modifier.fillMaxWidth().weight(1f)
+        Row(rowModifier, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             (if (symbols) "1234567890" else "qwertyuiop").forEachIndexed { index, char ->
                 val letter = if (!symbols && (shift != ShiftMode.Off ||
                         (shift == ShiftMode.Off && shouldAutoCap(before))))
@@ -247,7 +268,7 @@ internal fun CoverCompactQwertyKeyboard(
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(rowModifier, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             (if (symbols) "-/:;()${'$'}&@\"" else "asdfghjkl").forEachIndexed { index, char ->
                 val letter = if (!symbols && (shift != ShiftMode.Off ||
                         (shift == ShiftMode.Off && shouldAutoCap(before))))
@@ -255,7 +276,7 @@ internal fun CoverCompactQwertyKeyboard(
                 key(letter.toString(), tag = "keyboard_middle_$index", preview = true) { emit(letter) }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(rowModifier, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             if (symbols) {
                 ".,?!'".forEachIndexed { index, char ->
                     key(char.toString(), tag = "keyboard_symbol_$index", preview = true) { emit(char) }
@@ -289,10 +310,10 @@ internal fun CoverCompactQwertyKeyboard(
                     }
                 },
                 hapticTier = HapticTier.Standard,
-                modifier = Modifier.weight(1.3f).height(keyHeight).testTag("keyboard_backspace")
+                modifier = Modifier.weight(1.3f).fillMaxHeight().testTag("keyboard_backspace")
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(rowModifier, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             key(if (symbols) "ABC" else "?123", weight = 1.5f,
                 tier = HapticTier.Strong, tag = "keyboard_symbols") {
                 symbols = !symbols
@@ -301,7 +322,7 @@ internal fun CoverCompactQwertyKeyboard(
                 icon = Icons.Default.Clear, contentDescription = "Clear",
                 onClick = { internalText = ""; onClear() },
                 hapticTier = HapticTier.Strong,
-                modifier = Modifier.weight(0.9f).height(keyHeight).testTag("keyboard_clear")
+                modifier = Modifier.weight(0.9f).fillMaxHeight().testTag("keyboard_clear")
             )
             key(",", weight = 0.8f, tag = "keyboard_comma") { emit(',') }
             KeyboardKey(
@@ -317,7 +338,7 @@ internal fun CoverCompactQwertyKeyboard(
                     }
                 },
                 hapticTier = HapticTier.Standard,
-                modifier = Modifier.weight(2.6f).height(keyHeight).testTag("keyboard_space")
+                modifier = Modifier.weight(2.6f).fillMaxHeight().testTag("keyboard_space")
             )
             key(".", weight = 0.8f, tag = "keyboard_period",
                 longPress = { punctuationMenu = true }) {
@@ -335,8 +356,9 @@ internal fun CoverCompactQwertyKeyboard(
             KeyboardKey(
                 icon = icon, contentDescription = description, onClick = onDone,
                 hapticTier = HapticTier.Strong, colors = KeyboardKeyColors.accent(),
-                modifier = Modifier.weight(1.1f).height(keyHeight).testTag("keyboard_enter")
+                modifier = Modifier.weight(1.1f).fillMaxHeight().testTag("keyboard_enter")
             )
+        }
         }
         DropdownMenu(expanded = punctuationMenu, onDismissRequest = { punctuationMenu = false }) {
             listOf(',', ';', ':', '!', '?', '@').forEach { punctuation ->

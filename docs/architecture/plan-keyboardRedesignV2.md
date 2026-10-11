@@ -171,8 +171,11 @@ host, new `ui/keyboard/primitives/ResizableKeyboardSurface.kt`,
   `[44, 64].dp` becomes the *minimum*; allow up to `88.dp` for "tall" mode).
   Persist the chosen height per keyboard surface (cover overlay, launcher
   search, IME) in `LauncherSettingsStore`.
-- **Compact / Standard / Tall presets** exposed as quick-tap chips next to the
-  drag handle (mirrors Samsung's height presets) in addition to free-drag.
+- **Compact / Standard / Tall presets** (mirrors Samsung's height presets) in
+  addition to free-drag. Update (#120): these chips now live only in
+  Customize > Input. The keyboard's top row holds the grip, the one-handed
+  toggle and small copy/cut/paste icons. The four key rows shrink evenly to
+  fit the screen so the bottom row is never squished.
 - **One-handed mode**: a toggle that shrinks keyboard width to ~80% and
   anchors it left or right (swappable via a small arrow chip), matching
   Gboard/Samsung one-handed mode — valuable given the cover display's narrow,
