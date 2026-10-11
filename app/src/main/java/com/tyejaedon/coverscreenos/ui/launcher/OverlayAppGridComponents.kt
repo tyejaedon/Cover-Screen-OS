@@ -351,7 +351,8 @@ internal fun OneUiDockRow(
 
             Box(
                 modifier = Modifier
-                    .size(56.dp)
+                    .weight(1f)
+                    .height(56.dp)
                     .coverMinimumTouchTarget()
                     .oneUiIconSquircle(14.dp)
                     .clickable(enabled = isSlotEnabled) {
