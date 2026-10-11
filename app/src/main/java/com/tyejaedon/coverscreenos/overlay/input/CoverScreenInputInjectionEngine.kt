@@ -85,7 +85,8 @@ import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9PredictionToggle
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9SuggestionStrip
 import com.tyejaedon.coverscreenos.ui.keyboard.previousWordLength
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardHistory
-import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardToolbar
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardActionIcons
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardHistoryRow
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ComposingTextPreview
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.HapticTier
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberHapticPerformer
@@ -2083,9 +2084,9 @@ fun CoverKeyboardOverlayRoot(
                         suggestionsEnabled = !sessionState.metadata.isPassword &&
                             !sessionState.metadata.isNumeric &&
                             !sessionState.metadata.isPhoneNumber,
-                        clipboardToolbar = if (sessionState.metadata.isPassword) null else {
+                        clipboardActions = if (sessionState.metadata.isPassword) null else {
                             {
-                                ClipboardToolbar(
+                                ClipboardActionIcons(
                                     onCopy = { CoverInputSessionManager.copySelection() },
                                     onCut = { CoverInputSessionManager.cutSelection() },
                                     onPaste = {
@@ -2094,11 +2095,17 @@ fun CoverKeyboardOverlayRoot(
                                         }
                                     },
                                     canPaste = canPasteFromClipboard,
+                                    modifier = Modifier.testTag("clipboard_toolbar")
+                                )
+                            }
+                        },
+                        clipboardHistory = if (sessionState.metadata.isPassword) null else {
+                            {
+                                ClipboardHistoryRow(
                                     history = clipboardHistory,
                                     onHistorySnippetSelected = { snippet ->
                                         CoverInputSessionManager.pasteText(snippet)
-                                    },
-                                    modifier = Modifier.testTag("clipboard_toolbar")
+                                    }
                                 )
                             }
                         },
