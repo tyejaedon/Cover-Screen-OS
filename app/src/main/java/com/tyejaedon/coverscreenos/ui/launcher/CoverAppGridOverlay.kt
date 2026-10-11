@@ -647,6 +647,17 @@ private fun InteractiveSection(
         onCoverKeyboardVisibilityChanged(true)
         voiceInputHandle.stopListening()
     }
+
+    // Symmetric with the T9 path's onCoverKeyboardVisibilityChanged(true): when the
+    // active strategy is SYSTEM_IME (either on initial tile open or after a mid-session
+    // toggle), request focus and show the soft keyboard so Gboard/Samsung Keyboard
+    // appears immediately instead of requiring a second manual tap on the field.
+    LaunchedEffect(keyboardStrategy, isWidgetTileVisible) {
+        if (isWidgetTileVisible && keyboardStrategy == KeyboardStrategy.SYSTEM_IME) {
+            searchFieldFocusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
     val hintedGridLetter = remember(hintedPagerPage, appPages) {
         gridPageStartLetterForPagerPage(
             hintedPagerPage,

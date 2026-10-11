@@ -17,14 +17,14 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class WordDictionaryTest {
-    @Test fun bundledLexiconContainsTwentyThousandWordsAndPredictsHello() {
+    @Test fun bundledLexiconContainsEightyTwoThousandWordsAndPredictsHello() {
         val context: Context = RuntimeEnvironment.getApplication()
         val words = java.util.zip.GZIPInputStream(context.assets.open("english_words.bin"))
-            .bufferedReader().use { it.readLines() }
-        assertEquals(20_000, words.size)
+            .bufferedReader().lineSequence().mapNotNull { it.split(' ').getOrNull(0) }.toList()
+        assertEquals(82_761, words.size)
         assertEquals("hello", WordDictionary(words).suggestT9("43556").first())
         assertEquals("hello", WordDictionary(words).suggestT9("44-33-55-55-666").first())
-        assertTrue(java.io.File("src/main/assets/english_words.bin").length() < 300_000)
+        assertTrue(java.io.File("src/main/assets/english_words.bin").length() < 700_000)
     }
 
     @Test fun correctsHeloOnSpaceAndPreservesKnownWords() {
@@ -37,6 +37,34 @@ class WordDictionaryTest {
         assertTrue(dictionary.suggestT9("43-33-55").isEmpty())
         assertTrue(dictionary.suggestT9("44-1-55").isEmpty())
         assertEquals(listOf("there", "world", "everyone"), dictionary.nextWords("hello"))
+    }
+
+    @Test fun symSpellCorrectsTransposedAndDoubleTypoMisspellings() {
+        val dictionary = WordDictionary(listOf("because", "friend", "people", "the"))
+        // Transposition ("ecause" -> missing initial letter is an insert; "becuase" is a
+        // transposition) and a double-letter typo, both beyond the old edit-distance-1 matcher.
+        assertEquals("because", dictionary.correct("becuase"))
+        assertEquals("friend", dictionary.correct("firend"))
+        assertEquals("people", dictionary.correct("poeple"))
+    }
+
+    @Test fun bigramCorpusDrivesContextAwareNextWordSuggestions() {
+        val dictionary = WordDictionary(
+            words = listOf("thank", "you", "very", "much", "the"),
+            bigramFollowers = mapOf("thank" to listOf("you", "god"))
+        )
+        assertEquals(listOf("you", "god"), dictionary.nextWords("thank"))
+        // Falls back to the hard-coded stub when a word has no bigram entry.
+        assertEquals(listOf("the", "and", "to"), dictionary.nextWords("xyzzy"))
+    }
+
+    @Test fun suppressedWordsAreExcludedFromBigramNextWords() {
+        val dictionary = WordDictionary(
+            words = listOf("thank", "you", "god"),
+            bigramFollowers = mapOf("thank" to listOf("you", "god"))
+        )
+        dictionary.suppress("god")
+        assertEquals(listOf("you"), dictionary.nextWords("thank"))
     }
 
     @Test fun learnedAndSuppressedWordsChangeCandidateList() {

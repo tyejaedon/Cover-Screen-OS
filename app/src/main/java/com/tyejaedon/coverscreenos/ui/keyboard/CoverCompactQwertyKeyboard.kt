@@ -21,11 +21,13 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -33,10 +35,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.tyejaedon.coverscreenos.datastore.KeyboardAnchor
+import com.tyejaedon.coverscreenos.datastore.LauncherSettings
+import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.HapticTier
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKey
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKeyColors
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.OneHandedKeyboardBox
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ResizableKeyboardSurfaceControls
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.SuggestionStrip
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberHapticPerformer
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 internal enum class ShiftMode { Off, Once, Locked }
@@ -73,16 +82,29 @@ internal fun CoverCompactQwertyKeyboard(
     onDeleteWord: (() -> Unit)? = null,
     suggestionsEnabled: Boolean = true,
     onCandidateCommitted: ((String) -> Unit)? = null,
-    predictiveDigits: String? = null
+    predictiveDigits: String? = null,
+    // Phase H: optional slot so hosts with accessibility-node clipboard access (the cover
+    // overlay path) can render copy/cut/paste + history above the suggestion strip, without
+    // this shared primitive needing to know about accessibility services itself.
+    clipboardToolbar: (@Composable () -> Unit)? = null
 ) {
     val context = LocalContext.current
     val contactRevision = rememberContactSuggestionRevision(suggestionsEnabled)
     val dictionary = remember(context, suggestionsEnabled, contactRevision) {
         if (suggestionsEnabled) WordDictionary.fromContext(context) else null
     }
-    val keyHeight = (LocalConfiguration.current.screenHeightDp / 8f)
-        .coerceIn(44f, 64f).dp
+    // Phase G: user-facing customization toggles (sound is wired at the KeyboardKey
+    // primitive level; suggestion-strip visibility, autocorrect, and popup preview are
+    // applied here).
+    val settingsStore = remember(context) { LauncherSettingsStore(context.applicationContext) }
+    val customization by settingsStore.settings.collectAsState(initial = LauncherSettings())
+    val coroutineScope = rememberCoroutineScope()
+    // Phase D: resizable surface. The auto-computed [44, 64] range becomes the floor;
+    // the persisted extra-height preference (0-24dp) stacks on top, up to an 88dp ceiling.
+    val baseKeyHeight = (LocalConfiguration.current.screenHeightDp / 8f).coerceIn(44f, 64f)
+    val keyHeight = (baseKeyHeight + customization.keyboardExtraHeightDp).coerceIn(44f, 88f).dp
     val density = LocalDensity.current
+    val resizeHapticPerformer = rememberHapticPerformer(HapticTier.Standard)
     var internalText by remember { mutableStateOf("") }
     var shift by remember { mutableStateOf(ShiftMode.Off) }
     var lastShiftTap by remember { mutableLongStateOf(-1000L) }
@@ -121,7 +143,7 @@ internal fun CoverCompactQwertyKeyboard(
     }
 
     fun pressSpace() {
-        if (suggestionsEnabled && word.isNotEmpty()) {
+        if (customization.autocorrectEnabled && suggestionsEnabled && word.isNotEmpty()) {
             val corrected = dictionary?.correct(word) ?: word
             if (corrected != word) {
                 commit(corrected, trailingSpace = true)
@@ -136,7 +158,7 @@ internal fun CoverCompactQwertyKeyboard(
         label: String,
         weight: Float = 1f,
         description: String = label,
-        tier: HapticTier = HapticTier.Light,
+        tier: HapticTier = HapticTier.Standard,
         tag: String = "keyboard_key_$label",
         preview: Boolean = false,
         longPress: (() -> Unit)? = null,
@@ -155,15 +177,44 @@ internal fun CoverCompactQwertyKeyboard(
             repeatIntervalMillis = 60,
             longPressThresholdMillis = 400,
             contentDescription = description,
-            showKeyPreview = preview,
+            showKeyPreview = preview && customization.popupKeyPreviewEnabled,
             hapticTier = tier,
             colors = if (accent) KeyboardKeyColors.accent() else KeyboardKeyColors.default(),
             modifier = Modifier.weight(weight).height(keyHeight).testTag(tag)
         )
     }
 
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (suggestionsEnabled) {
+    OneHandedKeyboardBox(
+        oneHandedEnabled = customization.keyboardOneHandedEnabled,
+        anchor = customization.keyboardOneHandedAnchor,
+        modifier = modifier
+    ) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        ResizableKeyboardSurfaceControls(
+            extraHeightDp = customization.keyboardExtraHeightDp,
+            onExtraHeightChanged = { newExtraDp ->
+                coroutineScope.launch { settingsStore.setKeyboardExtraHeightDp(newExtraDp) }
+            },
+            oneHandedEnabled = customization.keyboardOneHandedEnabled,
+            onOneHandedToggle = {
+                coroutineScope.launch {
+                    settingsStore.setKeyboardOneHandedEnabled(!customization.keyboardOneHandedEnabled)
+                }
+            },
+            oneHandedAnchor = customization.keyboardOneHandedAnchor,
+            onAnchorToggle = {
+                val next = if (customization.keyboardOneHandedAnchor == KeyboardAnchor.Left) {
+                    KeyboardAnchor.Right
+                } else {
+                    KeyboardAnchor.Left
+                }
+                coroutineScope.launch { settingsStore.setKeyboardOneHandedAnchor(next) }
+            },
+            onHaptic = resizeHapticPerformer,
+            modifier = Modifier.testTag("keyboard_resize_controls")
+        )
+        clipboardToolbar?.invoke()
+        if (suggestionsEnabled && customization.suggestionStripVisible) {
             SuggestionStrip(
                 suggestions = candidates,
                 selectedIndex = if (word.isNotEmpty()) 0 else -1,
@@ -295,5 +346,6 @@ internal fun CoverCompactQwertyKeyboard(
                 )
             }
         }
+    }
     }
 }

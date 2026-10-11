@@ -67,6 +67,32 @@ enum class AccentColor {
 	ROSE
 }
 
+/** User-facing haptic feedback intensity for the cover keyboard surfaces. */
+enum class HapticStrength {
+	Off,
+	Light,
+	Standard,
+	Strong
+}
+
+/** Which side a one-handed-mode keyboard is anchored to. */
+enum class KeyboardAnchor {
+	Left,
+	Right
+}
+
+/** Minimum/maximum extra key-height (on top of the auto-computed base height) a user can
+ * drag-resize the keyboard to, in dp. The auto-computed `[44, 64]` range becomes the
+ * floor; `MAX_EXTRA_KEY_HEIGHT_DP` on top of a 64dp base reaches the 88dp ceiling. */
+const val MIN_EXTRA_KEY_HEIGHT_DP = 0f
+const val MAX_EXTRA_KEY_HEIGHT_DP = 24f
+const val COMPACT_EXTRA_KEY_HEIGHT_DP = 0f
+const val STANDARD_EXTRA_KEY_HEIGHT_DP = 12f
+const val TALL_EXTRA_KEY_HEIGHT_DP = 24f
+internal fun normalizeExtraKeyHeightDp(extraDp: Float): Float =
+	if (extraDp.isFinite()) extraDp.coerceIn(MIN_EXTRA_KEY_HEIGHT_DP, MAX_EXTRA_KEY_HEIGHT_DP)
+	else COMPACT_EXTRA_KEY_HEIGHT_DP
+
 private val Context.coverLauncherSettingsDataStore by preferencesDataStore(name = "cover_launcher_settings")
 
 private object LauncherPreferencesKeys {
@@ -82,6 +108,14 @@ private object LauncherPreferencesKeys {
 	val dockSlotFourAllApps = booleanPreferencesKey("dock_slot_four_all_apps")
 	val keyboardStrategy = stringPreferencesKey("keyboard_strategy")
 	val keyboardModeByPackage = stringPreferencesKey("keyboard_mode_by_package")
+	val hapticStrength = stringPreferencesKey("haptic_strength")
+	val keyPressSoundEnabled = booleanPreferencesKey("key_press_sound_enabled")
+	val suggestionStripVisible = booleanPreferencesKey("suggestion_strip_visible")
+	val autocorrectEnabled = booleanPreferencesKey("autocorrect_enabled")
+	val popupKeyPreviewEnabled = booleanPreferencesKey("popup_key_preview_enabled")
+	val keyboardExtraHeightDp = floatPreferencesKey("keyboard_extra_height_dp")
+	val keyboardOneHandedEnabled = booleanPreferencesKey("keyboard_one_handed_enabled")
+	val keyboardOneHandedAnchor = stringPreferencesKey("keyboard_one_handed_anchor")
 	val dockSlots: List<Preferences.Key<String>> = List(COVER_DOCK_SLOT_COUNT) { slot ->
 		stringPreferencesKey("dock_slot_$slot")
 	}
@@ -99,7 +133,15 @@ data class LauncherSettings(
 	val panelCornerRadiusDp: Float = DEFAULT_PANEL_CORNER_RADIUS_DP,
 	val dockSlotFourAllApps: Boolean = false,
 	val keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
-	val keyboardModeByPackage: Map<String, CoverKeyboardMode> = emptyMap()
+	val keyboardModeByPackage: Map<String, CoverKeyboardMode> = emptyMap(),
+	val hapticStrength: HapticStrength = HapticStrength.Standard,
+	val keyPressSoundEnabled: Boolean = false,
+	val suggestionStripVisible: Boolean = true,
+	val autocorrectEnabled: Boolean = true,
+	val popupKeyPreviewEnabled: Boolean = true,
+	val keyboardExtraHeightDp: Float = COMPACT_EXTRA_KEY_HEIGHT_DP,
+	val keyboardOneHandedEnabled: Boolean = false,
+	val keyboardOneHandedAnchor: KeyboardAnchor = KeyboardAnchor.Left
 )
 
 private const val SETTINGS_STORE_LOG_TAG = "LauncherSettingsStore"
@@ -191,7 +233,21 @@ class LauncherSettingsStore(
 					),
 					keyboardModeByPackage = decodeKeyboardModes(
 						preferences[LauncherPreferencesKeys.keyboardModeByPackage]
-					)
+					),
+					hapticStrength = preferences[LauncherPreferencesKeys.hapticStrength]
+						?.let { value -> HapticStrength.entries.firstOrNull { it.name == value } }
+						?: HapticStrength.Standard,
+					keyPressSoundEnabled = preferences[LauncherPreferencesKeys.keyPressSoundEnabled] ?: false,
+					suggestionStripVisible = preferences[LauncherPreferencesKeys.suggestionStripVisible] ?: true,
+					autocorrectEnabled = preferences[LauncherPreferencesKeys.autocorrectEnabled] ?: true,
+					popupKeyPreviewEnabled = preferences[LauncherPreferencesKeys.popupKeyPreviewEnabled] ?: true,
+					keyboardExtraHeightDp = normalizeExtraKeyHeightDp(
+						preferences[LauncherPreferencesKeys.keyboardExtraHeightDp] ?: COMPACT_EXTRA_KEY_HEIGHT_DP
+					),
+					keyboardOneHandedEnabled = preferences[LauncherPreferencesKeys.keyboardOneHandedEnabled] ?: false,
+					keyboardOneHandedAnchor = preferences[LauncherPreferencesKeys.keyboardOneHandedAnchor]
+						?.let { value -> KeyboardAnchor.entries.firstOrNull { it.name == value } }
+						?: KeyboardAnchor.Left
 				)
 		}.getOrElse { error ->
 			Log.w(SETTINGS_STORE_LOG_TAG, "Failed to map settings. Falling back to defaults.", error)
@@ -373,6 +429,70 @@ class LauncherSettingsStore(
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
 				preferences[LauncherPreferencesKeys.keyboardStrategy] = keyboardStrategy.name
+			}
+		}
+	}
+
+	suspend fun setHapticStrength(hapticStrength: HapticStrength) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences[LauncherPreferencesKeys.hapticStrength] = hapticStrength.name
+			}
+		}
+	}
+
+	suspend fun setKeyPressSoundEnabled(enabled: Boolean) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit {
+				it[LauncherPreferencesKeys.keyPressSoundEnabled] = enabled
+			}
+		}
+	}
+
+	suspend fun setSuggestionStripVisible(visible: Boolean) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit {
+				it[LauncherPreferencesKeys.suggestionStripVisible] = visible
+			}
+		}
+	}
+
+	suspend fun setAutocorrectEnabled(enabled: Boolean) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit {
+				it[LauncherPreferencesKeys.autocorrectEnabled] = enabled
+			}
+		}
+	}
+
+	suspend fun setPopupKeyPreviewEnabled(enabled: Boolean) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit {
+				it[LauncherPreferencesKeys.popupKeyPreviewEnabled] = enabled
+			}
+		}
+	}
+
+	suspend fun setKeyboardExtraHeightDp(extraDp: Float) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit {
+				it[LauncherPreferencesKeys.keyboardExtraHeightDp] = normalizeExtraKeyHeightDp(extraDp)
+			}
+		}
+	}
+
+	suspend fun setKeyboardOneHandedEnabled(enabled: Boolean) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit {
+				it[LauncherPreferencesKeys.keyboardOneHandedEnabled] = enabled
+			}
+		}
+	}
+
+	suspend fun setKeyboardOneHandedAnchor(anchor: KeyboardAnchor) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit {
+				it[LauncherPreferencesKeys.keyboardOneHandedAnchor] = anchor.name
 			}
 		}
 	}

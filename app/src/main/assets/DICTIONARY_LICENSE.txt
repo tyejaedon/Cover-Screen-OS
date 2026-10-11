@@ -1,0 +1,38 @@
+Cover Screen OS bundles two offline word-frequency corpora for keyboard
+autocorrect and predictive text:
+
+  - assets/english_words.bin  — unigram corpus (82,765 words), "word frequency" per line, gzip-compressed.
+  - assets/english_bigrams.bin — bigram corpus (top 60,000 by frequency), "word1 word2 frequency" per line, gzip-compressed.
+
+Both are trimmed from the demo data bundled with the SymSpellKt library
+(https://github.com/Darkrock-Studios/SymSpellKt), which traces its lineage
+to Wolf Garbe's original SymSpell project. All are MIT licensed:
+
+MIT License
+
+Copyright (c) 2024 Adam Brown
+Copyright (c) 2019 Lucky Sharma (Original Java implementation https://github.com/MighTguY/customized-symspell/)
+Copyright (c) 2018 Wolf Garbe (Original C# implementation https://github.com/wolfgarbe/SymSpell)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The predictive-text/autocorrect engine itself (com.darkrockstudios:symspellkt)
+is also MIT licensed; see https://github.com/Darkrock-Studios/SymSpellKt/blob/main/LICENSE.
+
+This replaces the previous CMU Pronouncing Dictionary-derived word list.

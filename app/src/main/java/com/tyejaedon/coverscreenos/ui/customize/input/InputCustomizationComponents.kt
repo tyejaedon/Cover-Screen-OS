@@ -16,6 +16,10 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,11 +30,18 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import com.tyejaedon.coverscreenos.datastore.COMPACT_EXTRA_KEY_HEIGHT_DP
+import com.tyejaedon.coverscreenos.datastore.HapticStrength
+import com.tyejaedon.coverscreenos.datastore.KeyboardAnchor
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
+import com.tyejaedon.coverscreenos.datastore.STANDARD_EXTRA_KEY_HEIGHT_DP
+import com.tyejaedon.coverscreenos.datastore.TALL_EXTRA_KEY_HEIGHT_DP
 import com.tyejaedon.coverscreenos.datastore.InputTelemetryCounters
 import com.tyejaedon.coverscreenos.datastore.InputTelemetryStore
 import com.tyejaedon.coverscreenos.helpers.InputAvailabilityTier
@@ -54,6 +65,22 @@ internal fun InputCustomizationCard(
     onOpenKeyboardPicker: () -> Unit,
     onOpenKeyboardSettings: () -> Unit,
     onResetSavedKeyboardModes: () -> Unit,
+    hapticStrength: HapticStrength,
+    onHapticStrengthSelected: (HapticStrength) -> Unit,
+    keyPressSoundEnabled: Boolean,
+    onKeyPressSoundEnabledChanged: (Boolean) -> Unit,
+    suggestionStripVisible: Boolean,
+    onSuggestionStripVisibleChanged: (Boolean) -> Unit,
+    autocorrectEnabled: Boolean,
+    onAutocorrectEnabledChanged: (Boolean) -> Unit,
+    popupKeyPreviewEnabled: Boolean,
+    onPopupKeyPreviewEnabledChanged: (Boolean) -> Unit,
+    keyboardExtraHeightDp: Float,
+    onKeyboardExtraHeightChanged: (Float) -> Unit,
+    keyboardOneHandedEnabled: Boolean,
+    onKeyboardOneHandedEnabledChanged: (Boolean) -> Unit,
+    keyboardOneHandedAnchor: KeyboardAnchor,
+    onKeyboardOneHandedAnchorChanged: (KeyboardAnchor) -> Unit,
     capabilityRefreshNonce: Int,
     modifier: Modifier = Modifier
 ) {
@@ -167,6 +194,31 @@ internal fun InputCustomizationCard(
                 }
             }
 
+            HapticStrengthPicker(
+                hapticStrength = hapticStrength,
+                onHapticStrengthSelected = onHapticStrengthSelected
+            )
+
+            KeyboardCustomizationToggles(
+                keyPressSoundEnabled = keyPressSoundEnabled,
+                onKeyPressSoundEnabledChanged = onKeyPressSoundEnabledChanged,
+                suggestionStripVisible = suggestionStripVisible,
+                onSuggestionStripVisibleChanged = onSuggestionStripVisibleChanged,
+                autocorrectEnabled = autocorrectEnabled,
+                onAutocorrectEnabledChanged = onAutocorrectEnabledChanged,
+                popupKeyPreviewEnabled = popupKeyPreviewEnabled,
+                onPopupKeyPreviewEnabledChanged = onPopupKeyPreviewEnabledChanged
+            )
+
+            KeyboardSizeAndAnchorControls(
+                keyboardExtraHeightDp = keyboardExtraHeightDp,
+                onKeyboardExtraHeightChanged = onKeyboardExtraHeightChanged,
+                keyboardOneHandedEnabled = keyboardOneHandedEnabled,
+                onKeyboardOneHandedEnabledChanged = onKeyboardOneHandedEnabledChanged,
+                keyboardOneHandedAnchor = keyboardOneHandedAnchor,
+                onKeyboardOneHandedAnchorChanged = onKeyboardOneHandedAnchorChanged
+            )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -218,6 +270,149 @@ internal fun InputCustomizationCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@Composable
+private fun HapticStrengthPicker(
+    hapticStrength: HapticStrength,
+    onHapticStrengthSelected: (HapticStrength) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val options = listOf(
+        HapticStrength.Off to "Off",
+        HapticStrength.Light to "Light",
+        HapticStrength.Standard to "Standard",
+        HapticStrength.Strong to "Strong"
+    )
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Haptic strength", style = MaterialTheme.typography.labelLarge)
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().coverMinimumTouchTarget()) {
+            options.forEachIndexed { index, (strength, label) ->
+                SegmentedButton(
+                    selected = hapticStrength == strength,
+                    onClick = { onHapticStrengthSelected(strength) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                    label = { Text(label) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun KeyboardCustomizationToggles(
+    keyPressSoundEnabled: Boolean,
+    onKeyPressSoundEnabledChanged: (Boolean) -> Unit,
+    suggestionStripVisible: Boolean,
+    onSuggestionStripVisibleChanged: (Boolean) -> Unit,
+    autocorrectEnabled: Boolean,
+    onAutocorrectEnabledChanged: (Boolean) -> Unit,
+    popupKeyPreviewEnabled: Boolean,
+    onPopupKeyPreviewEnabledChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("Keyboard customization", style = MaterialTheme.typography.labelLarge)
+        CustomizationToggleRow(
+            label = "Key-press sound",
+            checked = keyPressSoundEnabled,
+            onCheckedChange = onKeyPressSoundEnabledChanged,
+            testTag = "input_toggle_key_sound"
+        )
+        CustomizationToggleRow(
+            label = "Suggestion strip",
+            checked = suggestionStripVisible,
+            onCheckedChange = onSuggestionStripVisibleChanged,
+            testTag = "input_toggle_suggestion_strip"
+        )
+        CustomizationToggleRow(
+            label = "Autocorrect (off = suggest only)",
+            checked = autocorrectEnabled,
+            onCheckedChange = onAutocorrectEnabledChanged,
+            testTag = "input_toggle_autocorrect"
+        )
+        CustomizationToggleRow(
+            label = "Popup key preview",
+            checked = popupKeyPreviewEnabled,
+            onCheckedChange = onPopupKeyPreviewEnabledChanged,
+            testTag = "input_toggle_popup_preview"
+        )
+    }
+}
+
+@Composable
+private fun CustomizationToggleRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    testTag: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .coverMinimumTouchTarget()
+            .testTag(testTag),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun KeyboardSizeAndAnchorControls(
+    keyboardExtraHeightDp: Float,
+    onKeyboardExtraHeightChanged: (Float) -> Unit,
+    keyboardOneHandedEnabled: Boolean,
+    onKeyboardOneHandedEnabledChanged: (Boolean) -> Unit,
+    keyboardOneHandedAnchor: KeyboardAnchor,
+    onKeyboardOneHandedAnchorChanged: (KeyboardAnchor) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val presets = listOf(
+        COMPACT_EXTRA_KEY_HEIGHT_DP to "Compact",
+        STANDARD_EXTRA_KEY_HEIGHT_DP to "Standard",
+        TALL_EXTRA_KEY_HEIGHT_DP to "Tall"
+    )
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Keyboard size (default)", style = MaterialTheme.typography.labelLarge)
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().coverMinimumTouchTarget()) {
+            presets.forEachIndexed { index, (presetDp, label) ->
+                SegmentedButton(
+                    selected = kotlin.math.abs(keyboardExtraHeightDp - presetDp) <= 2f,
+                    onClick = { onKeyboardExtraHeightChanged(presetDp) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = presets.size),
+                    label = { Text(label) }
+                )
+            }
+        }
+        CustomizationToggleRow(
+            label = "One-handed mode",
+            checked = keyboardOneHandedEnabled,
+            onCheckedChange = onKeyboardOneHandedEnabledChanged,
+            testTag = "input_toggle_one_handed"
+        )
+        if (keyboardOneHandedEnabled) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Anchor side", style = MaterialTheme.typography.bodyMedium)
+                SingleChoiceSegmentedButtonRow {
+                    KeyboardAnchor.entries.forEachIndexed { index, anchor ->
+                        SegmentedButton(
+                            selected = keyboardOneHandedAnchor == anchor,
+                            onClick = { onKeyboardOneHandedAnchorChanged(anchor) },
+                            shape = SegmentedButtonDefaults.itemShape(index = index, count = KeyboardAnchor.entries.size),
+                            label = { Text(anchor.name) }
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -45,13 +45,21 @@ long-promised **resizable surface**. Four concrete, code-verified gaps:
    Samsung Keyboard, Gboard and SwiftKey all offer drag-to-resize height,
    one-handed/side-anchored layouts, and a floating/detached mode — valuable
    on a narrow, thumb-reach-constrained cover display.
+5. **The dictionary/predictive-text engine is thin and the user can't
+   customize or clipboard-paste.** `WordDictionary` bundles a ~51KB
+   CMU-derived word list and does its own edit-distance-1 correction plus a
+   hard-coded four-entry `nextWords()` stub; there's no bigger vocabulary, no
+   bigram-based next-word prediction, no user-facing keyboard customization
+   beyond the strategy picker, and no way to copy/cut/paste from the cover
+   keyboard. Added as Phases F/G/H below, alongside the original A-E.
 
 ## 2. Non-goals
 
 - Not re-litigating milestone 5's injection pipeline, delta-commit semantics,
   or password handling — those are done and out of scope here.
-- Not adding swipe/glide typing or a new predictive-language model in the
-  core phases (tracked as stretch work in Phase E only).
+- Not adding swipe/glide typing in the core phases (tracked as stretch work
+  in Phase E only). A real predictive-language model *is* now in scope via
+  Phase F (SymSpellKt + a larger bundled dictionary).
 - Not changing `KeyboardStrategy` persistence format or DataStore schema
   beyond additive keys.
 
@@ -186,13 +194,16 @@ host, new `ui/keyboard/primitives/ResizableKeyboardSurface.kt`,
 
 **Scope:** optional, lower-priority enhancements once A-D are stable.
 
+**Status:** split into three standalone follow-on issues (#101 floating mode,
+#102 swipe-glide, #103 per-app height/anchor memory) per this phase's own
+"split into child issues" acceptance criteria. The clipboard/undo-strip item
+originally scoped here shipped separately as Phase H.
+
 **Deliverables (pick per capacity):**
 - Floating/detached keyboard mode (free-positioned draggable window) for the
   cover overlay path.
 - Swipe-glide trail visualization on `CoverCompactQwertyKeyboard` feeding the
   existing dictionary for gesture-typing.
-- Clipboard/undo strip above the suggestion strip (last 3 clips + undo-last-
-  commit), mirroring Gboard's clipboard manager.
 - Per-app keyboard height/anchor memory (extends milestone 5's per-app mode
   memory with size/anchor).
 
@@ -201,10 +212,63 @@ not regress Phases A-D; treat as independently shippable follow-on issues.
 
 **Est. 1-4 eng-days per deliverable, scoped at implementation time.**
 
+### Phase F — Larger dictionary + SymSpellKt predictive text
+
+**Scope:** `ui/keyboard/WordDictionary.kt`, new bundled dictionary asset,
+`app/build.gradle.kts`.
+
+**Deliverables:**
+- Bundle a frequency-ranked English word list trimmed to the top ~100k words
+  (open, permissively-licensed, e.g. `hermitdave/FrequencyWords`), replacing
+  the current ~51KB CMU-derived `english_words.bin` as the base vocabulary
+  (now `assets/english_words.bin` + `assets/english_bigrams.bin`, see
+  `assets/DICTIONARY_LICENSE.txt`).
+- Integrate `com.darkrockstudios:symspellkt` (MIT, Maven Central, Kotlin
+  Multiplatform/Android) for SymSpell fuzzy-correction plus bigram-based
+  context-aware next-word suggestions, replacing the homegrown edit-distance-1
+  matcher and the hard-coded `nextWords()` stub.
+- Preserve existing contact-name / app-label enrichment and learned/suppressed
+  overrides.
+
+**Acceptance:** noticeably better corrections/suggestions than before, no
+visible latency on the suggestion strip, unit tests cover suggestion quality
+and override behavior. **Est. 2.5 eng-days.**
+
+### Phase G — Keyboard customization settings
+
+**Scope:** `LauncherSettingsStore.kt`, `InputCustomizationComponents.kt`,
+`CoverCompactQwertyKeyboard.kt`, `KeyboardKey.kt`.
+
+**Deliverables:** persisted toggles for key-press sound, suggestion-strip
+visibility, autocorrect vs. suggest-only, and popup key-preview, surfaced in
+`InputCustomizationCard`.
+
+**Acceptance:** each toggle changes behavior live and persists across
+restart; disabling autocorrect never silently rewrites the typed word.
+**Est. 1.5 eng-days.**
+
+### Phase H — Copy/cut/paste toolbar + clipboard history
+
+**Scope:** `CoverScreenInputInjectionEngine.kt`, new
+`ui/keyboard/primitives/ClipboardToolbar.kt`.
+
+**Deliverables:** a toolbar row above the suggestion strip with copy/cut/
+paste (via accessibility `ACTION_COPY`/`ACTION_CUT`/`ACTION_PASTE` on the
+focused node) plus a short clipboard-history chip row for quick re-paste.
+Supersedes the "Clipboard/undo strip" bullet originally listed under Phase E.
+
+**Acceptance:** copy/cut/paste work end-to-end against a real focused
+editor; history is most-recent-first and re-paste works without re-copying.
+**Est. 2 eng-days.**
+
 ## 5. Sequencing
 
-A (bug fix, unblock users today) → B (haptics, cheap/high-perceived-value) →
-C (visibility) → D (resizability, biggest surface area) → E (stretch, cut
-freely). A and B can land in parallel; C and D touch overlapping files
-(`CoverCompactQwertyKeyboard`) and should land in sequence to avoid merge
-churn.
+A (bug fix, unblock users today; also folds in the hint/placeholder-text
+buffer-leak fix) → F (dictionary/predictive-text foundation) → B (haptics,
+cheap/high-perceived-value) → C (visibility) → H (clipboard) → G
+(customization) → D (resizability, biggest surface area) → E (stretch, split
+into standalone follow-ons; clipboard bullet superseded by H). A and B can
+land in parallel; C and D touch overlapping files (`CoverCompactQwertyKeyboard`)
+and should land in sequence to avoid merge churn. F lands before B/C/G since
+later suggestion-strip and customization work should sit on the final
+dictionary API rather than the old one.
