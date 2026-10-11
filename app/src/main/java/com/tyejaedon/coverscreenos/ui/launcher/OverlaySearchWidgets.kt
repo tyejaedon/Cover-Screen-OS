@@ -32,6 +32,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material3.Icon
@@ -216,6 +219,8 @@ private fun SearchWidgetTile(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // Scrollable so the keyboard keys are never clipped when the tile is short.
+                .verticalScroll(rememberScrollState())
                 .coverScreenPadding(horizontal = 8.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
@@ -446,7 +451,7 @@ private fun CoverSearchInputRow(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Keyboard,
+                    imageVector = Icons.Filled.SwapHoriz,
                     contentDescription = "Choose input method",
                     tint = Color.White
                 )
