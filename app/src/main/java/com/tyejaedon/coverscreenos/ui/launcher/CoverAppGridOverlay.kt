@@ -367,6 +367,10 @@ fun CoverAppGridOverlay(
     wallpaperScaleMode: WallpaperScaleMode = WallpaperScaleMode.CROP,
     wallpaperDimAmount: Float = DEFAULT_WALLPAPER_DIM_AMOUNT,
     wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP,
+    wallpaperCropX: Float = 0f,
+    wallpaperCropY: Float = 0f,
+    wallpaperZoom: Float = 1f,
+    wallpaperRotation: Int = 0,
     keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
     onKeyboardStrategyChanged: (KeyboardStrategy) -> Unit = {},
     onRequestUnlock: () -> Unit = {},
@@ -436,7 +440,6 @@ fun CoverAppGridOverlay(
     val dockApps = remember(apps, dockPackageSlots) {
         resolveDockSlots(apps = apps, dockPackageSlots = dockPackageSlots)
     }
-    val constrainedWallpaperDim = wallpaperDimAmount.coerceIn(MIN_WALLPAPER_DIM_AMOUNT, MAX_WALLPAPER_DIM_AMOUNT)
     val filteredApps = remember(apps, searchQuery) {
         filterAppsForSearchQuery(
             apps = apps,
@@ -483,18 +486,16 @@ fun CoverAppGridOverlay(
             CoverWallpaperLayer(
                 wallpaperUri = wallpaperUri,
                 wallpaperScaleMode = wallpaperScaleMode,
+                wallpaperCropX = wallpaperCropX,
+                wallpaperCropY = wallpaperCropY,
+                wallpaperZoom = wallpaperZoom,
+                wallpaperRotation = wallpaperRotation,
+                wallpaperDimAmount = wallpaperDimAmount,
+                wallpaperBlurRadiusDp = wallpaperBlurRadiusDp,
                 modifier = Modifier
                     .fillMaxSize()
                     .hazeSource(state = hazeState)
             )
-
-            if (isAppGridPage && constrainedWallpaperDim > 0f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = constrainedWallpaperDim * 0.25f))
-                )
-            }
 
             Box(
                 modifier = Modifier

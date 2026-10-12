@@ -12,6 +12,10 @@ internal object LauncherSettingsJson {
         put("wallpaperScaleMode", settings.wallpaperScaleMode.name)
         put("wallpaperDimAmount", settings.wallpaperDimAmount)
         put("wallpaperBlurRadiusDp", settings.wallpaperBlurRadiusDp)
+        put("wallpaperCropX", settings.wallpaperCropX)
+        put("wallpaperCropY", settings.wallpaperCropY)
+        put("wallpaperZoom", settings.wallpaperZoom)
+        put("wallpaperRotation", settings.wallpaperRotation)
         put("isDockVisible", settings.isDockVisible)
         put("themePreference", settings.themePreference.name)
         put("accentColor", settings.accentColor.name)
@@ -43,6 +47,24 @@ internal object LauncherSettingsJson {
         require(blur.isFinite() && blur in MIN_WALLPAPER_BLUR_RADIUS_DP..MAX_WALLPAPER_BLUR_RADIUS_DP) {
             "Invalid wallpaper blur"
         }
+        val cropX = if (json.has("wallpaperCropX")) json.getDouble("wallpaperCropX").toFloat()
+            else DEFAULT_WALLPAPER_CROP_OFFSET
+        val cropY = if (json.has("wallpaperCropY")) json.getDouble("wallpaperCropY").toFloat()
+            else DEFAULT_WALLPAPER_CROP_OFFSET
+        val zoom = if (json.has("wallpaperZoom")) json.getDouble("wallpaperZoom").toFloat()
+            else DEFAULT_WALLPAPER_ZOOM
+        val rotation = if (json.has("wallpaperRotation")) json.getInt("wallpaperRotation")
+            else DEFAULT_WALLPAPER_ROTATION
+        require(cropX.isFinite() && cropX in MIN_WALLPAPER_CROP_OFFSET..MAX_WALLPAPER_CROP_OFFSET) {
+            "Invalid wallpaper crop X"
+        }
+        require(cropY.isFinite() && cropY in MIN_WALLPAPER_CROP_OFFSET..MAX_WALLPAPER_CROP_OFFSET) {
+            "Invalid wallpaper crop Y"
+        }
+        require(zoom.isFinite() && zoom in MIN_WALLPAPER_ZOOM..MAX_WALLPAPER_ZOOM) {
+            "Invalid wallpaper zoom"
+        }
+        require(rotation in 0..270 && rotation % 90 == 0) { "Invalid wallpaper rotation" }
         val radius = if (json.has("panelCornerRadiusDp")) json.getDouble("panelCornerRadiusDp").toFloat()
             else DEFAULT_PANEL_CORNER_RADIUS_DP
         require(radius.isFinite() && radius in MIN_PANEL_CORNER_RADIUS_DP..MAX_PANEL_CORNER_RADIUS_DP) {
@@ -59,6 +81,10 @@ internal object LauncherSettingsJson {
             wallpaperScaleMode = enumValue(json.getString("wallpaperScaleMode")),
             wallpaperDimAmount = dim,
             wallpaperBlurRadiusDp = blur,
+            wallpaperCropX = cropX,
+            wallpaperCropY = cropY,
+            wallpaperZoom = zoom,
+            wallpaperRotation = rotation,
             isDockVisible = json.getBoolean("isDockVisible"),
             themePreference = enumValue(json.getString("themePreference")),
             accentColor = if (json.has("accentColor")) enumValue(json.getString("accentColor")) else AccentColor.DEFAULT,

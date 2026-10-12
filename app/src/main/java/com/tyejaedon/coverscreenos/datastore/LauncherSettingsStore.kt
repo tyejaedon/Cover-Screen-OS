@@ -5,6 +5,9 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -23,6 +26,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import androidx.core.net.toUri
 import com.tyejaedon.coverscreenos.overlay.input.CoverKeyboardMode
@@ -47,7 +55,24 @@ const val DEFAULT_WALLPAPER_DIM_AMOUNT = 0.45f
 const val MIN_WALLPAPER_BLUR_RADIUS_DP = 0f
 const val MAX_WALLPAPER_BLUR_RADIUS_DP = 18f
 const val DEFAULT_WALLPAPER_BLUR_RADIUS_DP = 0f
+const val MIN_WALLPAPER_CROP_OFFSET = -1f
+const val MAX_WALLPAPER_CROP_OFFSET = 1f
+const val DEFAULT_WALLPAPER_CROP_OFFSET = 0f
+const val MIN_WALLPAPER_ZOOM = 1f
+const val MAX_WALLPAPER_ZOOM = 3f
+const val DEFAULT_WALLPAPER_ZOOM = 1f
+const val DEFAULT_WALLPAPER_ROTATION = 0
 val DEFAULT_WALLPAPER_SCALE_MODE: WallpaperScaleMode = WallpaperScaleMode.CROP
+
+internal fun normalizeWallpaperCropOffset(value: Float): Float =
+	if (value.isFinite()) value.coerceIn(MIN_WALLPAPER_CROP_OFFSET, MAX_WALLPAPER_CROP_OFFSET)
+	else DEFAULT_WALLPAPER_CROP_OFFSET
+
+internal fun normalizeWallpaperZoom(value: Float): Float =
+	if (value.isFinite()) value.coerceIn(MIN_WALLPAPER_ZOOM, MAX_WALLPAPER_ZOOM)
+	else DEFAULT_WALLPAPER_ZOOM
+
+internal fun normalizeWallpaperRotation(value: Int): Int = ((value % 360) + 360) % 360 / 90 * 90
 
 enum class WallpaperScaleMode {
 	CROP,
@@ -101,6 +126,10 @@ private object LauncherPreferencesKeys {
 	val wallpaperScaleMode = stringPreferencesKey("wallpaper_scale_mode")
 	val wallpaperDimAmount = floatPreferencesKey("wallpaper_dim_amount")
 	val wallpaperBlurRadiusDp = floatPreferencesKey("wallpaper_blur_radius_dp")
+	val wallpaperCropX = floatPreferencesKey("wallpaper_crop_x")
+	val wallpaperCropY = floatPreferencesKey("wallpaper_crop_y")
+	val wallpaperZoom = floatPreferencesKey("wallpaper_zoom")
+	val wallpaperRotation = androidx.datastore.preferences.core.intPreferencesKey("wallpaper_rotation")
 	val dockVisible = booleanPreferencesKey("dock_visible")
 	val themePreference = stringPreferencesKey("theme_preference")
 	val accentColor = stringPreferencesKey("accent_color")
@@ -127,6 +156,10 @@ data class LauncherSettings(
 	val wallpaperScaleMode: WallpaperScaleMode = DEFAULT_WALLPAPER_SCALE_MODE,
 	val wallpaperDimAmount: Float = DEFAULT_WALLPAPER_DIM_AMOUNT,
 	val wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP,
+	val wallpaperCropX: Float = DEFAULT_WALLPAPER_CROP_OFFSET,
+	val wallpaperCropY: Float = DEFAULT_WALLPAPER_CROP_OFFSET,
+	val wallpaperZoom: Float = DEFAULT_WALLPAPER_ZOOM,
+	val wallpaperRotation: Int = DEFAULT_WALLPAPER_ROTATION,
 	val isDockVisible: Boolean = true,
 	val themePreference: ThemePreference = ThemePreference.SYSTEM,
 	val accentColor: AccentColor = AccentColor.DEFAULT,
@@ -150,6 +183,18 @@ private const val MANAGED_WALLPAPER_FILE_PREFIX = "selected_wallpaper_"
 private const val MANAGED_WALLPAPER_FILE_LEGACY = "selected_wallpaper"
 private const val MANAGED_WALLPAPER_FALLBACK_EXTENSION = ".img"
 private const val WALLPAPER_VALIDATION_TARGET_SIZE_PX = 512
+private val wallpaperMutationMutex = Mutex()
+
+internal suspend fun finalizeWallpaperImport(
+	commit: suspend () -> Unit,
+	afterCommit: () -> Unit
+) {
+	currentCoroutineContext().ensureActive()
+	withContext(NonCancellable) {
+		commit()
+		afterCommit()
+	}
+}
 
 private fun decodeKeyboardModes(raw: String?): Map<String, CoverKeyboardMode> {
 	if (raw.isNullOrBlank()) return emptyMap()
@@ -216,6 +261,18 @@ class LauncherSettingsStore(
 					wallpaperBlurRadiusDp = (preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp]
 						?: DEFAULT_WALLPAPER_BLUR_RADIUS_DP)
 						.coerceIn(MIN_WALLPAPER_BLUR_RADIUS_DP, MAX_WALLPAPER_BLUR_RADIUS_DP),
+					wallpaperCropX = normalizeWallpaperCropOffset(
+						preferences[LauncherPreferencesKeys.wallpaperCropX] ?: DEFAULT_WALLPAPER_CROP_OFFSET
+					),
+					wallpaperCropY = normalizeWallpaperCropOffset(
+						preferences[LauncherPreferencesKeys.wallpaperCropY] ?: DEFAULT_WALLPAPER_CROP_OFFSET
+					),
+					wallpaperZoom = normalizeWallpaperZoom(
+						preferences[LauncherPreferencesKeys.wallpaperZoom] ?: DEFAULT_WALLPAPER_ZOOM
+					),
+					wallpaperRotation = normalizeWallpaperRotation(
+						preferences[LauncherPreferencesKeys.wallpaperRotation] ?: DEFAULT_WALLPAPER_ROTATION
+					),
 					isDockVisible = preferences[LauncherPreferencesKeys.dockVisible] ?: true,
 					themePreference = preferences[LauncherPreferencesKeys.themePreference]
 						?.let { value -> ThemePreference.entries.firstOrNull { it.name == value } }
@@ -291,38 +348,48 @@ class LauncherSettingsStore(
 	}
 
 	suspend fun setLauncherLayout(settings: LauncherSettings, restoreKeyboardModes: Boolean = false) {
-		withContext(ioDispatcher) {
-			val normalizedDockPackages = normalizeDockPackages(settings.dockPackages)
-			val normalizedWallpaperUri = resolveWallpaperUriForPersistedLayout(
-				settings.wallpaperUri?.trim().takeUnless { it.isNullOrEmpty() }
-			)
-			val normalizedWallpaperDim = settings.wallpaperDimAmount
-				.coerceIn(MIN_WALLPAPER_DIM_AMOUNT, MAX_WALLPAPER_DIM_AMOUNT)
-			val normalizedWallpaperBlur = settings.wallpaperBlurRadiusDp
-				.coerceIn(MIN_WALLPAPER_BLUR_RADIUS_DP, MAX_WALLPAPER_BLUR_RADIUS_DP)
+		wallpaperMutationMutex.withLock {
+			withContext(ioDispatcher) {
+				val normalizedDockPackages = normalizeDockPackages(settings.dockPackages)
+				val normalizedWallpaperUri = resolveWallpaperUriForPersistedLayout(
+					settings.wallpaperUri?.trim().takeUnless { it.isNullOrEmpty() }
+				)
+				val normalizedWallpaperDim = settings.wallpaperDimAmount
+					.coerceIn(MIN_WALLPAPER_DIM_AMOUNT, MAX_WALLPAPER_DIM_AMOUNT)
+				val normalizedWallpaperBlur = settings.wallpaperBlurRadiusDp
+					.coerceIn(MIN_WALLPAPER_BLUR_RADIUS_DP, MAX_WALLPAPER_BLUR_RADIUS_DP)
 
-			appContext.coverLauncherSettingsDataStore.edit { preferences ->
-				writeDockSlots(preferences = preferences, dockPackages = normalizedDockPackages)
+				appContext.coverLauncherSettingsDataStore.edit { preferences ->
+					writeDockSlots(preferences = preferences, dockPackages = normalizedDockPackages)
 
-				if (normalizedWallpaperUri == null) {
-					preferences.remove(LauncherPreferencesKeys.wallpaperUri)
-				} else {
-					preferences[LauncherPreferencesKeys.wallpaperUri] = normalizedWallpaperUri
-				}
+					if (normalizedWallpaperUri == null) {
+						preferences.remove(LauncherPreferencesKeys.wallpaperUri)
+					} else {
+						preferences[LauncherPreferencesKeys.wallpaperUri] = normalizedWallpaperUri
+					}
 
-				preferences[LauncherPreferencesKeys.wallpaperScaleMode] = settings.wallpaperScaleMode.name
-				preferences[LauncherPreferencesKeys.wallpaperDimAmount] = normalizedWallpaperDim
-				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = normalizedWallpaperBlur
-				preferences[LauncherPreferencesKeys.dockVisible] = settings.isDockVisible
-				preferences[LauncherPreferencesKeys.themePreference] = settings.themePreference.name
-				preferences[LauncherPreferencesKeys.accentColor] = settings.accentColor.name
-				preferences[LauncherPreferencesKeys.panelCornerRadiusDp] =
-					normalizePanelCornerRadius(settings.panelCornerRadiusDp)
-				preferences[LauncherPreferencesKeys.dockSlotFourAllApps] = settings.dockSlotFourAllApps
-				preferences[LauncherPreferencesKeys.keyboardStrategy] = settings.keyboardStrategy.name
-				if (restoreKeyboardModes) {
-					preferences[LauncherPreferencesKeys.keyboardModeByPackage] =
-						JSONObject(settings.keyboardModeByPackage.mapValues { it.value.name }).toString()
+					preferences[LauncherPreferencesKeys.wallpaperScaleMode] = settings.wallpaperScaleMode.name
+					preferences[LauncherPreferencesKeys.wallpaperDimAmount] = normalizedWallpaperDim
+					preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = normalizedWallpaperBlur
+					preferences[LauncherPreferencesKeys.wallpaperCropX] =
+						normalizeWallpaperCropOffset(settings.wallpaperCropX)
+					preferences[LauncherPreferencesKeys.wallpaperCropY] =
+						normalizeWallpaperCropOffset(settings.wallpaperCropY)
+					preferences[LauncherPreferencesKeys.wallpaperZoom] =
+						normalizeWallpaperZoom(settings.wallpaperZoom)
+					preferences[LauncherPreferencesKeys.wallpaperRotation] =
+						normalizeWallpaperRotation(settings.wallpaperRotation)
+					preferences[LauncherPreferencesKeys.dockVisible] = settings.isDockVisible
+					preferences[LauncherPreferencesKeys.themePreference] = settings.themePreference.name
+					preferences[LauncherPreferencesKeys.accentColor] = settings.accentColor.name
+					preferences[LauncherPreferencesKeys.panelCornerRadiusDp] =
+						normalizePanelCornerRadius(settings.panelCornerRadiusDp)
+					preferences[LauncherPreferencesKeys.dockSlotFourAllApps] = settings.dockSlotFourAllApps
+					preferences[LauncherPreferencesKeys.keyboardStrategy] = settings.keyboardStrategy.name
+					if (restoreKeyboardModes) {
+						preferences[LauncherPreferencesKeys.keyboardModeByPackage] =
+							JSONObject(settings.keyboardModeByPackage.mapValues { it.value.name }).toString()
+					}
 				}
 			}
 		}
@@ -554,6 +621,10 @@ class LauncherSettingsStore(
 	}
 
 	suspend fun setWallpaperUri(uri: String?): Boolean {
+		return wallpaperMutationMutex.withLock { setWallpaperUriUnlocked(uri) }
+	}
+
+	private suspend fun setWallpaperUriUnlocked(uri: String?): Boolean {
 		return withContext(ioDispatcher) {
 			val normalizedUri = uri?.trim().takeUnless { it.isNullOrEmpty() }
 			if (normalizedUri != null) {
@@ -585,107 +656,193 @@ class LauncherSettingsStore(
 		}
 	}
 
-	suspend fun importWallpaperFromUri(sourceUri: Uri): Boolean {
-		return withContext(ioDispatcher) {
-			takeSourceUriReadPermission(sourceUri)
+	suspend fun importWallpaperFromUri(sourceUri: Uri) {
+		importWallpaper(sourceUri) { openUriInputStream(sourceUri) }
+	}
 
-			val sourceBounds = probeBitmapBounds {
-				openUriInputStream(sourceUri)
-			}
-			val isDecodableImage = sourceBounds?.isDecodable == true
-			if (!isDecodableImage) {
-				logWallpaperDiagnostics(
-					stage = "source_not_decodable",
-					uri = sourceUri,
-					boundsProbe = sourceBounds
-				)
-				Log.w(SETTINGS_STORE_LOG_TAG, "Wallpaper import failed: source is not a decodable image URI $sourceUri")
-				return@withContext false
-			}
+	internal suspend fun importWallpaperFromStream(sourceUri: Uri, input: InputStream) {
+		importWallpaper(sourceUri) { input }
+	}
 
-			val sourceStream = openUriInputStream(sourceUri)
-			if (sourceStream == null) {
-				logWallpaperDiagnostics(
-					stage = "source_stream_unavailable",
-					uri = sourceUri,
-					boundsProbe = sourceBounds
-				)
-				Log.w(SETTINGS_STORE_LOG_TAG, "Wallpaper import failed: unable to open source URI $sourceUri")
-				return@withContext false
-			}
+	private suspend fun importWallpaper(sourceUri: Uri, openInput: () -> InputStream?) {
+		wallpaperMutationMutex.withLock {
+			withContext(ioDispatcher) {
+				takeSourceUriReadPermission(sourceUri)
+				val wallpaperDirectory = File(appContext.filesDir, MANAGED_WALLPAPER_DIR)
+				if (!wallpaperDirectory.exists() && !wallpaperDirectory.mkdirs()) {
+					throw IOException("Could not create wallpaper storage.")
+				}
+				cleanInterruptedWallpaperImports(wallpaperDirectory)
 
-			val wallpaperDirectory = File(appContext.filesDir, MANAGED_WALLPAPER_DIR)
-			if (!wallpaperDirectory.exists() && !wallpaperDirectory.mkdirs()) {
-				Log.w(SETTINGS_STORE_LOG_TAG, "Wallpaper import failed: unable to create wallpaper directory")
-				return@withContext false
-			}
+				val wallpaperFile = buildVersionedManagedWallpaperFile(wallpaperDirectory, sourceUri)
+				val tempWallpaperFile = File(wallpaperDirectory, "${wallpaperFile.name}.part")
+				val input = openInput()
+					?: throw IOException("Could not read the selected wallpaper. Choose a readable file.")
+				var wallpaperCommitted = false
+				try {
+					input.use { source -> copyWallpaperImportStream(source, tempWallpaperFile) }
 
-			val wallpaperFile = buildVersionedManagedWallpaperFile(wallpaperDirectory, sourceUri)
-			val tempWallpaperFile = File(wallpaperDirectory, "${wallpaperFile.name}.part")
-			val copied = runCatching {
-				sourceStream.use { input ->
-					FileOutputStream(tempWallpaperFile, false).use { output ->
-						input.copyTo(output)
-						output.flush()
+					validateWallpaperFile(tempWallpaperFile)
+					currentCoroutineContext().ensureActive()
+					if (!tempWallpaperFile.renameTo(wallpaperFile)) {
+						throw IOException("Could not save the validated wallpaper.")
 					}
-				}
-
-				if (!tempWallpaperFile.exists() || tempWallpaperFile.length() <= 0L) {
-					Log.w(SETTINGS_STORE_LOG_TAG, "Wallpaper import failed: copied file is empty")
-					tempWallpaperFile.delete()
-					return@runCatching false
-				}
-
-				if (!tempWallpaperFile.renameTo(wallpaperFile)) {
-					tempWallpaperFile.copyTo(wallpaperFile, overwrite = true)
-					tempWallpaperFile.delete()
-				}
-
-				if (!wallpaperFile.exists() || wallpaperFile.length() <= 0L) {
-					Log.w(SETTINGS_STORE_LOG_TAG, "Wallpaper import failed: destination file is empty")
-					wallpaperFile.delete()
-					return@runCatching false
-				}
-
-				if (!isManagedWallpaperFileReadableAndDecodable(wallpaperFile)) {
-					logWallpaperDiagnostics(
-						stage = "destination_not_decodable",
-						uri = Uri.fromFile(wallpaperFile),
-						boundsProbe = probeBitmapBounds {
-							runCatching { wallpaperFile.inputStream() }.getOrNull()
+					finalizeWallpaperImport(
+						commit = {
+							if (!setWallpaperUriUnlocked(Uri.fromFile(wallpaperFile).toString())) {
+								throw IOException("Wallpaper validation failed. The previous wallpaper was kept.")
+							}
+						},
+						afterCommit = {
+							wallpaperCommitted = true
+							pruneManagedWallpaperFiles(wallpaperDirectory, keepFileName = wallpaperFile.name)
 						}
 					)
-					Log.w(
-						SETTINGS_STORE_LOG_TAG,
-						"Wallpaper import failed: destination file is not decodable ${wallpaperFile.absolutePath}"
-					)
-					wallpaperFile.delete()
-					return@runCatching false
+					Log.d(SETTINGS_STORE_LOG_TAG, "Imported validated wallpaper (${wallpaperFile.length()} bytes)")
+				} catch (error: Exception) {
+					tempWallpaperFile.delete()
+					if (!wallpaperCommitted) wallpaperFile.delete()
+					if (error is CancellationException) throw error
+					if (error is IOException || error is IllegalArgumentException) throw error
+					throw IOException("Could not import this wallpaper. Choose a supported image, GIF, or video.", error)
 				}
-				true
-			}.getOrElse { error ->
-				Log.w(SETTINGS_STORE_LOG_TAG, "Wallpaper import failed while copying bytes: ${error.message}")
-				runCatching { tempWallpaperFile.delete() }
-				runCatching { wallpaperFile.delete() }
-				false
+			}
+		}
+	}
+
+	internal suspend fun copyWallpaperImportStream(source: InputStream, tempWallpaperFile: File) {
+		try {
+			FileOutputStream(tempWallpaperFile, false).use { output ->
+				try {
+					WallpaperMediaLimits.copyBounded(source, output)
+				} catch (error: IllegalArgumentException) {
+					val message = if (error.message == "Media file is empty") {
+						"The selected wallpaper file is empty."
+					} else {
+						"Wallpaper is larger than ${WallpaperMediaLimits.MAX_FILE_BYTES / (1024 * 1024)} MB."
+					}
+					throw IOException(message, error)
+				}
+				output.flush()
+				output.fd.sync()
+			}
+		} catch (error: Exception) {
+			tempWallpaperFile.delete()
+			if (error is CancellationException) throw error
+			throw error
+		}
+	}
+
+	private fun cleanInterruptedWallpaperImports(wallpaperDirectory: File) {
+		val managedFiles = wallpaperDirectory.listFiles()
+			?: throw IOException("Could not inspect wallpaper storage.")
+		managedFiles
+			.filter { it.isFile && it.name.startsWith(MANAGED_WALLPAPER_FILE_PREFIX) && it.name.endsWith(".part") }
+			.forEach { partial ->
+				if (!partial.delete()) throw IOException("Could not remove an interrupted wallpaper import.")
+			}
+	}
+
+	private fun validateWallpaperFile(file: File): WallpaperMediaType {
+		require(file.isFile && file.canRead() && file.length() in 1..WallpaperMediaLimits.MAX_FILE_BYTES) {
+			"Wallpaper must be a readable file no larger than ${WallpaperMediaLimits.MAX_FILE_BYTES / (1024 * 1024)} MB."
+		}
+		val type = detectWallpaperType(file)
+		when (type) {
+			WallpaperMediaType.GIF -> {
+				file.inputStream().use { WallpaperMediaLimits.validateGif(it) }
+				val drawable = ImageDecoder.decodeDrawable(ImageDecoder.createSource(file))
+				if (drawable is android.graphics.drawable.AnimatedImageDrawable) {
+					drawable.stop()
+				} else {
+					throw IllegalArgumentException("GIF animation could not be decoded by this device.")
+				}
+			}
+			WallpaperMediaType.IMAGE -> {
+				val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+				BitmapFactory.decodeFile(file.absolutePath, bounds)
+				require(WallpaperMediaLimits.hasValidDimensions(bounds.outWidth, bounds.outHeight, animated = false)) {
+					"Image dimensions exceed ${WallpaperMediaLimits.MAX_WIDTH}x${WallpaperMediaLimits.MAX_HEIGHT} or ${WallpaperMediaLimits.MAX_IMAGE_PIXELS / 1_000_000} megapixels."
+				}
+				val options = BitmapFactory.Options().apply {
+					inSampleSize = calculateValidationInSampleSize(
+						bounds.outWidth,
+						bounds.outHeight,
+						WALLPAPER_VALIDATION_TARGET_SIZE_PX,
+						WALLPAPER_VALIDATION_TARGET_SIZE_PX
+					)
+					inPreferredConfig = Bitmap.Config.ARGB_8888
+				}
+				val validationBitmap = BitmapFactory.decodeFile(file.absolutePath, options)
+				require(validationBitmap != null) {
+					"Image data is corrupt or unsupported."
+				}
+				validationBitmap.recycle()
+			}
+			WallpaperMediaType.VIDEO -> validateVideoFile(file)
+		}
+		return type
+	}
+
+	private fun detectWallpaperType(file: File): WallpaperMediaType {
+		return file.inputStream().use { stream ->
+			WallpaperMediaLimits.detectMediaType(stream.readNBytes(4096))
+		}
+	}
+
+	private fun validateVideoFile(file: File) {
+		val retriever = MediaMetadataRetriever()
+		try {
+			retriever.setDataSource(file.absolutePath)
+			val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+				?: throw IllegalArgumentException("Video duration could not be read.")
+			val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+			val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+			WallpaperMediaLimits.validateVideoDuration(duration)
+			require(WallpaperMediaLimits.hasValidDimensions(width, height, animated = true)) {
+				"Video dimensions exceed ${WallpaperMediaLimits.MAX_ANIMATED_WIDTH}x${WallpaperMediaLimits.MAX_ANIMATED_HEIGHT} or ${WallpaperMediaLimits.MAX_ANIMATED_PIXELS / 1_000_000} megapixels."
 			}
 
-			if (!copied) {
-				return@withContext false
+			val extractor = MediaExtractor()
+			try {
+				extractor.setDataSource(file.absolutePath)
+				val videoTrackIndex = (0 until extractor.trackCount)
+					.firstOrNull { extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
+					?: throw IllegalArgumentException("Video has no supported video track.")
+				val videoTrack = extractor.getTrackFormat(videoTrackIndex)
+				val mime = videoTrack.getString(MediaFormat.KEY_MIME)
+				WallpaperMediaLimits.validateVideoCodec(mime)
+				val fps = if (videoTrack.containsKey(MediaFormat.KEY_FRAME_RATE))
+					videoTrack.getInteger(MediaFormat.KEY_FRAME_RATE) else 0
+				WallpaperMediaLimits.validateVideoFrameRate(fps)
+				extractor.selectTrack(videoTrackIndex)
+				val frameTimestampsUs = ArrayList<Long>(WallpaperMediaLimits.MAX_FRAME_COUNT + 1)
+				while (extractor.sampleTrackIndex >= 0) {
+					frameTimestampsUs.add(extractor.sampleTime)
+					require(frameTimestampsUs.size <= WallpaperMediaLimits.MAX_FRAME_COUNT) {
+						"Video contains more than ${WallpaperMediaLimits.MAX_FRAME_COUNT} frames."
+					}
+					if (!extractor.advance()) break
+				}
+				WallpaperMediaLimits.validateFrameCount(frameTimestampsUs.size)
+				val sortedTimestamps = frameTimestampsUs.sorted()
+				sortedTimestamps.zipWithNext().forEach { (earlier, later) ->
+					require(later - earlier >= 1_000_000L / WallpaperMediaLimits.MAX_FRAME_RATE) {
+						"Video frame rate must be ${WallpaperMediaLimits.MAX_FRAME_RATE} fps or lower."
+					}
+				}
+			} finally {
+				extractor.release()
 			}
-
-			val wallpaperSaved = setWallpaperUri(Uri.fromFile(wallpaperFile).toString())
-			if (!wallpaperSaved) {
-				runCatching { wallpaperFile.delete() }
-				return@withContext false
-			}
-
-			pruneManagedWallpaperFiles(wallpaperDirectory, keepFileName = wallpaperFile.name)
-			Log.d(
-				SETTINGS_STORE_LOG_TAG,
-				"Wallpaper imported successfully as ${wallpaperFile.name} (${wallpaperFile.length()} bytes)"
-			)
-			true
+			val validationFrame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+				?: throw IllegalArgumentException("Video cannot be decoded by this device.")
+			validationFrame.recycle()
+		} catch (error: IllegalArgumentException) {
+			throw error
+		} catch (error: Exception) {
+			throw IllegalArgumentException("Video is corrupt or uses an unsupported codec.", error)
+		} finally {
+			retriever.release()
 		}
 	}
 
@@ -742,40 +899,72 @@ class LauncherSettingsStore(
 	}
 
 	suspend fun setWallpaperScaleMode(scaleMode: WallpaperScaleMode) {
-		withContext(ioDispatcher) {
-			appContext.coverLauncherSettingsDataStore.edit { preferences ->
-				preferences[LauncherPreferencesKeys.wallpaperScaleMode] = scaleMode.name
+		wallpaperMutationMutex.withLock {
+			withContext(ioDispatcher) {
+				appContext.coverLauncherSettingsDataStore.edit { preferences ->
+					preferences[LauncherPreferencesKeys.wallpaperScaleMode] = scaleMode.name
+				}
+			}
+		}
+	}
+
+	suspend fun setWallpaperCrop(cropX: Float, cropY: Float, zoom: Float, rotation: Int) {
+		wallpaperMutationMutex.withLock {
+			withContext(ioDispatcher) {
+				appContext.coverLauncherSettingsDataStore.edit { preferences ->
+					preferences[LauncherPreferencesKeys.wallpaperCropX] = normalizeWallpaperCropOffset(cropX)
+					preferences[LauncherPreferencesKeys.wallpaperCropY] = normalizeWallpaperCropOffset(cropY)
+					preferences[LauncherPreferencesKeys.wallpaperZoom] = normalizeWallpaperZoom(zoom)
+					preferences[LauncherPreferencesKeys.wallpaperRotation] = normalizeWallpaperRotation(rotation)
+				}
+			}
+		}
+	}
+
+	suspend fun setWallpaperRotation(rotation: Int) {
+		wallpaperMutationMutex.withLock {
+			withContext(ioDispatcher) {
+				appContext.coverLauncherSettingsDataStore.edit { preferences ->
+					preferences[LauncherPreferencesKeys.wallpaperRotation] = normalizeWallpaperRotation(rotation)
+				}
 			}
 		}
 	}
 
 	suspend fun setWallpaperDimAmount(dimAmount: Float) {
 		val normalized = dimAmount.coerceIn(MIN_WALLPAPER_DIM_AMOUNT, MAX_WALLPAPER_DIM_AMOUNT)
-		withContext(ioDispatcher) {
-			appContext.coverLauncherSettingsDataStore.edit { preferences ->
-				preferences[LauncherPreferencesKeys.wallpaperDimAmount] = normalized
+		wallpaperMutationMutex.withLock {
+			withContext(ioDispatcher) {
+				appContext.coverLauncherSettingsDataStore.edit { preferences ->
+					preferences[LauncherPreferencesKeys.wallpaperDimAmount] = normalized
+				}
 			}
 		}
 	}
 
 	suspend fun setWallpaperBlurRadiusDp(blurRadiusDp: Float) {
 		val normalized = blurRadiusDp.coerceIn(MIN_WALLPAPER_BLUR_RADIUS_DP, MAX_WALLPAPER_BLUR_RADIUS_DP)
-		withContext(ioDispatcher) {
-			appContext.coverLauncherSettingsDataStore.edit { preferences ->
-				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = normalized
+		wallpaperMutationMutex.withLock {
+			withContext(ioDispatcher) {
+				appContext.coverLauncherSettingsDataStore.edit { preferences ->
+					preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = normalized
+				}
 			}
 		}
 	}
 
 	suspend fun clearWallpaper() {
-		setWallpaperUri(uri = null)
-		withContext(ioDispatcher) {
-			deleteManagedWallpaperFiles()
+		wallpaperMutationMutex.withLock {
+			setWallpaperUriUnlocked(uri = null)
+			withContext(ioDispatcher) {
+				deleteManagedWallpaperFiles()
+			}
 		}
 	}
 
 	suspend fun resetLauncherLayout() {
-		withContext(ioDispatcher) {
+		wallpaperMutationMutex.withLock {
+			withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
 				writeDockSlots(
 					preferences = preferences,
@@ -786,6 +975,10 @@ class LauncherSettingsStore(
 				preferences[LauncherPreferencesKeys.wallpaperScaleMode] = DEFAULT_WALLPAPER_SCALE_MODE.name
 				preferences[LauncherPreferencesKeys.wallpaperDimAmount] = DEFAULT_WALLPAPER_DIM_AMOUNT
 				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = DEFAULT_WALLPAPER_BLUR_RADIUS_DP
+				preferences[LauncherPreferencesKeys.wallpaperCropX] = DEFAULT_WALLPAPER_CROP_OFFSET
+				preferences[LauncherPreferencesKeys.wallpaperCropY] = DEFAULT_WALLPAPER_CROP_OFFSET
+				preferences[LauncherPreferencesKeys.wallpaperZoom] = DEFAULT_WALLPAPER_ZOOM
+				preferences[LauncherPreferencesKeys.wallpaperRotation] = DEFAULT_WALLPAPER_ROTATION
 				preferences[LauncherPreferencesKeys.dockVisible] = true
 				preferences.remove(LauncherPreferencesKeys.dockSlotFourAllApps)
 				// Theme preference is intentionally preserved during layout reset.
@@ -798,16 +991,23 @@ class LauncherSettingsStore(
 			deleteManagedWallpaperFiles()
 		}
 	}
+	}
 
 	suspend fun resetWallpaperCustomization() {
-		withContext(ioDispatcher) {
-			appContext.coverLauncherSettingsDataStore.edit { preferences ->
-				preferences.remove(LauncherPreferencesKeys.wallpaperUri)
-				preferences[LauncherPreferencesKeys.wallpaperScaleMode] = DEFAULT_WALLPAPER_SCALE_MODE.name
-				preferences[LauncherPreferencesKeys.wallpaperDimAmount] = DEFAULT_WALLPAPER_DIM_AMOUNT
-				preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = DEFAULT_WALLPAPER_BLUR_RADIUS_DP
+		wallpaperMutationMutex.withLock {
+			withContext(ioDispatcher) {
+				appContext.coverLauncherSettingsDataStore.edit { preferences ->
+					preferences.remove(LauncherPreferencesKeys.wallpaperUri)
+					preferences[LauncherPreferencesKeys.wallpaperScaleMode] = DEFAULT_WALLPAPER_SCALE_MODE.name
+					preferences[LauncherPreferencesKeys.wallpaperDimAmount] = DEFAULT_WALLPAPER_DIM_AMOUNT
+					preferences[LauncherPreferencesKeys.wallpaperBlurRadiusDp] = DEFAULT_WALLPAPER_BLUR_RADIUS_DP
+					preferences[LauncherPreferencesKeys.wallpaperCropX] = DEFAULT_WALLPAPER_CROP_OFFSET
+					preferences[LauncherPreferencesKeys.wallpaperCropY] = DEFAULT_WALLPAPER_CROP_OFFSET
+					preferences[LauncherPreferencesKeys.wallpaperZoom] = DEFAULT_WALLPAPER_ZOOM
+					preferences[LauncherPreferencesKeys.wallpaperRotation] = DEFAULT_WALLPAPER_ROTATION
+				}
+				deleteManagedWallpaperFiles()
 			}
-			deleteManagedWallpaperFiles()
 		}
 	}
 
@@ -1048,14 +1248,9 @@ class LauncherSettingsStore(
 	}
 
 	private fun isManagedWallpaperFileReadableAndDecodable(file: File): Boolean {
-		if (!file.exists() || !file.isFile || !file.canRead() || file.length() <= 0L) {
-			return false
-		}
-
-		val fileUri = Uri.fromFile(file)
-		return isBitmapDecodable {
-			runCatching { file.inputStream() }.getOrNull()
-		} && canDecodeBitmapPixels(fileUri)
+		return runCatching { validateWallpaperFile(file); true }
+			.onFailure { error -> Log.w(SETTINGS_STORE_LOG_TAG, "Managed wallpaper failed media validation: ${error.message}") }
+			.getOrDefault(false)
 	}
 
 	private fun takeSourceUriReadPermission(sourceUri: Uri) {
