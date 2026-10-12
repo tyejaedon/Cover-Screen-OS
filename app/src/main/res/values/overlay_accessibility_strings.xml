@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="launcher_accessibility_service_label">Cover Screen OS Launcher</string>
-    <string name="launcher_accessibility_service_description">Shows the launcher on your cover display and responds to window changes.</string>
+    <string name="launcher_accessibility_service_description">Shows the launcher on the cover screen and updates when other apps open or close.</string>
 </resources>
