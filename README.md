@@ -187,6 +187,21 @@ behavior. After launcher changes, check:
 - Media updates, Quick Settings fallbacks, keyboard routing, and permission revocation.
 - Inner-display tasks remain usable and are not unexpectedly moved to the cover.
 
+## Releasing
+
+The [Release workflow](.github/workflows/release.yml) builds and signs the APK
+and publishes it to GitHub Releases.
+
+1. Set `versionName` in `app/build.gradle.kts` (for example `1.0.0-beta.2`).
+2. Push a matching tag: `git tag v1.0.0-beta.2 && git push origin v1.0.0-beta.2`.
+3. The workflow creates the release once. Re-running it uploads the APK to the
+   same release. Tags with a `-` are marked as pre-releases.
+
+It needs these repo secrets: `RELEASE_KEYSTORE_BASE64` (base64 of the keystore
+file), `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD`.
+The workflow stops if the keystore secret is missing, so an unsigned APK is never
+published.
+
 ## Current scope
 
 The project builds as one Android application module (`:app`). Third-party
