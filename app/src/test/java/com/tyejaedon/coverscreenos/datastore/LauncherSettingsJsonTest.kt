@@ -22,6 +22,10 @@ class LauncherSettingsJsonTest {
             wallpaperScaleMode = WallpaperScaleMode.FIT,
             wallpaperDimAmount = 0.3f,
             wallpaperBlurRadiusDp = 4f,
+            wallpaperCropX = 0.4f,
+            wallpaperCropY = -0.6f,
+            wallpaperZoom = 2.25f,
+            wallpaperRotation = 270,
             isDockVisible = false,
             themePreference = ThemePreference.DARK,
             accentColor = AccentColor.ROSE,
@@ -43,6 +47,15 @@ class LauncherSettingsJsonTest {
             LauncherSettingsJson.decode(JSONObject(valid).put("wallpaperDimAmount", -1).toString())
         }
         assertThrows(IllegalArgumentException::class.java) {
+            LauncherSettingsJson.decode(JSONObject(valid).put("wallpaperCropX", 2).toString())
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            LauncherSettingsJson.decode(JSONObject(valid).put("wallpaperZoom", 3.1).toString())
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            LauncherSettingsJson.decode(JSONObject(valid).put("wallpaperRotation", 45).toString())
+        }
+        assertThrows(IllegalArgumentException::class.java) {
             LauncherSettingsJson.decode(JSONObject(valid).put("panelCornerRadiusDp", 33).toString())
         }
         assertThrows(IllegalArgumentException::class.java) {
@@ -62,6 +75,10 @@ class LauncherSettingsJsonTest {
                 remove("accentColor")
                 remove("panelCornerRadiusDp")
                 remove("dockSlotFourAllApps")
+                remove("wallpaperCropX")
+                remove("wallpaperCropY")
+                remove("wallpaperZoom")
+                remove("wallpaperRotation")
             }
         assertEquals(LauncherSettings(), LauncherSettingsJson.decode(legacy.toString()))
     }
@@ -77,6 +94,10 @@ class LauncherSettingsJsonTest {
                     wallpaperScaleMode = WallpaperScaleMode.FIT,
                     wallpaperDimAmount = 0.2f,
                     wallpaperBlurRadiusDp = 3f,
+                    wallpaperCropX = 0.7f,
+                    wallpaperCropY = -0.3f,
+                    wallpaperZoom = 2f,
+                    wallpaperRotation = 180,
                     isDockVisible = false,
                     themePreference = ThemePreference.DARK,
                     accentColor = AccentColor.MINT,
@@ -85,6 +106,10 @@ class LauncherSettingsJsonTest {
                     keyboardStrategy = KeyboardStrategy.SYSTEM_IME
                 )
             )
+            assertEquals(0.7f, store.settings.first().wallpaperCropX)
+            assertEquals(-0.3f, store.settings.first().wallpaperCropY)
+            assertEquals(2f, store.settings.first().wallpaperZoom)
+            assertEquals(180, store.settings.first().wallpaperRotation)
             store.setKeyboardModeForPackage("com.example.one", CoverKeyboardMode.QWERTY)
             val exported = store.exportSettingsJson()
             store.resetDockCustomization()
@@ -105,6 +130,10 @@ class LauncherSettingsJsonTest {
             store.resetWallpaperCustomization()
             assertEquals(DEFAULT_WALLPAPER_SCALE_MODE, store.settings.first().wallpaperScaleMode)
             assertEquals(DEFAULT_WALLPAPER_DIM_AMOUNT, store.settings.first().wallpaperDimAmount)
+            assertEquals(DEFAULT_WALLPAPER_CROP_OFFSET, store.settings.first().wallpaperCropX)
+            assertEquals(DEFAULT_WALLPAPER_CROP_OFFSET, store.settings.first().wallpaperCropY)
+            assertEquals(DEFAULT_WALLPAPER_ZOOM, store.settings.first().wallpaperZoom)
+            assertEquals(DEFAULT_WALLPAPER_ROTATION, store.settings.first().wallpaperRotation)
             store.importSettingsJson(exported)
             assertEquals(LauncherSettingsJson.decode(exported), store.settings.first())
         } finally {
