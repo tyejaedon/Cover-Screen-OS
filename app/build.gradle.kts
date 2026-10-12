@@ -13,8 +13,8 @@ android {
         applicationId = "com.tyejaedon.coverscreenos"
         minSdk = 34
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.0.0-beta.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -88,6 +88,8 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    // Debug-only leak detector for the beta hardening pass. Never shipped in release builds.
+    debugImplementation(libs.leakcanary.android)
 
     // Testing
     testImplementation(libs.junit)
