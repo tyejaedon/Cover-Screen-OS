@@ -192,8 +192,9 @@ behavior. After launcher changes, check:
 The [Release workflow](.github/workflows/release.yml) builds and signs the APK
 and publishes it to GitHub Releases.
 
-1. Set `versionName` in `app/build.gradle.kts` (for example `1.0.0-beta.2`).
-2. Push a matching tag: `git tag v1.0.0-beta.2 && git push origin v1.0.0-beta.2`.
+1. Bump the version: `python3 tools/bump_version.py 0.1.0-beta.1`. This sets
+   `versionName` and adds 1 to `versionCode`. Merge that change to `main` first.
+2. Push a matching tag: `git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1`.
 3. The workflow creates the release once. Re-running it uploads the APK to the
    same release. Tags with a `-` are marked as pre-releases.
 
