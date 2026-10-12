@@ -14,6 +14,7 @@ To regenerate, install Pillow in your development environment and run:
 
 ```sh
 python3 tools/generate_app_icon.py
+python3 tools/test_generate_app_icon.py
 ```
 
 `drawable/ic_launcher_fallback.xml` retains the previous XML-only folding-phone
