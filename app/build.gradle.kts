@@ -88,6 +88,8 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    // Debug-only leak detector for the beta hardening pass. Never shipped in release builds.
+    debugImplementation(libs.leakcanary.android)
 
     // Testing
     testImplementation(libs.junit)
