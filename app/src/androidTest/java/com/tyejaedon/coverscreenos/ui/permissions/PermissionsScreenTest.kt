@@ -26,6 +26,7 @@ class PermissionsScreenTest {
     fun deniedRequirementAnnouncesStateAndFooterAllowsContinuing() {
         var continued = 0
         var action = 0
+        var appSettingsOpened = 0
         rule.setContent {
             PermissionsContent(
                 grants = denied,
@@ -36,11 +37,13 @@ class PermissionsScreenTest {
                     )
                 ),
                 onContinue = { continued++ },
-                onOpenAppSettings = {},
+                onOpenAppSettings = { appSettingsOpened++ },
                 onRefresh = {}
             )
         }
         rule.onNodeWithText("0%").assertExists()
+        rule.onNodeWithText("Allow restricted accessibility access").assertExists()
+        rule.onNodeWithText("Open app settings for access").performClick()
         rule.onNode(
             SemanticsMatcher.expectValue(
                 SemanticsProperties.StateDescription,
@@ -51,6 +54,7 @@ class PermissionsScreenTest {
         rule.runOnIdle {
             assertEquals(1, action)
             assertEquals(1, continued)
+            assertEquals(1, appSettingsOpened)
         }
     }
 
@@ -70,6 +74,7 @@ class PermissionsScreenTest {
             )
         }
         rule.onNodeWithText("100%").assertExists()
+        rule.onNodeWithText("Allow restricted accessibility access").assertDoesNotExist()
         rule.onNodeWithText("Continue with limited features").assertDoesNotExist()
     }
 }

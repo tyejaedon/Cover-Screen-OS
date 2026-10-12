@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">CoverScreenOS</string>
+    <string name="app_name">Cover Screen OS</string>
     <string name="home_dashboard">Dashboard</string>
     <string name="home_customize">Customize</string>
     <string name="home_permissions">Permissions</string>
@@ -12,7 +12,11 @@
     <string name="home_tour_skip">Skip tour</string>
     <string name="home_tour_next">Next</string>
     <string name="home_tour_done">Get started</string>
-    <string name="accessibility_service_description">Lets Cover Screen OS react to navigation and window changes on the cover display.</string>
+    <string name="accessibility_service_description">Lets Cover Screen OS read focused fields and send key presses for cover-screen typing.</string>
+    <string name="input_accessibility_service_label">Cover Screen OS Keyboard Input</string>
+    <string name="restricted_accessibility_title">Allow restricted accessibility access</string>
+    <string name="restricted_accessibility_message">Android 13 and newer may block accessibility for apps installed outside a store. Open app settings, tap the menu, choose Allow restricted settings, then return to Accessibility and enable Cover Screen OS Launcher.</string>
+    <string name="restricted_accessibility_open_settings">Open app settings for access</string>
     <string name="overlay_window_title">Cover Screen OS</string>
     <string name="overlay_window_subtitle">Overlay active</string>
     <string name="cover_t9_ime_name">CoverScreenOS Keyboard</string>

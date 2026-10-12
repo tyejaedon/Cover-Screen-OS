@@ -9,7 +9,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Canvas
-import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.BatteryManager
 import android.os.SystemClock
@@ -151,7 +150,9 @@ private const val DOCK_SLOT_COUNT = 4
 private const val PAGER_HAPTIC_INTERVAL_MS = 150L
 private const val OVERLAY_PERF_LOG_TAG = "CoverOverlayPerf"
 private const val APP_SCAN_DEFER_AFTER_FIRST_FRAME_MS = 120L
-private const val ICON_CACHE_MAX_ENTRIES = 256
+private const val ICON_CACHE_MAX_BYTES = 12L * 1024L * 1024L
+private const val ICON_CACHE_SIZE_UNIT_BYTES = 1024
+private const val ICON_BITMAP_EDGE_PX = 128
 private const val ICON_PREWARM_COUNT = APPS_PER_GRID_PAGE * 2
 private const val ICON_PREWARM_BATCH_SIZE = 6
 private const val ICON_PREWARM_BATCH_DELAY_MS = 32L
@@ -243,7 +244,14 @@ private fun resolveBatteryStatusSnapshot(intent: Intent?): BatteryStatusSnapshot
 
 // Global LRU Bitmap Cache for hardware-accelerated Compose Image rendering
 internal object OverlayBitmapIconCache {
-    private val cache = LruCache<String, ImageBitmap>(ICON_CACHE_MAX_ENTRIES)
+    private val cache = object : LruCache<String, ImageBitmap>(
+        (ICON_CACHE_MAX_BYTES / ICON_CACHE_SIZE_UNIT_BYTES).toInt()
+    ) {
+        override fun sizeOf(key: String, bitmap: ImageBitmap): Int =
+            (bitmap.width.toLong() * bitmap.height * 4 / ICON_CACHE_SIZE_UNIT_BYTES)
+                .toInt()
+                .coerceAtLeast(1)
+    }
 
     fun get(packageName: String): ImageBitmap? {
         return synchronized(cache) { cache.get(packageName) }
@@ -255,17 +263,23 @@ internal object OverlayBitmapIconCache {
 }
 
 
-private fun drawableToImageBitmap(drawable: Drawable, sizePx: Int = 128): ImageBitmap? {
-    if (drawable is BitmapDrawable && drawable.bitmap != null) {
-        return drawable.bitmap.asImageBitmap()
-    }
-    val bitmap = createBitmap(
-        if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else sizePx,
-        if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else sizePx
-    )
+private fun drawableToImageBitmap(drawable: Drawable, sizePx: Int = ICON_BITMAP_EDGE_PX): ImageBitmap {
+    val bitmap = createBitmap(sizePx, sizePx)
     val canvas = Canvas(bitmap)
-    drawable.setBounds(0, 0, canvas.width, canvas.height)
-    drawable.draw(canvas)
+    val sourceWidth = drawable.intrinsicWidth.coerceAtLeast(1)
+    val sourceHeight = drawable.intrinsicHeight.coerceAtLeast(1)
+    val scale = minOf(sizePx.toFloat() / sourceWidth, sizePx.toFloat() / sourceHeight)
+    val drawWidth = (sourceWidth * scale).toInt().coerceAtLeast(1)
+    val drawHeight = (sourceHeight * scale).toInt().coerceAtLeast(1)
+    val left = (sizePx - drawWidth) / 2
+    val top = (sizePx - drawHeight) / 2
+    val previousBounds = android.graphics.Rect(drawable.bounds)
+    try {
+        drawable.setBounds(left, top, left + drawWidth, top + drawHeight)
+        drawable.draw(canvas)
+    } finally {
+        drawable.bounds = previousBounds
+    }
     return bitmap.asImageBitmap()
 }
 
