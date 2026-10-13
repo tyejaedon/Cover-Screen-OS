@@ -1,0 +1,97 @@
+name: Bump beta version
+
+# Run by hand to start a new beta. It edits the version in app/build.gradle.kts,
+# then opens a pull request. After the pull request is merged, push the tag
+# v<version> to build and publish the release (see release.yml).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version name, for example 0.1.0-beta.2"
+        required: true
+      issue:
+        description: "Issue number for the release, for example 140 (optional)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check the new version format
+        env:
+          NEW_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if ! echo "$NEW_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$'; then
+            echo "Version '$NEW_VERSION' is not valid. Use a form like 0.1.0-beta.2 or 1.0.0."
+            exit 1
+          fi
+
+      - name: Make sure the tag does not exist yet
+        env:
+          NEW_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v$NEW_VERSION" >/dev/null 2>&1; then
+            echo "Tag v$NEW_VERSION already exists. Pick a new version."
+            exit 1
+          fi
+
+      - name: Bump versionName and versionCode
+        env:
+          NEW_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          FILE=app/build.gradle.kts
+          OLD_CODE=$(grep -m1 'versionCode' "$FILE" | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+          NEW_CODE=$((OLD_CODE + 1))
+          sed -i -E "s/^(\s*)versionCode = [0-9]+/\1versionCode = $NEW_CODE/" "$FILE"
+          sed -i -E "s/^(\s*)versionName = \"[^\"]+\"/\1versionName = \"$NEW_VERSION\"/" "$FILE"
+          echo "NEW_CODE=$NEW_CODE" >> "$GITHUB_ENV"
+          git diff -- "$FILE"
+
+      - name: Create branch, commit, and push
+        env:
+          NEW_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          BRANCH="release/v$NEW_VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add app/build.gradle.kts
+          git commit -m "Bump version to $NEW_VERSION (code $NEW_CODE)"
+          git push origin "$BRANCH"
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ github.event.inputs.version }}
+          ISSUE: ${{ github.event.inputs.issue }}
+        run: |
+          BODY="## What changed
+          Bumps the app version to \`$NEW_VERSION\` (version code \`$NEW_CODE\`).
+
+          ## Why
+          A new beta is ready to start.
+
+          ## Next steps
+          1. Review and merge this pull request.
+          2. Push the tag \`v$NEW_VERSION\` on \`main\`. The Release workflow then builds and publishes the signed APK."
+          if [ -n "$ISSUE" ]; then
+            BODY="$BODY
+
+          Refs #$ISSUE"
+          fi
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "Bump version to $NEW_VERSION" \
+            --body "$BODY"
