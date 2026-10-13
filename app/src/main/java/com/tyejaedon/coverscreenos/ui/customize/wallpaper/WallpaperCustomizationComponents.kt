@@ -3,7 +3,7 @@ package com.tyejaedon.coverscreenos.ui.customize.wallpaper
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -273,7 +273,7 @@ private fun WallpaperPreviewCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f))
     ) {
         Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Cover preview — drag to reposition", style = MaterialTheme.typography.labelLarge)
+            Text("Cover preview — long-press and drag to reposition", style = MaterialTheme.typography.labelLarge)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -281,7 +281,7 @@ private fun WallpaperPreviewCard(
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color.Black)
                     .pointerInput(zoom) {
-                        detectDragGestures(
+                        detectDragGesturesAfterLongPress(
                             onDragEnd = { latestCropCommit(latestCropX, latestCropY) },
                             onDragCancel = { latestCropCommit(latestCropX, latestCropY) }
                         ) { change, amount ->
