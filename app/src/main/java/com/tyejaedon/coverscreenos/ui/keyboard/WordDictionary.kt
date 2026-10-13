@@ -5,6 +5,12 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.ContactsContract
 import android.util.Log
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.darkrockstudios.symspellkt.common.DamerauLevenshteinDistance
 import com.darkrockstudios.symspellkt.common.Murmur3HashFunction
 import com.darkrockstudios.symspellkt.common.SpellCheckSettings
@@ -271,4 +277,25 @@ internal class WordDictionary(
             return edits + (a.length - left) + (b.length - right) <= 1
         }
     }
+}
+
+/**
+ * Loads the dictionary off the main thread. A failed load gives null, so the
+ * keyboard shows no suggestions instead of crashing while it draws.
+ */
+@Composable
+internal fun rememberWordDictionary(enabled: Boolean, contactRevision: Int): WordDictionary? {
+    val context = LocalContext.current
+    val dictionary by produceState<WordDictionary?>(initialValue = null, context, enabled, contactRevision) {
+        value = if (!enabled) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching { WordDictionary.fromContext(context) }
+                    .onFailure { Log.e("WordDictionary", "Word suggestions unavailable", it) }
+                    .getOrNull()
+            }
+        }
+    }
+    return dictionary
 }

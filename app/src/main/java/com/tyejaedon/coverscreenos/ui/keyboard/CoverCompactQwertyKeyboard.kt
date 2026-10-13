@@ -101,9 +101,7 @@ internal fun CoverCompactQwertyKeyboard(
 ) {
     val context = LocalContext.current
     val contactRevision = rememberContactSuggestionRevision(suggestionsEnabled)
-    val dictionary = remember(context, suggestionsEnabled, contactRevision) {
-        if (suggestionsEnabled) WordDictionary.fromContext(context) else null
-    }
+    val dictionary = rememberWordDictionary(suggestionsEnabled, contactRevision)
     // Phase G: user-facing customization toggles (sound is wired at the KeyboardKey
     // primitive level; suggestion-strip visibility, autocorrect, and popup preview are
     // applied here).
