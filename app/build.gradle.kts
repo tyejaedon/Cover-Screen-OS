@@ -13,8 +13,8 @@ android {
         applicationId = "com.tyejaedon.coverscreenos"
         minSdk = 34
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.1.0-beta.1"
+        versionCode = 4
+        versionName = "0.1.0-beta.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
