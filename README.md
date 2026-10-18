@@ -189,19 +189,15 @@ behavior. After launcher changes, check:
 
 ## Releasing
 
-The [Release workflow](.github/workflows/release.yml) builds and signs the APK
-and publishes it to GitHub Releases.
+The release flow is automated through GitHub Actions:
 
-1. Bump the version: `python3 tools/bump_version.py 0.1.0-beta.1`. This sets
-   `versionName` and adds 1 to `versionCode`. Merge that change to `main` first.
-2. Push a matching tag: `git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1`.
-3. The workflow creates the release once. Re-running it uploads the APK to the
-   same release. Tags with a `-` are marked as pre-releases.
+1. **Bump the version**:
+   - **GitHub Actions (recommended)**: Run the [Bump beta version workflow](.github/workflows/bump-beta.yml) by hand under Actions (`workflow_dispatch`). Enter the new version (for example `0.1.0-beta.3`) and optional issue number. The workflow updates `versionName` and `versionCode` in `app/build.gradle.kts` and opens a pull request.
+   - **Local script**: Run `python3 tools/bump_version.py 0.1.0-beta.3`. This sets `versionName` and adds 1 to `versionCode`. Commit to a branch and open a pull request.
+2. **Merge the pull request** to `main`.
+3. **Publish the release**: Push a matching tag (`git tag v0.1.0-beta.3 && git push origin v0.1.0-beta.3`). The [Release workflow](.github/workflows/release.yml) builds and signs the APK and publishes it to GitHub Releases. Tags with a `-` are marked as pre-releases.
 
-It needs these repo secrets: `RELEASE_KEYSTORE_BASE64` (base64 of the keystore
-file), `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD`.
-The workflow stops if the keystore secret is missing, so an unsigned APK is never
-published.
+The Release workflow needs these repo secrets: `RELEASE_KEYSTORE_BASE64` (base64 of the keystore file), `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD`. The workflow stops if the keystore secret is missing, so an unsigned APK is never published.
 
 ## Current scope
 
