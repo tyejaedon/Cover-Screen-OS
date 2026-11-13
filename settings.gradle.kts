@@ -24,4 +24,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "CoverScreenOS"
 include(":app")
+include(":keyboard-floris")
  
