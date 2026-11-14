@@ -1,5 +1,6 @@
 package com.tyejaedon.coverscreenos.keyboard.floris
 
+import android.view.KeyEvent
 import android.view.inputmethod.InputConnection
 import org.k3lp.runtime.K3Editor
 import org.k3lp.runtime.K3SurroundingText
@@ -36,10 +37,13 @@ interface CoverOverlayInputCallbacks {
  */
 class CoverEditorBridge(
     private val overlayCallbacks: CoverOverlayInputCallbacks? = null,
-    private val inputConnectionRef: WeakReference<InputConnection>? = null
+    private val inputConnectionRef: WeakReference<InputConnection>? = null,
+    private val inputConnectionProvider: (() -> InputConnection?)? = null,
+    private val editorActionHandler: (() -> Unit)? = null
 ) : K3Editor {
 
-    private fun currentInputConnection(): InputConnection? = inputConnectionRef?.get()
+    private fun currentInputConnection(): InputConnection? =
+        inputConnectionProvider?.invoke() ?: inputConnectionRef?.get()
 
     override fun replaceText(
         range: IntRange,
@@ -156,9 +160,15 @@ class CoverEditorBridge(
     }
 
     fun finishInput() {
+        if (editorActionHandler != null) {
+            editorActionHandler.invoke()
+            return
+        }
         val ic = currentInputConnection()
         if (ic != null) {
             ic.finishComposingText()
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
         } else {
             overlayCallbacks?.onDone()
         }

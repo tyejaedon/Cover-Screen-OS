@@ -48,10 +48,10 @@ Migrate from the custom legacy keyboard to an adapted FlorisBoard (`keyboard3`) 
 - **Title**: `[FlorisBoard] M4: Memory Optimization & Secondary Display Lifecycle`
 - **Labels**: `area:input`, `area:performance`, `type:perf`, `priority:p1`
 - **Summary**:
-  - Implement mmap-backed dictionary trie to keep active heap overhead below 38MB.
-  - Unload Compose view tree and glyph cache textures when overlay is hidden or phone is unfolded.
-  - Harmonize Snygg theme styling with Haze glassmorphism and Material3 tokens.
-- **Status**: Scheduled.
+  - Implement memory-efficient Trie and asynchronous background corpus loading via `CoverKeyboardNlpManager`.
+  - Unload Compose view tree and glyph cache textures when overlay is hidden or phone is unfolded (`DisposeOnDetachedFromWindow`).
+  - Wire `CoverFlorisKeyboardSurface` and `CoverEditorBridge` into both `CoverT9InputMethodService` and `CoverScreenInputInjectionEngine`.
+- **Status**: Completed on branch `analyze_application_implementation`.
 
 ---
 
@@ -59,7 +59,7 @@ Migrate from the custom legacy keyboard to an adapted FlorisBoard (`keyboard3`) 
 - **Title**: `[FlorisBoard] M5: Quality Assurance, Automated Tests & Beta Release`
 - **Labels**: `area:input`, `type:test`, `type:stability`, `priority:p1`
 - **Summary**:
-  - Add Robolectric and instrumented test coverage for overlay injection, fold posture changes, and IME actions.
-  - Validate with LeakCanary for zero memory leaks during rapid typing.
-  - Bump version and assemble signed/unsigned release APK.
-- **Status**: Scheduled.
+  - Add Robolectric and unit test coverage for bridge provider, NLP manager, overlay injection, and modernized IME preferences.
+  - Modernize `CoverT9InputMethodService` and `CoverImeSettingsActivity` to eliminate deprecated Android framework `PreferenceManager` and `FragmentManager`.
+  - Update `README.md` to document the multi-module build with `:keyboard-floris` and the integrated clamshell input engine.
+- **Status**: Completed on branch `analyze_application_implementation`.

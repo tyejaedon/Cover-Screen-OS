@@ -97,6 +97,7 @@ dependencies {
 // Optional preset styling:
     implementation(libs.haze.materials)
     implementation(libs.symspellkt)
+    implementation(libs.k3lp.core)
     implementation(project(":keyboard-floris"))
 
     androidTestImplementation(platform(libs.androidx.compose.bom))

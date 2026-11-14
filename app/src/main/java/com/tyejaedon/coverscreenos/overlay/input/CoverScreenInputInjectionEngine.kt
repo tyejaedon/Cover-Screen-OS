@@ -80,6 +80,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverEditorBridge
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverOverlayInputCallbacks
+import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverCompactQwertyKeyboard
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9PredictionToggle
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9SuggestionStrip
@@ -717,6 +722,69 @@ object CoverInputSessionManager {
         }
     }
 
+    fun replaceText(range: IntRange, text: String, newCursor: Int) {
+        val before = textBuffer
+        val currentText = before.text
+        val safeStart = range.first.coerceIn(0, currentText.length)
+        val safeEnd = (range.last + 1).coerceIn(safeStart, currentText.length)
+        val deleteCount = safeEnd - safeStart
+        if (deleteCount > 0) {
+            applyDelta(TextDelta.Backspace(deleteCount))
+        }
+        if (text.isNotEmpty()) {
+            applyDelta(TextDelta.Insert(text))
+        }
+        val currentPos = textBuffer.selection.first
+        if (newCursor != currentPos) {
+            moveCursor(newCursor - currentPos)
+        }
+    }
+
+    fun asOverlayInputCallbacks(): CoverOverlayInputCallbacks = object : CoverOverlayInputCallbacks {
+        override fun onAppend(text: String) {
+            appendText(text)
+        }
+        override fun onDeleteBackward() {
+            deleteBackward()
+        }
+        override fun onDeletePreviousWord() {
+            deletePreviousWord()
+        }
+        override fun onMoveCursor(delta: Int) {
+            moveCursor(delta)
+        }
+        override fun onCommitCandidate(candidate: String) {
+            commitCandidate(candidate)
+        }
+        override fun onClear() {
+            clearBuffer()
+        }
+        override fun onDone() {
+            commitAndFinish()
+        }
+        override fun getTextBeforeCursor(maxChars: Int): String {
+            val state = _sessionState.value
+            val cursor = state.cursorPosition.coerceIn(0, state.buffer.length)
+            val start = (cursor - maxChars).coerceAtLeast(0)
+            return state.buffer.substring(start, cursor)
+        }
+        override fun getTextAfterCursor(maxChars: Int): String {
+            val state = _sessionState.value
+            val cursor = state.cursorPosition.coerceIn(0, state.buffer.length)
+            val end = (cursor + maxChars).coerceAtMost(state.buffer.length)
+            return state.buffer.substring(cursor, end)
+        }
+        override fun getFullText(): String = _sessionState.value.buffer
+        override fun getCursorPosition(): Int = _sessionState.value.cursorPosition
+        override fun setCursorPosition(newPos: Int) {
+            val current = _sessionState.value.cursorPosition
+            moveCursor(newPos - current)
+        }
+        override fun replaceText(range: IntRange, text: String, newCursor: Int) {
+            this@CoverInputSessionManager.replaceText(range, text, newCursor)
+        }
+    }
+
     /**
      * Single sink for every text mutation coming out of the keypads. Reads
      * the current [TextBuffer], applies [delta] to produce a new buffer,
@@ -1100,6 +1168,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
 
         connectedService = this
         CoverInputSessionManager.bindService(this)
+        CoverKeyboardNlpManager.initializeFromContext(applicationContext)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -2061,52 +2130,65 @@ fun CoverKeyboardOverlayRoot(
                     LaunchedEffect(sessionState.isActive) {
                         canPasteFromClipboard = clipboardManager?.hasPrimaryClip() == true
                     }
-                    CoverCompactQwertyKeyboard(
-                        onChar = { char ->
-                            CoverInputSessionManager.appendText(char.toString())
-                        },
-                        onBackspace = {
-                            CoverInputSessionManager.deleteBackward()
-                        },
-                        onDone = {
-                            CoverInputSessionManager.commitAndFinish()
-                        },
-                        onClear = {
-                            CoverInputSessionManager.clearBuffer()
-                        },
-                        imeOptions = sessionState.metadata.imeAction,
-                        textBeforeCursor = sessionState.buffer.take(sessionState.cursorPosition),
-                        onMoveCursor = { delta -> CoverInputSessionManager.moveCursor(delta) },
-                        onDeleteWord = { CoverInputSessionManager.deletePreviousWord() },
-                        onCandidateCommitted = { candidate ->
+
+                    val bridge = remember {
+                        CoverEditorBridge(
+                            overlayCallbacks = CoverInputSessionManager.asOverlayInputCallbacks()
+                        )
+                    }
+
+                    var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
+                    LaunchedEffect(sessionState.buffer, sessionState.cursorPosition) {
+                        if (!sessionState.metadata.isPassword &&
+                            !sessionState.metadata.isNumeric &&
+                            !sessionState.metadata.isPhoneNumber
+                        ) {
+                            val before = sessionState.buffer.take(sessionState.cursorPosition)
+                            val word = before.takeLastWhile { it.isLetterOrDigit() }
+                            candidates = if (word.isNotBlank()) {
+                                CoverKeyboardNlpManager.getQwertySuggestions(word)
+                            } else emptyList()
+                        } else {
+                            candidates = emptyList()
+                        }
+                    }
+
+                    CoverFlorisKeyboardSurface(
+                        bridge = bridge,
+                        initialMode = CoverLayoutMode.QWERTY,
+                        candidates = candidates,
+                        onCandidateSelected = { candidate ->
                             CoverInputSessionManager.commitCandidate(candidate)
                         },
-                        suggestionsEnabled = !sessionState.metadata.isPassword &&
-                            !sessionState.metadata.isNumeric &&
-                            !sessionState.metadata.isPhoneNumber,
-                        clipboardActions = if (sessionState.metadata.isPassword) null else {
-                            {
-                                ClipboardActionIcons(
-                                    onCopy = { CoverInputSessionManager.copySelection() },
-                                    onCut = { CoverInputSessionManager.cutSelection() },
-                                    onPaste = {
-                                        if (CoverInputSessionManager.pasteText()) {
-                                            canPasteFromClipboard = true
-                                        }
-                                    },
-                                    canPaste = canPasteFromClipboard,
-                                    modifier = Modifier.testTag("clipboard_toolbar")
-                                )
-                            }
+                        onDismissRequest = {
+                            CoverInputSessionManager.commitAndFinish()
                         },
-                        clipboardHistory = if (sessionState.metadata.isPassword) null else {
+                        headerExtraContent = if (sessionState.metadata.isPassword) null else {
                             {
-                                ClipboardHistoryRow(
-                                    history = clipboardHistory,
-                                    onHistorySnippetSelected = { snippet ->
-                                        CoverInputSessionManager.pasteText(snippet)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    ClipboardActionIcons(
+                                        onCopy = { CoverInputSessionManager.copySelection() },
+                                        onCut = { CoverInputSessionManager.cutSelection() },
+                                        onPaste = {
+                                            if (CoverInputSessionManager.pasteText()) {
+                                                canPasteFromClipboard = true
+                                            }
+                                        },
+                                        canPaste = canPasteFromClipboard,
+                                        modifier = Modifier.testTag("clipboard_toolbar")
+                                    )
+                                    if (clipboardHistory.isNotEmpty()) {
+                                        ClipboardHistoryRow(
+                                            history = clipboardHistory,
+                                            onHistorySnippetSelected = { snippet ->
+                                                CoverInputSessionManager.pasteText(snippet)
+                                            }
+                                        )
                                     }
-                                )
+                                }
                             }
                         },
                         modifier = Modifier
