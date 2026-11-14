@@ -115,6 +115,7 @@ internal fun CoverCompactQwertyKeyboard(
     val density = LocalDensity.current
     val resizeHapticPerformer = rememberHapticPerformer(HapticTier.Standard)
     var internalText by remember { mutableStateOf("") }
+    var lastClearedText by remember { mutableStateOf<String?>(null) }
     var shift by remember { mutableStateOf(ShiftMode.Off) }
     var lastShiftTap by remember { mutableLongStateOf(-1000L) }
     var symbols by remember { mutableStateOf(false) }
@@ -131,17 +132,20 @@ internal fun CoverCompactQwertyKeyboard(
     }
 
     fun emit(char: Char) {
+        lastClearedText = null
         internalText += char
         onChar(char)
         if (char.isLetter() && shift == ShiftMode.Once) shift = ShiftMode.Off
     }
 
     fun backspace() {
+        lastClearedText = null
         if (internalText.isNotEmpty()) internalText = internalText.dropLast(1)
         onBackspace()
     }
 
     fun commit(candidate: String, trailingSpace: Boolean = false) {
+        lastClearedText = null
         if (onCandidateCommitted != null) {
             onCandidateCommitted(candidate + if (trailingSpace) " " else "")
             internalText = before.dropLast(word.length) + candidate + if (trailingSpace) " " else ""
@@ -276,7 +280,7 @@ internal fun CoverCompactQwertyKeyboard(
         }
         Row(rowModifier, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             if (symbols) {
-                ".,?!'".forEachIndexed { index, char ->
+                "#%*+=!?'".forEachIndexed { index, char ->
                     key(char.toString(), tag = "keyboard_symbol_$index", preview = true) { emit(char) }
                 }
             } else {
@@ -318,7 +322,21 @@ internal fun CoverCompactQwertyKeyboard(
             }
             KeyboardKey(
                 icon = Icons.Default.Clear, contentDescription = "Clear",
-                onClick = { internalText = ""; onClear() },
+                onClick = {
+                    if (before.isEmpty() && lastClearedText != null) {
+                        val restored = lastClearedText ?: ""
+                        lastClearedText = null
+                        restored.forEach(::emit)
+                    }
+                },
+                onLongPress = {
+                    val currentText = before
+                    if (currentText.isNotEmpty()) {
+                        lastClearedText = currentText
+                        internalText = ""
+                        onClear()
+                    }
+                },
                 hapticTier = HapticTier.Strong,
                 modifier = Modifier.weight(0.9f).fillMaxHeight().testTag("keyboard_clear")
             )

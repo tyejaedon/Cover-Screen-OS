@@ -1,8 +1,8 @@
 package com.tyejaedon.coverscreenos.ui.keyboard.primitives
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,17 +27,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Horizontally scrollable strip of candidate suggestions. Fixed ~32dp tall,
@@ -94,6 +89,7 @@ fun SuggestionStrip(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SuggestionChip(
     label: String,
@@ -116,32 +112,17 @@ private fun SuggestionChip(
     Box {
         Box(
             modifier = Modifier
-            .defaultMinSize(minWidth = 32.dp, minHeight = 28.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(bg)
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-            .semantics(mergeDescendants = true) {
-                role = Role.Button
-                onClick { onClick(); true }
-            }
-            .pointerInput(label) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val up = withTimeoutOrNull(400) {
-                        var event = awaitPointerEvent()
-                        while (event.changes.any { it.pressed }) event = awaitPointerEvent()
-                        event.changes.firstOrNull { it.id == down.id }
-                    }
-                    if (up?.previousPressed == true && !up.isConsumed) {
-                        onClick()
-                    } else if (up == null && (onLearn != null || onSuppress != null)) {
-                        menuExpanded = true
-                        do {
-                            val event = awaitPointerEvent()
-                        } while (event.changes.any { it.pressed })
-                    }
-                }
-            },
+                .defaultMinSize(minWidth = 32.dp, minHeight = 28.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(bg)
+                .combinedClickable(
+                    role = Role.Button,
+                    onClick = onClick,
+                    onLongClick = if (onLearn != null || onSuppress != null) {
+                        { menuExpanded = true }
+                    } else null
+                )
+                .padding(horizontal = 12.dp, vertical = 4.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(

@@ -111,6 +111,8 @@ dependencies {
     debugImplementation(libs.leakcanary.android)
 
     // Testing
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.junit)
     testImplementation(libs.mockk)
     testImplementation(libs.robolectric.core)

@@ -210,7 +210,10 @@ fun KeyboardKey(
                         val pointer = event.changes.firstOrNull { it.id == down.id }
                         if (pointer == null || !pointer.pressed) {
                             released = true
-                            val wasTap = pointer?.previousPressed == true && !pointer.isConsumed
+                            val inBoundsOnRelease = pointer != null &&
+                                pointer.position.x in 0f..size.width.toFloat() &&
+                                pointer.position.y in 0f..size.height.toFloat()
+                            val wasTap = inBoundsOnRelease && pointer.previousPressed && !pointer.isConsumed
                             isPressed = false
                             holdJob.cancel()
                             if (wasTap && !held && !dragged && !repeatOnHold) {
@@ -218,16 +221,23 @@ fun KeyboardKey(
                             } else if (wasTap && !dragged && repeatOnHold && !emitted) {
                                 onClickState.value.invoke()
                             }
-                        } else if (onHorizontalDrag != null || onHorizontalDragStart != null) {
-                            if (kotlin.math.abs(pointer.position.x - down.position.x) >= 24f) {
-                                if (!dragged) onDragStartState.value?.invoke(
-                                    pointer.position.x - down.position.x
-                                )
-                                dragged = true
-                                holdJob.cancel()
-                                onDragState.value?.invoke(pointer.position.x - lastX)
+                        } else {
+                            val inBounds = pointer.position.x in 0f..size.width.toFloat() &&
+                                pointer.position.y in 0f..size.height.toFloat()
+                            if (onHorizontalDrag != null || onHorizontalDragStart != null) {
+                                if (kotlin.math.abs(pointer.position.x - down.position.x) >= 24f) {
+                                    if (!dragged) onDragStartState.value?.invoke(
+                                        pointer.position.x - down.position.x
+                                    )
+                                    dragged = true
+                                    holdJob.cancel()
+                                    onDragState.value?.invoke(pointer.position.x - lastX)
+                                }
+                                lastX = pointer.position.x
+                                isPressed = inBounds || dragged
+                            } else {
+                                isPressed = inBounds
                             }
-                            lastX = pointer.position.x
                         }
                     }
                 }

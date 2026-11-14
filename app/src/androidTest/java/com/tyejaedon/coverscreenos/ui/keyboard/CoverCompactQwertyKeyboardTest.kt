@@ -14,10 +14,14 @@ import androidx.compose.ui.test.longClick
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.swipeLeft
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKey
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.SuggestionStrip
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.TextBuffer
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -191,6 +195,94 @@ class CoverCompactQwertyKeyboardTest {
         rule.runOnIdle {
             assertEquals(0, taps)
             assertEquals(1, longPresses)
+        }
+    }
+
+    @Test fun slidingFingerOffKeyCancelsClick() {
+        var taps = 0
+        rule.setContent {
+            CoverOSTheme {
+                KeyboardKey(
+                    label = "A", onClick = { taps++ },
+                    modifier = Modifier.testTag("slide_key")
+                )
+            }
+        }
+        rule.onNodeWithTag("slide_key").performTouchInput {
+            down(center)
+            moveTo(Offset(center.x + 300f, center.y + 300f))
+            up()
+        }
+        rule.runOnIdle {
+            assertEquals(0, taps)
+        }
+    }
+
+    @Test fun symbolRowGridIncludesCommonSymbols() {
+        rule.setContent {
+            CoverOSTheme {
+                CoverCompactQwertyKeyboard(
+                    onChar = {}, onBackspace = {}, onDone = {}, onClear = {}
+                )
+            }
+        }
+        rule.onNodeWithTag("keyboard_symbols").performTouchInput { click() }
+        val expectedSymbols = listOf("#", "%", "*", "+", "=", "!", "?", "'")
+        expectedSymbols.forEachIndexed { index, symbol ->
+            rule.onNodeWithTag("keyboard_symbol_$index").assertTextEquals(symbol)
+        }
+    }
+
+    @Test fun accidentalTapOnClearDoesNotWipeBufferAndLongPressWipesWithUndo() {
+        val typed = mutableStateOf("hello world")
+        var clearCalled = 0
+        rule.setContent {
+            CoverOSTheme {
+                CoverCompactQwertyKeyboard(
+                    onChar = { typed.value += it },
+                    onBackspace = { typed.value = typed.value.dropLast(1) },
+                    onDone = {},
+                    onClear = { clearCalled++; typed.value = "" },
+                    textBeforeCursor = typed.value
+                )
+            }
+        }
+        // Accidental tap should NOT clear
+        rule.onNodeWithTag("keyboard_clear").performTouchInput { click() }
+        rule.runOnIdle {
+            assertEquals("hello world", typed.value)
+            assertEquals(0, clearCalled)
+        }
+
+        // Long press SHOULD clear
+        rule.onNodeWithTag("keyboard_clear").performTouchInput { longClick(durationMillis = 500) }
+        rule.runOnIdle {
+            assertEquals("", typed.value)
+            assertEquals(1, clearCalled)
+        }
+
+        // Tap after clear should undo
+        rule.onNodeWithTag("keyboard_clear").performTouchInput { click() }
+        rule.runOnIdle {
+            assertEquals("hello world", typed.value)
+        }
+    }
+
+    @Test fun suggestionStripSwipeDoesNotCommitCandidate() {
+        var committed: String? = null
+        rule.setContent {
+            CoverOSTheme {
+                SuggestionStrip(
+                    suggestions = listOf("first", "second", "third", "fourth", "fifth", "sixth", "seventh"),
+                    onSelected = { _, word -> committed = word }
+                )
+            }
+        }
+        rule.onNodeWithText("first").performTouchInput {
+            swipeLeft()
+        }
+        rule.runOnIdle {
+            assertNull(committed)
         }
     }
 }
