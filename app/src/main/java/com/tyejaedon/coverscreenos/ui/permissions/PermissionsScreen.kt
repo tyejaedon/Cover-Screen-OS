@@ -3,11 +3,13 @@ package com.tyejaedon.coverscreenos.ui.permissions
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Accessibility
@@ -27,7 +29,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +51,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -56,6 +59,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.tyejaedon.coverscreenos.R
 import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
+import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme
+import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUICardGroup
+import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUIInternalDivider
+import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUIScaffold
+import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUIPressable
 
 private const val LOG_TAG = "PermissionsScreen"
 
@@ -163,14 +171,17 @@ fun PermissionsScreen(
     ) { refresh() }
 
     fun openSettings(intent: Intent) {
-        runCatching { settingsLauncher.launch(intent) }
-            .onFailure { Log.w(LOG_TAG, "Unable to open ${intent.action}", it) }
+        try {
+            settingsLauncher.launch(intent)
+        } catch (t: Throwable) {
+            Log.w(LOG_TAG, "Failed launching settings intent $intent", t)
+        }
     }
 
     val rows = listOf(
         PermissionRowModel(
-            PermissionId.NOTIFICATIONS, "Notification permission",
-            "Allows the cover launcher's foreground notification.",
+            PermissionId.NOTIFICATIONS, "Post notifications",
+            "Required on Android 13+ to keep the service running.",
             Icons.Filled.Notifications, grants.notifications,
             {
                 if (grants.notifications) {
@@ -181,8 +192,8 @@ fun PermissionsScreen(
             }
         ),
         PermissionRowModel(
-            PermissionId.LAUNCHER_ACCESSIBILITY, "Launcher accessibility",
-            "Hosts the cover launcher on the outer display.",
+            PermissionId.LAUNCHER_ACCESSIBILITY, "Cover screen launcher service",
+            "Anchors the launcher to the cover screen.",
             Icons.Filled.Accessibility, grants.launcherAccessibility,
             { openSettings(AppPermissionHelper.createAccessibilitySettingsIntent()) }
         ),
@@ -242,17 +253,22 @@ fun PermissionsScreen(
         )
     )
 
-    PermissionsContent(
-        grants = grants,
-        rows = rows,
-        onContinue = onContinue,
-        onOpenAppSettings = { openSettings(AppPermissionHelper.createAppDetailsSettingsIntent(context)) },
-        onRefresh = ::refresh,
+    OneUIScaffold(
+        title = "Permissions",
+        subtitle = "Hardware & Accessibility Setup",
         modifier = modifier
-    )
+    ) { paddingValues ->
+        PermissionsContent(
+            grants = grants,
+            rows = rows,
+            onContinue = onContinue,
+            onOpenAppSettings = { openSettings(AppPermissionHelper.createAppDetailsSettingsIntent(context)) },
+            onRefresh = ::refresh,
+            modifier = Modifier.padding(paddingValues)
+        )
+    }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun PermissionsContent(
     grants: PermissionGrants,
@@ -265,45 +281,70 @@ internal fun PermissionsContent(
     Column(modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.weight(1f),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(OneUITheme.dimensions.cardSpacing)
         ) {
             item {
-                PermissionHealthRing(grants.healthPercent)
+                OneUICardGroup(header = "Overview") {
+                    PermissionHealthRing(grants.healthPercent)
+                }
             }
+
             PermissionGroup.entries.forEach { group ->
-                stickyHeader {
-                    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            group.name.lowercase().replaceFirstChar { it.uppercase() },
-                            modifier = Modifier.padding(vertical = 8.dp),
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                val groupRows = rows.filter { it.id.group == group }
+                if (groupRows.isNotEmpty()) {
+                    item(key = group.name) {
+                        OneUICardGroup(
+                            header = when (group) {
+                                PermissionGroup.REQUIRED -> "Required Access"
+                                PermissionGroup.RECOMMENDED -> "Recommended Access"
+                                PermissionGroup.OPTIONAL -> "Optional Access"
+                            }
+                        ) {
+                            groupRows.forEachIndexed { index, row ->
+                                if (index > 0) {
+                                    OneUIInternalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                }
+                                PermissionRow(row)
+                            }
+                        }
                     }
-                }
-                items(rows.filter { it.id.group == group }, key = { it.id }) { row ->
-                    PermissionRow(row)
-                }
-                if (group == PermissionGroup.REQUIRED && !grants.launcherAccessibility) {
-                    item(key = "restricted-accessibility-help") {
-                        RestrictedAccessibilityHelp(onOpenAppSettings)
+
+                    if (group == PermissionGroup.REQUIRED && !grants.launcherAccessibility) {
+                        item(key = "restricted-accessibility-help") {
+                            OneUICardGroup(header = "Setup Guidance") {
+                                RestrictedAccessibilityHelp(onOpenAppSettings)
+                            }
+                        }
                     }
                 }
             }
+
             item {
-                PermissionSupportActions(
-                    onOpenAppSettings = onOpenAppSettings,
-                    onRefresh = onRefresh
-                )
+                OneUICardGroup(header = "Support & Diagnostics") {
+                    PermissionSupportActions(
+                        onOpenAppSettings = onOpenAppSettings,
+                        onRefresh = onRefresh
+                    )
+                }
             }
         }
+
         if (grants.requiredMissing) {
-            Surface(shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surface) {
+            Surface(
+                shape = CircleShape,
+                color = OneUITheme.colors.cardSurface,
+                border = BorderStroke(1.dp, OneUITheme.colors.hairlineBorder),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
                 Button(
                     onClick = onContinue,
-                    modifier = Modifier.fillMaxWidth().padding(16.dp).coverMinimumTouchTarget()
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(containerColor = OneUITheme.colors.accent),
+                    modifier = Modifier.fillMaxWidth().coverMinimumTouchTarget()
                 ) {
-                    Text("Continue with limited features")
+                    Text("Continue with limited features", color = androidx.compose.ui.graphics.Color.White)
                 }
             }
         }
@@ -312,100 +353,161 @@ internal fun PermissionsContent(
 
 @Composable
 private fun RestrictedAccessibilityHelp(onOpenAppSettings: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.restricted_accessibility_title),
+            style = OneUITheme.typography.titleLarge
+        )
+        Text(
+            text = stringResource(R.string.restricted_accessibility_message),
+            style = OneUITheme.typography.bodyMedium,
+            color = OneUITheme.colors.textSecondary
+        )
+        OutlinedButton(
+            onClick = onOpenAppSettings,
+            shape = CircleShape,
+            modifier = Modifier.align(Alignment.End).coverMinimumTouchTarget()
         ) {
-            Text(
-                text = stringResource(R.string.restricted_accessibility_title),
-                style = MaterialTheme.typography.titleSmall
-            )
-            Text(
-                text = stringResource(R.string.restricted_accessibility_message),
-                style = MaterialTheme.typography.bodyMedium
-            )
-            OutlinedButton(
-                onClick = onOpenAppSettings,
-                modifier = Modifier.align(Alignment.End).coverMinimumTouchTarget()
-            ) {
-                Text(stringResource(R.string.restricted_accessibility_open_settings))
-            }
+            Text(stringResource(R.string.restricted_accessibility_open_settings))
         }
     }
 }
 
 @Composable
 private fun PermissionHealthRing(percentage: Int) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(20.dp)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        Box(
+            modifier = Modifier.size(80.dp).semantics {
+                contentDescription = "Permission health"
+                stateDescription = "$percentage percent"
+            },
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier.size(88.dp).semantics {
-                    contentDescription = "Permission health"
-                    stateDescription = "$percentage percent"
-                },
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    progress = { percentage / 100f },
-                    modifier = Modifier.fillMaxSize(),
-                    strokeWidth = 7.dp
-                )
-                Text("$percentage%", style = MaterialTheme.typography.titleLarge)
-            }
-            Column {
-                Text("Permission health", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "Required and recommended setup. Optional access does not affect this score.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
+            CircularProgressIndicator(
+                progress = { percentage / 100f },
+                color = OneUITheme.colors.accent,
+                trackColor = OneUITheme.colors.cardSurfaceVariant,
+                modifier = Modifier.fillMaxSize(),
+                strokeWidth = 6.dp
+            )
+            Text(
+                "$percentage%",
+                style = OneUITheme.typography.titleLarge,
+                color = OneUITheme.colors.textPrimary
+            )
+        }
+        Column {
+            Text(
+                "Permission health",
+                style = OneUITheme.typography.titleLarge,
+                color = OneUITheme.colors.textPrimary
+            )
+            Text(
+                "Required and recommended setup for smooth cover screen operation.",
+                style = OneUITheme.typography.bodyMedium,
+                color = OneUITheme.colors.textSecondary
+            )
         }
     }
 }
 
 @Composable
 private fun PermissionRow(row: PermissionRowModel) {
-    Card(
-        onClick = row.onAction,
-        modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {
-            stateDescription = "${row.title} -- ${if (row.granted) "granted" else "denied"} -- tap to change"
-        }
+    val interactionSource = remember { MutableInteractionSource() }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = row.onAction
+            )
+            .oneUIPressable(interactionSource = interactionSource)
+            .padding(vertical = 10.dp)
+            .semantics(mergeDescendants = true) {
+                stateDescription = "${row.title} -- ${if (row.granted) "granted" else "denied"} -- tap to change"
+            }
     ) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(row.icon, contentDescription = null)
-                Column(Modifier.weight(1f)) {
-                    Text(row.title, style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        row.rationale, style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (row.granted) MaterialTheme.colorScheme.tertiaryContainer
-                        else MaterialTheme.colorScheme.errorContainer
-                ) {
-                    Text(
-                        if (row.granted) "Granted" else "Denied",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-            }
-            OutlinedButton(
-                onClick = row.onAction,
-                modifier = Modifier.align(Alignment.End).coverMinimumTouchTarget()
-                    .semantics { contentDescription = "${row.title} -- ${if (row.granted) "granted" else "denied"} -- tap to change" },
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        Box(
+            modifier = Modifier
+                .size(OneUITheme.dimensions.encircledIconSize)
+                .oneUIPressable()
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = if (row.granted) OneUITheme.colors.accent.copy(alpha = 0.12f) else OneUITheme.colors.cardSurfaceVariant,
+                modifier = Modifier.fillMaxSize()
             ) {
-                Text(if (row.granted) "Change" else "Enable")
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        row.icon,
+                        contentDescription = null,
+                        tint = if (row.granted) OneUITheme.colors.accent else OneUITheme.colors.textSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
+
+        Column(Modifier.weight(1f)) {
+            Text(
+                row.title,
+                style = OneUITheme.typography.bodyLarge,
+                color = OneUITheme.colors.textPrimary
+            )
+            Text(
+                row.rationale,
+                style = OneUITheme.typography.bodyMedium,
+                color = OneUITheme.colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Surface(
+            shape = CircleShape,
+            color = if (row.granted) OneUITheme.colors.accent.copy(alpha = 0.15f)
+                else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
+        ) {
+            Text(
+                if (row.granted) "Ready" else "Set Up",
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                style = OneUITheme.typography.labelMedium,
+                color = if (row.granted) OneUITheme.colors.accent else MaterialTheme.colorScheme.error
+            )
+        }
+    }
+}
+
+@Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
+@Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
+@Composable
+fun PermissionsScreenPreview() {
+    OneUITheme {
+        PermissionsContent(
+            grants = PermissionGrants(
+                notifications = true,
+                launcherAccessibility = false,
+                notificationListener = true,
+                batteryExemption = true,
+                inputAccessibility = false,
+                media = false,
+                microphone = false,
+                bluetooth = false
+            ),
+            rows = emptyList(),
+            onContinue = {},
+            onOpenAppSettings = {},
+            onRefresh = {}
+        )
     }
 }

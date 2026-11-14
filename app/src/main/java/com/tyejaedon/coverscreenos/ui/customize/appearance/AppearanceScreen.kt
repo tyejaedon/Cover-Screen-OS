@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.RoundedCorner
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUIPillSlider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -74,13 +76,13 @@ internal fun AppearanceScreen(
                 }
             }
             Text("Overlay panel corners: ${previewRadius.roundToInt()} dp")
-            Slider(
+            OneUIPillSlider(
                 value = previewRadius,
-                onValueChange = { previewRadius = it },
-                onValueChangeFinished = {
-                    val chosen = previewRadius
-                    onAction(null) { store.setPanelCornerRadiusDp(chosen) }
+                onValueChange = {
+                    previewRadius = it
+                    onAction(null) { store.setPanelCornerRadiusDp(it) }
                 },
+                leadingIcon = Icons.Filled.RoundedCorner,
                 valueRange = MIN_PANEL_CORNER_RADIUS_DP..MAX_PANEL_CORNER_RADIUS_DP
             )
             Text("Panel preview", style = MaterialTheme.typography.labelMedium)

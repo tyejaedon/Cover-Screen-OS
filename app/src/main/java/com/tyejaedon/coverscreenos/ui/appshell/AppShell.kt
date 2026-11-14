@@ -54,6 +54,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.compose.navigation
 import androidx.navigation.navDeepLink
+import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme
+import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUIFloatingNavBar
+import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUINavItem
 import com.tyejaedon.coverscreenos.R
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
@@ -131,40 +134,34 @@ fun AppShell(
 
     BoxWithConstraints(modifier = modifier) {
         val expanded = maxWidth >= 600.dp
+        val navItems = homeTabs.map {
+            OneUINavItem(
+                route = it.route,
+                title = stringResource(it.title),
+                icon = it.icon
+            )
+        }
+
         Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Text(stringResource(selectedTab.title), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    },
-                    actions = {
-                        topBarActions()
-                        TopBarStatusChip(dashboardState)
-                    }
-                )
-            },
             bottomBar = {
                 if (!expanded) {
-                    NavigationBar {
-                        homeTabs.forEach { tab ->
-                            NavigationBarItem(
-                                selected = selectedTab.route == tab.route,
-                                onClick = { navController.navigateToTab(tab.route) },
-                                icon = { Icon(tab.icon, contentDescription = null) },
-                                label = { Text(stringResource(tab.title)) },
-                                alwaysShowLabel = true
-                            )
-                        }
-                    }
+                    OneUIFloatingNavBar(
+                        items = navItems,
+                        selectedRoute = selectedTab.route,
+                        onItemSelected = { navController.navigateToTab(it) },
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
                 }
             },
             floatingActionButton = floatingActionButton,
             snackbarHost = { SnackbarHost(customizeSnackbar) },
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = OneUITheme.colors.canvasBackground
         ) { innerPadding ->
             Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                 if (expanded) {
-                    NavigationRail {
+                    NavigationRail(
+                        containerColor = OneUITheme.colors.cardSurface
+                    ) {
                         homeTabs.forEach { tab ->
                             NavigationRailItem(
                                 selected = selectedTab.route == tab.route,
@@ -210,7 +207,8 @@ fun AppShell(
                                 } else {
                                     ForegroundServiceHelper.startForegroundService(context)
                                 }
-                            }
+                            },
+                            topBarActions = topBarActions
                         )
                     }
                     composable(
