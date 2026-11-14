@@ -6,6 +6,7 @@ package com.tyejaedon.coverscreenos.ui
 object CoverSearchUiTestTags {
     const val OVERLAY_PAGER = "cover_overlay_pager"
     const val LOCKSCREEN_TILE_PAGE = "cover_lockscreen_tile_page"
+    const val WIDGET_HOST_PAGE = "cover_widget_host_page"
     const val SEARCH_WIDGET_GRID_PAGE = "cover_search_widget_grid_page"
     const val SEARCH_INPUT_ROW = "cover_search_input_row"
     const val SEARCH_DISMISS_INPUT_BUTTON = "cover_search_dismiss_input_button"

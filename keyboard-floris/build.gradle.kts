@@ -55,7 +55,8 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
 
     // FlorisBoard & K3 core dependencies
-    implementation(libs.k3lp.core)
+    api(libs.k3lp.core)
+    api(libs.symspellkt)
     implementation(libs.cache4k)
     implementation(libs.kotlinx.serialization.json)
 

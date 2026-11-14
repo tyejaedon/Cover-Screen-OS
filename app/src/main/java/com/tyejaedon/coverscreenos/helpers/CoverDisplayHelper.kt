@@ -42,6 +42,28 @@ class CoverDisplayHelper(private val context: Context) {
     private val _isDeviceLocked = MutableStateFlow(true)
     val isDeviceLocked: StateFlow<Boolean> = _isDeviceLocked.asStateFlow()
 
+    private val foldPostureTracker: FoldPostureTracker by lazy {
+        FoldPostureTracker(context)
+    }
+    val foldPosture: StateFlow<CoverFoldPosture>
+        get() = foldPostureTracker.posture
+
+    fun startPostureMonitoring(scope: kotlinx.coroutines.CoroutineScope) {
+        foldPostureTracker.startMonitoring(scope)
+    }
+
+    fun stopPostureMonitoring() {
+        foldPostureTracker.stopMonitoring()
+    }
+
+    fun isPosturePermittedForCover(): Boolean {
+        return foldPosture.value == CoverFoldPosture.CLOSED
+    }
+
+    internal fun setPostureForTest(posture: CoverFoldPosture) {
+        foldPostureTracker.setPostureForTest(posture)
+    }
+
     /**
      * Returns the first usable non-default display, preferring presentation displays.
      *

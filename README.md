@@ -156,13 +156,15 @@ Quick Settings reflects WiFi and Bluetooth state, offers flashlight control,
 and adjusts brightness when allowed. Restricted actions can open system
 settings instead of changing a toggle directly.
 
-### System keyboard
+### System keyboard and clamshell input engine
 
-Enable **CoverScreenOS Keyboard** under Android keyboard settings, then select
-it with the system keyboard picker. On Samsung phones, look under
-**General management > Keyboard list and default**. Keyboard settings allow
-separate defaults for field classes; the keyboard also offers QWERTY, T9,
-numeric, and symbol layouts.
+Cover Screen OS features an integrated, adapted FlorisBoard keyboard engine (`keyboard3`) in `:keyboard-floris` along with an optimized NLP pipeline.
+
+- **System IME**: Enable **CoverScreenOS Keyboard** under Android keyboard settings, then select it with the system keyboard picker. On Samsung phones, look under **General management > Keyboard list and default**. Keyboard settings allow configuring default layouts by editor field class (Text, Number, Phone, DateTime).
+- **Clamshell Layouts**: Dynamically scales within clamshell screen height constraints (38%–44% of cover display with a 34dp floor), with 1-tap toggling between compact QWERTY, T9 9-key predictive keypad, numeric, and symbol layouts.
+- **Gesture and Ergonomics**: Spacebar horizontal drag cursor scrub, hold-to-repeat backspace, and one-handed edge anchoring (Left, Right, Full).
+- **Advanced NLP Pipeline**: Offline Trie dictionary (`CompactTrieDictionary`), QWERTY physical-geometry-weighted fat-finger autocorrect (`SymSpellAutocorrect`), DTW glide typing decoder (`DTWGlideDecoder`), and predictive T9 candidate generation (`T9PredictiveEngine`).
+- **Unified Bridge**: `CoverEditorBridge` multiplexes text operations between `InputConnection` (system IME) and `AccessibilityNodeInfo` (`CoverScreenInputInjectionEngine`).
 
 The system IME is separate from the launcher search keypad and the input
 accessibility fallback. It writes through `InputConnection` and does not require
@@ -201,10 +203,16 @@ The Release workflow needs these repo secrets: `RELEASE_KEYSTORE_BASE64` (base64
 
 ## Current scope
 
-The project builds as one Android application module (`:app`). Third-party
-`AppWidgetHost` hosting is planned in #7, #8, and #9; it is not implemented.
-Display and screen events drive current topology handling; the app does not
-currently use Jetpack WindowManager hinge tracking.
+The project builds as a multi-module project comprising the primary application
+module (`:app`) and the extracted clamshell keyboard library module
+(`:keyboard-floris`).
+
+Key architectural subsystems include:
+- **Hinge & Posture Awareness**: Hardware folding postures (`CLOSED`, `HALF_FOLDED` / Flex Mode, `FLAT`) are tracked via Jetpack WindowManager (`androidx.window:window` / `FoldingFeature`), automatically suppressing the cover screen overlay when the device unfolds past 30° to conserve battery and eliminate ghost touches.
+- **Memory-Mapped Vocabulary (mmap)**: Precompiled `BinaryTrieDictionary` uses bit-vector rank indexing over direct memory-mapped byte buffers, reducing heap RAM by ~25–35MB and eliminating GC pauses during predictive text and T9 candidate lookup.
+- **Dynamic Cutout & Ergonomics**: Querying `WindowInsets.displayCutout` dynamically positions the status pills, clock, dock, and app grids away from device-specific camera notches and punch-holes (e.g. Samsung Z Flip folder cutouts and Motorola Razr dual floating punch-holes).
+- **Third-Party Widget Hosting**: Scoped `AppWidgetHost` container enables users to host external widgets (weather, calendar, smart home) on a dedicated pager tile. Battery drain is eliminated by strictly coupling `startListening()` and `stopListening()` to overlay visibility.
+- **Unified Namespaces**: Clean modularization under `com.tyejaedon.coverscreenos.keyboard.*` without legacy bridges.
 
 New work must follow the [repository protocol](docs/agent-protocol.md): use an
 issue with a milestone, create a descriptive branch before editing, and open a

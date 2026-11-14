@@ -23,6 +23,7 @@ internal object LauncherSettingsJson {
         put("dockSlotFourAllApps", settings.dockSlotFourAllApps)
         put("keyboardStrategy", settings.keyboardStrategy.name)
         put("keyboardModeByPackage", JSONObject(settings.keyboardModeByPackage.mapValues { it.value.name }))
+        put("widgetIds", JSONArray(settings.widgetIds))
     }.toString(2)
 
     fun decode(raw: String): LauncherSettings {
@@ -75,6 +76,10 @@ internal object LauncherSettingsJson {
             require(packageName.isNotBlank()) { "Empty keyboard package" }
             enumValue<CoverKeyboardMode>(modes.getString(packageName))
         }
+        val decodedWidgetIds = if (json.has("widgetIds")) {
+            val arr = json.getJSONArray("widgetIds")
+            List(arr.length()) { arr.getInt(it) }
+        } else emptyList()
         return LauncherSettings(
             dockPackages = dock,
             wallpaperUri = if (json.isNull("wallpaperUri")) null else json.getString("wallpaperUri"),
@@ -91,7 +96,8 @@ internal object LauncherSettingsJson {
             panelCornerRadiusDp = radius,
             dockSlotFourAllApps = if (json.has("dockSlotFourAllApps")) json.getBoolean("dockSlotFourAllApps") else false,
             keyboardStrategy = enumValue(json.getString("keyboardStrategy")),
-            keyboardModeByPackage = savedModes
+            keyboardModeByPackage = savedModes,
+            widgetIds = decodedWidgetIds
         )
     }
 

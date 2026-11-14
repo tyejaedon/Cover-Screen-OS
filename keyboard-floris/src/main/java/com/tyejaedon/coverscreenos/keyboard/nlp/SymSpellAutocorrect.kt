@@ -1,6 +1,6 @@
-package com.coveros.keyboard.nlp
+package com.tyejaedon.coverscreenos.keyboard.nlp
 
-import com.coveros.keyboard.core.contracts.CandidateWord
+import com.tyejaedon.coverscreenos.keyboard.core.contracts.CandidateWord
 import com.darkrockstudios.symspellkt.common.DamerauLevenshteinDistance
 import com.darkrockstudios.symspellkt.common.Murmur3HashFunction
 import com.darkrockstudios.symspellkt.common.SpellCheckSettings

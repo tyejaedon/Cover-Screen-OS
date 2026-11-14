@@ -93,10 +93,12 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.window)
     implementation(libs.haze)
 // Optional preset styling:
     implementation(libs.haze.materials)
     implementation(libs.symspellkt)
+    implementation(libs.k3lp.core)
     implementation(project(":keyboard-floris"))
 
     androidTestImplementation(platform(libs.androidx.compose.bom))

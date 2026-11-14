@@ -1,38 +1,57 @@
 package com.tyejaedon.coverscreenos.ime
 
 import android.Manifest
-import android.app.Activity
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
 import android.os.Bundle
 import android.os.SystemClock
-import android.preference.ListPreference
-import android.preference.PreferenceFragment
-import android.preference.PreferenceManager
-import android.preference.SwitchPreference
 import android.text.InputType
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.KeyboardHide
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -47,6 +66,10 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverEditorBridge
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
+import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKey
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKeyColors
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
@@ -62,6 +85,7 @@ class CoverT9InputMethodService : InputMethodService() {
     override fun onCreate() {
         super.onCreate()
         composeOwner.create()
+        CoverKeyboardNlpManager.initializeFromContext(applicationContext)
     }
 
     override fun onCreateInputView(): View =
@@ -72,16 +96,43 @@ class CoverT9InputMethodService : InputMethodService() {
             setViewTreeViewModelStoreOwner(composeOwner)
             setContent {
                 CoverOSTheme {
-                    CoverKeyboardHost(
-                        state = uiState,
-                        onLayoutSelected = ::selectLayout,
-                        onShiftPressed = { uiState = uiState.copy(shifted = !uiState.shifted) },
-                        onCharacterPressed = ::handleCharacterPressed,
-                        onDigitPressed = ::handleDigitPressed,
-                        onBackspacePressed = ::handleBackspacePressed,
-                        onClearPressed = ::handleClearPressed,
-                        onEnterPressed = ::handleEnterPressed,
-                        onHidePressed = { requestHideSelf(0) }
+                    val bridge = remember {
+                        CoverEditorBridge(
+                            inputConnectionProvider = { currentInputConnection },
+                            editorActionHandler = ::handleEnterPressed
+                        )
+                    }
+
+                    var activeLayoutMode by remember(uiState.layout) {
+                        mutableStateOf(uiState.layout.toCoverLayoutMode())
+                    }
+                    var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
+
+                    LaunchedEffect(uiState.layout) {
+                        activeLayoutMode = uiState.layout.toCoverLayoutMode()
+                    }
+
+                    LaunchedEffect(uiState.layout, activeLayoutMode) {
+                        val surrounding = bridge.getSurroundingText(30, 0)
+                        val word = surrounding.textBefore.takeLastWhile { it.isLetterOrDigit() }
+                        candidates = if (word.isNotBlank()) {
+                            CoverKeyboardNlpManager.getCandidates(activeLayoutMode, word)
+                        } else emptyList()
+                    }
+
+                    CoverFlorisKeyboardSurface(
+                        bridge = bridge,
+                        initialMode = activeLayoutMode,
+                        candidates = candidates,
+                        onCandidateSelected = { candidate ->
+                            bridge.commitCandidate(candidate)
+                            candidates = emptyList()
+                        },
+                        onDismissRequest = { requestHideSelf(0) },
+                        onModeChanged = { newMode ->
+                            activeLayoutMode = newMode
+                            uiState = uiState.copy(layout = newMode.toCoverImeLayout())
+                        }
                     )
                 }
             }
@@ -262,101 +313,173 @@ internal enum class CoverImeFieldClass(val preferenceKey: String, val defaultLay
     }
 }
 
+internal fun CoverImeLayout.toCoverLayoutMode(): CoverLayoutMode = when (this) {
+    CoverImeLayout.QWERTY -> CoverLayoutMode.QWERTY
+    CoverImeLayout.T9 -> CoverLayoutMode.T9_PREDICTIVE
+    CoverImeLayout.NUMBER -> CoverLayoutMode.NUMERIC
+    CoverImeLayout.SYMBOLS -> CoverLayoutMode.SYMBOLS
+}
+
+internal fun CoverLayoutMode.toCoverImeLayout(): CoverImeLayout = when (this) {
+    CoverLayoutMode.QWERTY -> CoverImeLayout.QWERTY
+    CoverLayoutMode.T9_PREDICTIVE -> CoverImeLayout.T9
+    CoverLayoutMode.NUMERIC -> CoverImeLayout.NUMBER
+    CoverLayoutMode.SYMBOLS -> CoverImeLayout.SYMBOLS
+}
+
 internal object CoverImePreferences {
-    fun defaultLayout(context: android.content.Context, editorInfo: EditorInfo?): CoverImeLayout {
+    fun getSharedPreferences(context: Context): SharedPreferences {
+        return context.getSharedPreferences("${context.packageName}_preferences", Context.MODE_PRIVATE)
+    }
+
+    fun defaultLayout(context: Context, editorInfo: EditorInfo?): CoverImeLayout {
         val fieldClass = CoverImeFieldClass.from(editorInfo)
-        val saved = PreferenceManager.getDefaultSharedPreferences(context)
+        val saved = getSharedPreferences(context)
             .getString(fieldClass.preferenceKey, null)
         return CoverImeLayout.entries.firstOrNull { it.name == saved } ?: fieldClass.defaultLayout
     }
 }
 
 // The input-method settings shortcut in Android's keyboard picker opens this activity.
-class CoverImeSettingsActivity : Activity() {
+class CoverImeSettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) {
-            fragmentManager.beginTransaction()
-                .replace(android.R.id.content, CoverImeSettingsFragment())
-                .commit()
+        setContent {
+            CoverOSTheme {
+                CoverImeSettingsScreen(
+                    onBack = { finish() }
+                )
+            }
         }
     }
 }
 
-class CoverImeSettingsFragment : PreferenceFragment() {
-    private lateinit var contactsPreference: SwitchPreference
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun CoverImeSettingsScreen(
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val sharedPrefs = remember(context) { CoverImePreferences.getSharedPreferences(context) }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val screen = preferenceManager.createPreferenceScreen(activity)
-        listOf(
-            CoverImeFieldClass.TEXT to "Text fields",
-            CoverImeFieldClass.NUMBER to "Number fields",
-            CoverImeFieldClass.PHONE to "Phone fields",
-            CoverImeFieldClass.DATETIME to "Date and time fields"
-        ).forEach { (fieldClass, title) ->
-            screen.addPreference(ListPreference(activity).apply {
-                key = fieldClass.preferenceKey
-                this.title = title
-                dialogTitle = "Default keyboard for $title"
-                entries = arrayOf("QWERTY", "T9 multi-tap", "Numeric", "Symbols")
-                entryValues = CoverImeLayout.entries.map { it.name }.toTypedArray()
-                setDefaultValue(fieldClass.defaultLayout.name)
-                summary = "%s"
-            })
+    var contactsEnabled by remember { mutableStateOf(ContactsSuggestionConsent.isEnabled(context)) }
+    val contactsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        ContactsSuggestionConsent.setEnabled(context, granted)
+        contactsEnabled = ContactsSuggestionConsent.isEnabled(context)
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Keyboard Settings") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
         }
-        contactsPreference = SwitchPreference(activity).apply {
-            key = ContactsSuggestionConsent.KEY
-            title = "Use contacts for suggestions"
-            summary = "Optional. Contact names stay on this device."
-            isPersistent = false
-            setOnPreferenceChangeListener { _, newValue ->
-                if (newValue == true && !ContactsSuggestionConsent.hasPermission(activity)) {
-                    ContactsSuggestionConsent.setEnabled(activity, false)
-                    requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), CONTACTS_PERMISSION_REQUEST)
-                    false
-                } else {
-                    val enabled = ContactsSuggestionConsent.setEnabled(activity, newValue == true)
-                    refreshContactsPreference()
-                    newValue != true || enabled
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text(
+                text = "Default layouts by field type",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            listOf(
+                CoverImeFieldClass.TEXT to "Text fields",
+                CoverImeFieldClass.NUMBER to "Number fields",
+                CoverImeFieldClass.PHONE to "Phone fields",
+                CoverImeFieldClass.DATETIME to "Date and time fields"
+            ).forEach { (fieldClass, title) ->
+                var selectedLayout by remember {
+                    val saved = sharedPrefs.getString(fieldClass.preferenceKey, null)
+                    mutableStateOf(CoverImeLayout.entries.firstOrNull { it.name == saved } ?: fieldClass.defaultLayout)
+                }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(text = title, style = MaterialTheme.typography.bodyLarge)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CoverImeLayout.entries.forEach { layout ->
+                                val isSelected = selectedLayout == layout
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        selectedLayout = layout
+                                        sharedPrefs.edit().putString(fieldClass.preferenceKey, layout.name).apply()
+                                    },
+                                    label = { Text(layout.name) }
+                                )
+                            }
+                        }
+                    }
                 }
             }
-        }
-        screen.addPreference(contactsPreference)
-        preferenceScreen = screen
-    }
 
-    override fun onResume() {
-        super.onResume()
-        refreshContactsPreference()
-    }
+            HorizontalDivider()
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != CONTACTS_PERMISSION_REQUEST) return
-        val context = activity
-        if (context == null) {
-            Log.w(IME_LOG_TAG, "Contacts permission result received after settings was detached.")
-            return
-        }
-        val contactIndex = permissions.indexOf(Manifest.permission.READ_CONTACTS)
-        val granted = contactIndex >= 0 &&
-            grantResults.getOrNull(contactIndex) == PackageManager.PERMISSION_GRANTED
-        ContactsSuggestionConsent.setEnabled(context, granted)
-        refreshContactsPreference()
-    }
+            Text(
+                text = "Privacy & Suggestions",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
 
-    private fun refreshContactsPreference() {
-        val enabled = ContactsSuggestionConsent.isEnabled(activity)
-        contactsPreference.isChecked = enabled
-        contactsPreference.summary = if (enabled) {
-            "Contact names can appear in suggestions on this device."
-        } else {
-            "Optional. Grant Contacts access to include names in suggestions."
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Use contacts for suggestions", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            if (contactsEnabled) "Contact names can appear in suggestions on this device."
+                            else "Optional. Grant Contacts access to include names in suggestions.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = contactsEnabled,
+                        onCheckedChange = { checked ->
+                            if (checked) {
+                                if (ContactsSuggestionConsent.hasPermission(context)) {
+                                    ContactsSuggestionConsent.setEnabled(context, true)
+                                    contactsEnabled = true
+                                } else {
+                                    contactsLauncher.launch(Manifest.permission.READ_CONTACTS)
+                                }
+                            } else {
+                                ContactsSuggestionConsent.setEnabled(context, false)
+                                contactsEnabled = false
+                            }
+                        }
+                    )
+                }
+            }
         }
     }
 }
