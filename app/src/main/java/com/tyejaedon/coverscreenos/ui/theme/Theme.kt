@@ -13,6 +13,15 @@ import com.tyejaedon.coverscreenos.datastore.AccentColor
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_PANEL_CORNER_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.ThemePreference
 import com.tyejaedon.coverscreenos.datastore.normalizePanelCornerRadius
+import com.tyejaedon.coverscreenos.ui.theme.oneui.LocalOneUIColors
+import com.tyejaedon.coverscreenos.ui.theme.oneui.LocalOneUIDimensions
+import com.tyejaedon.coverscreenos.ui.theme.oneui.LocalOneUIShapes
+import com.tyejaedon.coverscreenos.ui.theme.oneui.LocalOneUITypography
+import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUIDarkColors
+import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUIDimensions
+import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUILightColors
+import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUIShapes
+import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITypography
 
 private val CoverOSDarkColorScheme = darkColorScheme(
     primary = CoverOSPrimary,
@@ -102,7 +111,18 @@ fun CoverOSTheme(
     }
 
     val scheme = coverAccentScheme(accentColor, useDarkTheme)
+    val oneUiBaseColors = if (useDarkTheme) OneUIDarkColors else OneUILightColors
+    val effectiveOneUiColors = if (accentColor != AccentColor.DEFAULT) {
+        oneUiBaseColors.copy(accent = scheme.primary)
+    } else {
+        oneUiBaseColors
+    }
+
     CompositionLocalProvider(
+        LocalOneUIColors provides effectiveOneUiColors,
+        LocalOneUIDimensions provides OneUIDimensions(),
+        LocalOneUIShapes provides OneUIShapes(),
+        LocalOneUITypography provides OneUITypography(),
         LocalCoverPanelCornerRadius provides normalizePanelCornerRadius(panelCornerRadiusDp).dp,
         LocalCoverOverlayAccent provides if (accentColor == AccentColor.DEFAULT) CoverOSPrimary else scheme.primary,
         LocalCoverOverlayOnAccent provides if (accentColor == AccentColor.DEFAULT) Color.Black else scheme.onPrimary,
