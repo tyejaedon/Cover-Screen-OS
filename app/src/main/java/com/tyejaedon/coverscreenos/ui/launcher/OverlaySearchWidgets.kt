@@ -120,14 +120,9 @@ internal fun WidgetGridPageTile(
             .testTag(CoverSearchUiTestTags.SEARCH_CONTENT_CONTAINER_NO_IME_PADDING)
     }
 
-    val widgetGridModifier = Modifier
-        .fillMaxSize()
-        .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 4.dp)
-        .then(insetsModifier)
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
+    Box(
         modifier = modifier
-            .then(widgetGridModifier)
+            .fillMaxSize()
             .testTag(CoverSearchUiTestTags.SEARCH_WIDGET_GRID_PAGE)
             .pointerInput(onSwipeUpToReturn, swipeThresholdPx) {
                 var cumulativeDrag = 0f
@@ -148,13 +143,15 @@ internal fun WidgetGridPageTile(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onDismissInputTap
-            ),
-        contentPadding = SEARCH_GRID_CONTENT_PADDING,
-        userScrollEnabled = false,
-        horizontalArrangement = Arrangement.spacedBy(SEARCH_GRID_TILE_GAP),
-        verticalArrangement = Arrangement.spacedBy(SEARCH_GRID_TILE_GAP)
+            )
     ) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 4.dp)
+                .then(insetsModifier)
+                .padding(SEARCH_GRID_CONTENT_PADDING)
+        ) {
             SearchWidgetTile(
                 searchQuery = searchQuery,
                 onQueryChanged = onQueryChanged,

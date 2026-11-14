@@ -248,6 +248,49 @@ class CoverAppLauncherTest {
         assertFalse(launched)
     }
 
+    @Test
+    fun launchIntentOnDisplayDispatchesViaExecutor() {
+        val launchExecutor = RecordingLaunchExecutor()
+        val intent = mockk<Intent>(relaxed = true)
+
+        val launched = CoverAppLauncher.launchIntentOnDisplay(
+            context = context,
+            intent = intent,
+            displayId = EXPLICIT_DISPLAY_ID,
+            activityLaunchExecutor = launchExecutor
+        )
+
+        assertTrue(launched)
+        assertEquals(EXPLICIT_DISPLAY_ID, launchExecutor.lastLaunchDisplayId)
+    }
+
+    @Test
+    fun launchIntentOnDisplayDelegatesToUnlockWhenDeviceLocked() {
+        every { keyguardManager.isDeviceLocked } returns true
+        every { keyguardManager.isKeyguardLocked } returns true
+        mockkObject(UnlockBridgeActivity.Companion)
+        every {
+            UnlockBridgeActivity.startUnlockRequest(any(), any(), any())
+        } returns true
+
+        val launchExecutor = RecordingLaunchExecutor()
+        val intent = mockk<Intent>(relaxed = true)
+        every { intent.`package` } returns PACKAGE_NAME
+
+        val launched = CoverAppLauncher.launchIntentOnDisplay(
+            context = context,
+            intent = intent,
+            displayId = EXPLICIT_DISPLAY_ID,
+            activityLaunchExecutor = launchExecutor
+        )
+
+        assertFalse(launched)
+        org.junit.Assert.assertNull(launchExecutor.lastLaunchDisplayId)
+        verify {
+            UnlockBridgeActivity.startUnlockRequest(context, PACKAGE_NAME, EXPLICIT_DISPLAY_ID)
+        }
+    }
+
     private fun stubLaunchableActivity(
         launchIntent: Intent,
         activityInfo: ActivityInfo = createActivityInfo(enabled = true, exported = true)

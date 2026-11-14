@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
+import android.net.Uri
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.os.IBinder
@@ -417,6 +418,28 @@ class ForegroundService : Service() {
                     packageName = null,
                     displayId = displayId
                 )
+            },
+            onOpenCustomize = {
+                val packageName = appContext.packageName
+                val ready = launchCoordinator.beginLaunch(packageName)
+                if (!ready) {
+                    Log.w(LOG_TAG, "LauncherOverlayHost.onOpenCustomize rejected")
+                    false
+                } else {
+                    val coverDisplayId = overlayWindowController.getActiveDisplayId()
+                        ?: coverDisplayHelper.getCoverDisplayId()
+                    val customizeIntent = Intent(Intent.ACTION_VIEW, Uri.parse("coverscreenos://customize")).apply {
+                        setPackage(packageName)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    }
+                    val launched = CoverAppLauncher.launchIntentOnDisplay(
+                        context = appContext,
+                        intent = customizeIntent,
+                        displayId = coverDisplayId
+                    )
+                    launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
+                    launched
+                }
             }
         )
         launcherOverlayHost = host

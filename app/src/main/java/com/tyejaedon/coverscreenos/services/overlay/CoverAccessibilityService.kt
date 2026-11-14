@@ -347,6 +347,7 @@ class CoverAccessibilityService : AccessibilityService() {
                     },
                     onRequestUnlock = { host.onRequestUnlock() },
                     onRequestScreenOff = { requestScreenOff() },
+                    onOpenCustomize = { host.onOpenCustomize() },
                     onKeyboardStrategyChanged = { nextStrategy ->
                         overlayScope.launch {
                             runCatching {
