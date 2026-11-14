@@ -96,6 +96,59 @@ object CoverAppLauncher {
         )
     }
 
+    /**
+     * Launches an arbitrary [Intent] directly onto [displayId] (or resolved cover display).
+     * If device is locked, delegates to the unlock bridge.
+     */
+    fun launchIntentOnDisplay(
+        context: Context,
+        intent: Intent,
+        displayId: Int? = null
+    ): Boolean {
+        return launchIntentOnDisplay(
+            context = context,
+            intent = intent,
+            displayId = displayId,
+            activityLaunchExecutor = defaultActivityLaunchExecutor
+        )
+    }
+
+    internal fun launchIntentOnDisplay(
+        context: Context,
+        intent: Intent,
+        displayId: Int? = null,
+        activityLaunchExecutor: ActivityLaunchExecutor = defaultActivityLaunchExecutor,
+        skipUnlockChallenge: Boolean = false
+    ): Boolean {
+        val targetDisplayId = resolveLaunchDisplayId(context = context, displayId = displayId)
+        val packageName = runCatching { intent.`package` ?: intent.component?.packageName }.getOrNull()
+
+        if (!skipUnlockChallenge && isDeviceLocked(context)) {
+            logDebug("Device locked; delegating to unlock bridge for intent=$intent")
+            val bridgeStarted = UnlockBridgeActivity.startUnlockRequest(
+                context = context,
+                packageName = packageName,
+                displayId = targetDisplayId
+            )
+            if (!bridgeStarted) {
+                logWarning("Unlock bridge unavailable; intent launch deferred")
+            }
+            return false
+        }
+
+        val launchIntent = runCatching { Intent(intent) }.getOrDefault(intent).apply {
+            runCatching { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        }
+
+        return try {
+            activityLaunchExecutor.launch(context, launchIntent, targetDisplayId)
+            true
+        } catch (e: Exception) {
+            logWarning("Failed to launch intent on display $targetDisplayId: ${e.message}")
+            false
+        }
+    }
+
     internal fun launchPackageOnDisplayAfterUnlock(
         context: Context,
         packageName: String,

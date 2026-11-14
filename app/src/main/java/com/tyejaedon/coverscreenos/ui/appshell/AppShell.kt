@@ -251,7 +251,14 @@ fun AppShell(
                                         }
                                     },
                                     permissions = dashboardState.permissions,
-                                    onPermissions = { navController.navigateToTab(HomeRoutes.Permissions) }
+                                    onPermissions = { navController.navigateToTab(HomeRoutes.Permissions) },
+                                    onBack = {
+                                        if (navController.previousBackStackEntry != null) {
+                                            navController.popBackStack()
+                                        } else {
+                                            (context as? Activity)?.finish()
+                                        }
+                                    }
                                 )
                             }
                         }

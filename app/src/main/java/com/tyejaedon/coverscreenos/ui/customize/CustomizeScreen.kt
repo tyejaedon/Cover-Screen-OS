@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.GridView
@@ -30,6 +31,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
@@ -91,7 +93,8 @@ internal fun CustomizeScreen(
     onScrollPositionChanged: (CustomizeCategory, Int) -> Unit,
     onCategorySelected: (CustomizeCategory) -> Unit,
     permissions: DashboardPermissions,
-    onPermissions: () -> Unit
+    onPermissions: () -> Unit,
+    onBack: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val appContext = context.applicationContext
@@ -161,6 +164,11 @@ internal fun CustomizeScreen(
         topBar = {
             TopAppBar(
                 title = { Text(category.title) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
                 actions = {
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Customize options")
@@ -204,7 +212,10 @@ internal fun CustomizeScreen(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (!expanded) {
-                PrimaryTabRow(selectedTabIndex = category.ordinal) {
+                PrimaryScrollableTabRow(
+                    selectedTabIndex = category.ordinal,
+                    edgePadding = 12.dp
+                ) {
                     CustomizeCategory.entries.forEach { tab ->
                         Tab(
                             selected = category == tab,

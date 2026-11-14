@@ -50,7 +50,8 @@ class LauncherOverlayHost internal constructor(
     val deviceLockState: StateFlow<Boolean>,
     val onAppSelected: (AppModel) -> Boolean,
     val persistKeyboardStrategy: suspend (KeyboardStrategy) -> Unit,
-    val onRequestUnlock: () -> Unit = {}
+    val onRequestUnlock: () -> Unit = {},
+    val onOpenCustomize: () -> Boolean = { false }
 ) {
     /** Convenience alias for `launcherSettingsStore.settings`. */
     val settings: Flow<LauncherSettings> get() = launcherSettingsStore.settings

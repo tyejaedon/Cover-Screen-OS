@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlashlightOff
 import androidx.compose.material.icons.filled.FlashlightOn
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Icon
@@ -79,7 +81,8 @@ internal fun QuickSettingsPanelTile(
     onDismiss: () -> Unit,
     swipeUpThresholdPx: Float,
     hazeState: HazeState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenCustomize: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -177,6 +180,17 @@ internal fun QuickSettingsPanelTile(
                     color = Color.White
                 )
                 Spacer(modifier = Modifier.weight(1f))
+                if (onOpenCustomize != null) {
+                    IconButton(onClick = onOpenCustomize, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            imageVector = Icons.Filled.Palette,
+                            contentDescription = "Customize",
+                            tint = Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                     Icon(
                         imageVector = Icons.Filled.Close,
@@ -189,7 +203,7 @@ internal fun QuickSettingsPanelTile(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 QuickSettingsToggleTile(
                     label = "WiFi",
@@ -227,6 +241,16 @@ internal fun QuickSettingsPanelTile(
                         }
                     }
                 )
+                if (onOpenCustomize != null) {
+                    QuickSettingsToggleTile(
+                        label = "Customize",
+                        icon = Icons.Filled.Palette,
+                        isEnabled = true,
+                        isAvailable = true,
+                        modifier = Modifier.weight(1f),
+                        onClick = onOpenCustomize
+                    )
+                }
             }
 
             QuickSettingsBrightnessControl(

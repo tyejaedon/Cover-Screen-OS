@@ -407,7 +407,8 @@ fun CoverAppGridOverlay(
     onRemoveWidget: (Int) -> Unit = {},
     onAddWidgetRequest: () -> Unit = {},
     onRequestUnlock: () -> Unit = {},
-    onRequestScreenOff: () -> Unit = {}
+    onRequestScreenOff: () -> Unit = {},
+    onOpenCustomize: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -577,6 +578,7 @@ fun CoverAppGridOverlay(
                         onAddWidgetRequest = onAddWidgetRequest,
                         onRequestUnlock = onRequestUnlock,
                         onRequestScreenOff = onRequestScreenOff,
+                        onOpenCustomize = onOpenCustomize,
                         pagerState = pagerState,
                         hazeState = hazeState,
                         modifier = Modifier
@@ -617,6 +619,7 @@ private fun InteractiveSection(
     onAddWidgetRequest: () -> Unit,
     onRequestUnlock: () -> Unit,
     onRequestScreenOff: () -> Unit,
+    onOpenCustomize: () -> Unit,
     pagerState: PagerState,
     hazeState: HazeState,
     modifier: Modifier = Modifier
@@ -723,8 +726,10 @@ private fun InteractiveSection(
     // appears immediately instead of requiring a second manual tap on the field.
     LaunchedEffect(keyboardStrategy, isWidgetTileVisible) {
         if (isWidgetTileVisible && keyboardStrategy == KeyboardStrategy.SYSTEM_IME) {
-            searchFieldFocusRequester.requestFocus()
-            keyboardController?.show()
+            runCatching {
+                searchFieldFocusRequester.requestFocus()
+                keyboardController?.show()
+            }
         }
     }
     val hintedGridLetter = remember(hintedPagerPage, appPages) {
@@ -818,14 +823,21 @@ private fun InteractiveSection(
                                                 onDragCancel = { cumulativeDrag = 0f }
                                             )
                                         }
-                                        // Double tap on empty space turns the screen off. Buttons,
-                                        // apps and notifications consume their own taps first.
+                                        // Double tap on empty space turns the screen off. Long press
+                                        // opens customize. Buttons, apps and notifications consume
+                                        // their own taps first.
                                         .pointerInput(isQuickSettingsVisible, isWidgetTileVisible) {
                                             detectTapGestures(
                                                 onDoubleTap = {
                                                     if (!isQuickSettingsVisible && !isWidgetTileVisible) {
                                                         dismissSearchInput()
                                                         onRequestScreenOff()
+                                                    }
+                                                },
+                                                onLongPress = {
+                                                    if (!isQuickSettingsVisible && !isWidgetTileVisible) {
+                                                        dismissSearchInput()
+                                                        onOpenCustomize()
                                                     }
                                                 }
                                             )
@@ -983,6 +995,10 @@ private fun InteractiveSection(
                         onDismiss = { closeQuickSettings() },
                         swipeUpThresholdPx = widgetSwipeThresholdPx,
                         hazeState = hazeState,
+                        onOpenCustomize = {
+                            closeQuickSettings()
+                            onOpenCustomize()
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
