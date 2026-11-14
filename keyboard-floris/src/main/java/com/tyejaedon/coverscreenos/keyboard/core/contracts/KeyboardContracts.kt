@@ -1,4 +1,4 @@
-package com.coveros.keyboard.core.contracts
+package com.tyejaedon.coverscreenos.keyboard.core.contracts
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect

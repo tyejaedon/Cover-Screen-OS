@@ -34,6 +34,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -86,6 +90,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
@@ -158,14 +163,19 @@ private const val ICON_PREWARM_BATCH_SIZE = 6
 private const val ICON_PREWARM_BATCH_DELAY_MS = 32L
 private const val NOTIFICATION_PANEL_PAGE_INDEX = 0
 private const val LOCK_PAGER_PAGE_INDEX = 1
-private const val FIRST_APP_GRID_PAGE_INDEX = 2
+private const val WIDGET_HOST_PAGE_INDEX = 2
+private const val FIRST_APP_GRID_PAGE_INDEX = 3
 private const val SEARCH_QUERY_MAX_LENGTH = 64
 
 private val WIDGET_TILE_VERTICAL_SWIPE_THRESHOLD = 72.dp
 
-private data class CoverDisplayPolishSpec(
+internal data class CoverDisplayPolishSpec(
     val statusChipMinHeight: Dp,
-    val dockBottomPadding: Dp
+    val dockBottomPadding: Dp,
+    val cutoutTopPadding: Dp = 0.dp,
+    val cutoutBottomPadding: Dp = 0.dp,
+    val cutoutStartPadding: Dp = 0.dp,
+    val cutoutEndPadding: Dp = 0.dp
 )
 
 private data class BatteryStatusSnapshot(
@@ -174,23 +184,43 @@ private data class BatteryStatusSnapshot(
 )
 
 @Composable
-private fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
+internal fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
     val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
     val containerHeightPx = LocalWindowInfo.current.containerSize.height
     val containerHeightDp = with(density) { containerHeightPx.toDp() }
-    return remember(containerHeightPx) {
+
+    val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
+    val cutoutTop = cutoutInsets.calculateTopPadding()
+    val cutoutBottom = cutoutInsets.calculateBottomPadding()
+    val cutoutStart = cutoutInsets.calculateStartPadding(layoutDirection)
+    val cutoutEnd = cutoutInsets.calculateEndPadding(layoutDirection)
+
+    return remember(containerHeightPx, cutoutTop, cutoutBottom, cutoutStart, cutoutEnd) {
         when {
             containerHeightDp <= 680.dp -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 28.dp,
-                dockBottomPadding = 8.dp
+                dockBottomPadding = 8.dp + cutoutBottom,
+                cutoutTopPadding = cutoutTop,
+                cutoutBottomPadding = cutoutBottom,
+                cutoutStartPadding = cutoutStart,
+                cutoutEndPadding = cutoutEnd
             )
             containerHeightDp <= 760.dp -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 30.dp,
-                dockBottomPadding = 10.dp
+                dockBottomPadding = 10.dp + cutoutBottom,
+                cutoutTopPadding = cutoutTop,
+                cutoutBottomPadding = cutoutBottom,
+                cutoutStartPadding = cutoutStart,
+                cutoutEndPadding = cutoutEnd
             )
             else -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 32.dp,
-                dockBottomPadding = 12.dp
+                dockBottomPadding = 12.dp + cutoutBottom,
+                cutoutTopPadding = cutoutTop,
+                cutoutBottomPadding = cutoutBottom,
+                cutoutStartPadding = cutoutStart,
+                cutoutEndPadding = cutoutEnd
             )
         }
     }
@@ -373,6 +403,9 @@ fun CoverAppGridOverlay(
     wallpaperRotation: Int = 0,
     keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
     onKeyboardStrategyChanged: (KeyboardStrategy) -> Unit = {},
+    widgetIds: List<Int> = emptyList(),
+    onRemoveWidget: (Int) -> Unit = {},
+    onAddWidgetRequest: () -> Unit = {},
     onRequestUnlock: () -> Unit = {},
     onRequestScreenOff: () -> Unit = {}
 ) {
@@ -380,6 +413,9 @@ fun CoverAppGridOverlay(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val packageManager = remember(context) { context.packageManager }
+    val widgetHostManager = remember(context) {
+        com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(context)
+    }
     val overlayComposeStartMs = remember { SystemClock.uptimeMillis() }
 
     var isGridHydrated by remember { mutableStateOf(false) }
@@ -535,6 +571,10 @@ fun CoverAppGridOverlay(
                         },
                         keyboardStrategy = keyboardStrategy,
                         onKeyboardStrategyChanged = onKeyboardStrategyChanged,
+                        widgetIds = widgetIds,
+                        widgetHostManager = widgetHostManager,
+                        onRemoveWidget = onRemoveWidget,
+                        onAddWidgetRequest = onAddWidgetRequest,
                         onRequestUnlock = onRequestUnlock,
                         onRequestScreenOff = onRequestScreenOff,
                         pagerState = pagerState,
@@ -571,6 +611,10 @@ private fun InteractiveSection(
     onCoverKeyboardVisibilityChanged: (Boolean) -> Unit,
     keyboardStrategy: KeyboardStrategy,
     onKeyboardStrategyChanged: (KeyboardStrategy) -> Unit,
+    widgetIds: List<Int>,
+    widgetHostManager: com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager,
+    onRemoveWidget: (Int) -> Unit,
+    onAddWidgetRequest: () -> Unit,
     onRequestUnlock: () -> Unit,
     onRequestScreenOff: () -> Unit,
     pagerState: PagerState,
@@ -716,7 +760,12 @@ private fun InteractiveSection(
 
     Box(modifier = modifier) {
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(
+                    start = displayPolishSpec.cutoutStartPadding,
+                    end = displayPolishSpec.cutoutEndPadding
+                ),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Box(
@@ -813,6 +862,16 @@ private fun InteractiveSection(
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 }
+                            }
+                            WIDGET_HOST_PAGE_INDEX -> {
+                                com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostTile(
+                                    widgetIds = widgetIds,
+                                    widgetHostManager = widgetHostManager,
+                                    onRemoveWidget = onRemoveWidget,
+                                    onAddWidgetRequest = onAddWidgetRequest,
+                                    hazeState = hazeState,
+                                    modifier = Modifier.fillMaxSize()
+                                )
                             }
                             else -> {
                                 val gridIndex = pageIndex - FIRST_APP_GRID_PAGE_INDEX
@@ -978,7 +1037,12 @@ private fun LockAndDockTile(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical)),
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))
+                .padding(
+                    top = displayPolishSpec.cutoutTopPadding,
+                    start = displayPolishSpec.cutoutStartPadding,
+                    end = displayPolishSpec.cutoutEndPadding
+                ),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Column(

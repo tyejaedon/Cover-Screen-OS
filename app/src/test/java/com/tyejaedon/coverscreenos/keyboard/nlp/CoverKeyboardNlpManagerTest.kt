@@ -1,8 +1,5 @@
 package com.tyejaedon.coverscreenos.keyboard.nlp
 
-import com.coveros.keyboard.nlp.CompactTrieDictionary
-import com.coveros.keyboard.nlp.SymSpellAutocorrect
-import com.coveros.keyboard.nlp.T9PredictiveEngine
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

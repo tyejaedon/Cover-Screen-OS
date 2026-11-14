@@ -1,7 +1,7 @@
-package com.coveros.keyboard.nlp
+package com.tyejaedon.coverscreenos.keyboard.nlp
 
 import androidx.compose.ui.geometry.Offset
-import com.coveros.keyboard.core.contracts.CandidateWord
+import com.tyejaedon.coverscreenos.keyboard.core.contracts.CandidateWord
 import java.util.PriorityQueue
 import kotlin.math.ln
 import kotlin.math.max

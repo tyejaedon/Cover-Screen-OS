@@ -1,6 +1,6 @@
-package com.coveros.keyboard.nlp
+package com.tyejaedon.coverscreenos.keyboard.nlp
 
-import com.coveros.keyboard.core.contracts.CandidateWord
+import com.tyejaedon.coverscreenos.keyboard.core.contracts.CandidateWord
 import java.util.Locale
 import java.util.PriorityQueue
 import kotlin.math.max

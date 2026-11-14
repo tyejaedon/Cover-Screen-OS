@@ -2,9 +2,6 @@ package com.tyejaedon.coverscreenos.keyboard.nlp
 
 import android.content.Context
 import android.util.Log
-import com.coveros.keyboard.nlp.CompactTrieDictionary
-import com.coveros.keyboard.nlp.SymSpellAutocorrect
-import com.coveros.keyboard.nlp.T9PredictiveEngine
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,11 +42,13 @@ object CoverKeyboardNlpManager {
     )
 
     private var trieDictionary: CompactTrieDictionary = CompactTrieDictionary(defaultCorpus)
+    private var binaryTrie: BinaryTrieDictionary? = null
     private var symSpellAutocorrect: SymSpellAutocorrect = SymSpellAutocorrect(defaultCorpus)
     private var t9Engine: T9PredictiveEngine = T9PredictiveEngine(trieDictionary)
 
     /**
-     * Asynchronously loads the bundled compressed corpus from assets on [Dispatchers.IO].
+     * Asynchronously loads the bundled compressed corpus from assets or memory-maps
+     * the cached binary Trie on [Dispatchers.IO] for zero-heap startup.
      */
     fun initializeFromContext(context: Context) {
         if (isInitialized) return
@@ -58,6 +57,22 @@ object CoverKeyboardNlpManager {
             initMutex.withLock {
                 if (isInitialized) return@withLock
                 try {
+                    val cacheFile = java.io.File(appContext.cacheDir, "trie_mmap_v1.bin")
+
+                    // Fast-path: zero-copy memory-mapped Trie cold start
+                    if (cacheFile.exists() && cacheFile.length() >= BinaryTrieDictionary.HEADER_SIZE) {
+                        try {
+                            val mappedTrie = BinaryTrieDictionary.mapFromFile(cacheFile)
+                            binaryTrie = mappedTrie
+                            isInitialized = true
+                            Log.d(TAG, "CoverKeyboardNlpManager restored from mmap file (${mappedTrie.wordCount} words)")
+                            return@withLock
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to mmap cached Trie, re-generating", e)
+                            cacheFile.delete()
+                        }
+                    }
+
                     val frequencies = HashMap<String, Long>(15000)
                     frequencies.putAll(defaultCorpus)
 
@@ -80,6 +95,14 @@ object CoverKeyboardNlpManager {
                     val newSymSpell = SymSpellAutocorrect(frequencies)
                     val newT9 = T9PredictiveEngine(newTrie)
 
+                    // Compile to binary memory-mapped file for zero-allocation future boots
+                    runCatching {
+                        BinaryTrieDictionary.writeToFile(newTrie, cacheFile)
+                        binaryTrie = BinaryTrieDictionary.mapFromFile(cacheFile)
+                    }.onFailure { e ->
+                        Log.w(TAG, "Could not write binary mmap cache file", e)
+                    }
+
                     trieDictionary = newTrie
                     symSpellAutocorrect = newSymSpell
                     t9Engine = newT9
@@ -100,7 +123,8 @@ object CoverKeyboardNlpManager {
         if (query.isEmpty() || !query.all { it in 'a'..'z' }) return emptyList()
 
         val results = LinkedHashSet<String>()
-        val completions = trieDictionary.predictForPrefix(query, limit = limit)
+        val completions = binaryTrie?.predictForPrefix(query, limit = limit)
+            ?: trieDictionary.predictForPrefix(query, limit = limit)
         for (c in completions) {
             results.add(c.word)
             if (results.size >= limit) break
@@ -123,6 +147,11 @@ object CoverKeyboardNlpManager {
     fun getT9Suggestions(digits: String, limit: Int = 3): List<String> {
         val cleanDigits = digits.filter { it in '2'..'9' }
         if (cleanDigits.isEmpty()) return emptyList()
+
+        val binaryCompletions = binaryTrie?.predictForDigits(cleanDigits, limit = limit)
+        if (binaryCompletions != null && binaryCompletions.isNotEmpty()) {
+            return binaryCompletions.map { it.word }
+        }
 
         return t9Engine.predictForDigits(cleanDigits, limit = limit)
             .map { it.word }
@@ -151,9 +180,11 @@ object CoverKeyboardNlpManager {
     internal fun setEnginesForTest(
         trie: CompactTrieDictionary,
         symSpell: SymSpellAutocorrect,
-        t9: T9PredictiveEngine
+        t9: T9PredictiveEngine,
+        binary: BinaryTrieDictionary? = null
     ) {
         trieDictionary = trie
+        binaryTrie = binary
         symSpellAutocorrect = symSpell
         t9Engine = t9
         isInitialized = true

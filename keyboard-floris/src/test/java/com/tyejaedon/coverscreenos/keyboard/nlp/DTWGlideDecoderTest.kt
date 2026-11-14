@@ -1,4 +1,4 @@
-package com.coveros.keyboard.nlp
+package com.tyejaedon.coverscreenos.keyboard.nlp
 
 import androidx.compose.ui.geometry.Offset
 import org.junit.Assert.assertEquals

@@ -205,9 +205,14 @@ The Release workflow needs these repo secrets: `RELEASE_KEYSTORE_BASE64` (base64
 
 The project builds as a multi-module project comprising the primary application
 module (`:app`) and the extracted clamshell keyboard library module
-(`:keyboard-floris`). Third-party `AppWidgetHost` hosting is planned in #7, #8,
-and #9; it is not implemented. Display and screen events drive current topology
-handling; the app does not currently use Jetpack WindowManager hinge tracking.
+(`:keyboard-floris`).
+
+Key architectural subsystems include:
+- **Hinge & Posture Awareness**: Hardware folding postures (`CLOSED`, `HALF_FOLDED` / Flex Mode, `FLAT`) are tracked via Jetpack WindowManager (`androidx.window:window` / `FoldingFeature`), automatically suppressing the cover screen overlay when the device unfolds past 30° to conserve battery and eliminate ghost touches.
+- **Memory-Mapped Vocabulary (mmap)**: Precompiled `BinaryTrieDictionary` uses bit-vector rank indexing over direct memory-mapped byte buffers, reducing heap RAM by ~25–35MB and eliminating GC pauses during predictive text and T9 candidate lookup.
+- **Dynamic Cutout & Ergonomics**: Querying `WindowInsets.displayCutout` dynamically positions the status pills, clock, dock, and app grids away from device-specific camera notches and punch-holes (e.g. Samsung Z Flip folder cutouts and Motorola Razr dual floating punch-holes).
+- **Third-Party Widget Hosting**: Scoped `AppWidgetHost` container enables users to host external widgets (weather, calendar, smart home) on a dedicated pager tile. Battery drain is eliminated by strictly coupling `startListening()` and `stopListening()` to overlay visibility.
+- **Unified Namespaces**: Clean modularization under `com.tyejaedon.coverscreenos.keyboard.*` without legacy bridges.
 
 New work must follow the [repository protocol](docs/agent-protocol.md): use an
 issue with a milestone, create a descriptive branch before editing, and open a

@@ -145,6 +145,7 @@ private object LauncherPreferencesKeys {
 	val keyboardExtraHeightDp = floatPreferencesKey("keyboard_extra_height_dp")
 	val keyboardOneHandedEnabled = booleanPreferencesKey("keyboard_one_handed_enabled")
 	val keyboardOneHandedAnchor = stringPreferencesKey("keyboard_one_handed_anchor")
+	val widgetIds = stringPreferencesKey("cover_widget_ids")
 	val dockSlots: List<Preferences.Key<String>> = List(COVER_DOCK_SLOT_COUNT) { slot ->
 		stringPreferencesKey("dock_slot_$slot")
 	}
@@ -174,7 +175,8 @@ data class LauncherSettings(
 	val popupKeyPreviewEnabled: Boolean = true,
 	val keyboardExtraHeightDp: Float = COMPACT_EXTRA_KEY_HEIGHT_DP,
 	val keyboardOneHandedEnabled: Boolean = false,
-	val keyboardOneHandedAnchor: KeyboardAnchor = KeyboardAnchor.Left
+	val keyboardOneHandedAnchor: KeyboardAnchor = KeyboardAnchor.Left,
+	val widgetIds: List<Int> = emptyList()
 )
 
 private const val SETTINGS_STORE_LOG_TAG = "LauncherSettingsStore"
@@ -304,11 +306,52 @@ class LauncherSettingsStore(
 					keyboardOneHandedEnabled = preferences[LauncherPreferencesKeys.keyboardOneHandedEnabled] ?: false,
 					keyboardOneHandedAnchor = preferences[LauncherPreferencesKeys.keyboardOneHandedAnchor]
 						?.let { value -> KeyboardAnchor.entries.firstOrNull { it.name == value } }
-						?: KeyboardAnchor.Left
+						?: KeyboardAnchor.Left,
+					widgetIds = preferences[LauncherPreferencesKeys.widgetIds]
+						?.split(',')
+						?.mapNotNull { it.trim().toIntOrNull() }
+						?: emptyList()
 				)
 		}.getOrElse { error ->
 			Log.w(SETTINGS_STORE_LOG_TAG, "Failed to map settings. Falling back to defaults.", error)
 			LauncherSettings()
+		}
+	}
+
+	suspend fun addWidgetId(widgetId: Int) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				val existing = preferences[LauncherPreferencesKeys.widgetIds]
+					?.split(',')
+					?.mapNotNull { it.trim().toIntOrNull() }
+					?.toMutableList() ?: mutableListOf()
+				if (widgetId !in existing) {
+					existing.add(widgetId)
+					preferences[LauncherPreferencesKeys.widgetIds] = existing.joinToString(",")
+				}
+			}
+		}
+	}
+
+	suspend fun removeWidgetId(widgetId: Int) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				val existing = preferences[LauncherPreferencesKeys.widgetIds]
+					?.split(',')
+					?.mapNotNull { it.trim().toIntOrNull() }
+					?.toMutableList() ?: mutableListOf()
+				if (existing.remove(widgetId)) {
+					preferences[LauncherPreferencesKeys.widgetIds] = existing.joinToString(",")
+				}
+			}
+		}
+	}
+
+	suspend fun setWidgetIds(widgetIds: List<Int>) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences[LauncherPreferencesKeys.widgetIds] = widgetIds.joinToString(",")
+			}
 		}
 	}
 

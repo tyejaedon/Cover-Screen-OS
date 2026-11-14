@@ -56,6 +56,7 @@ dependencies {
 
     // FlorisBoard & K3 core dependencies
     api(libs.k3lp.core)
+    api(libs.symspellkt)
     implementation(libs.cache4k)
     implementation(libs.kotlinx.serialization.json)
 

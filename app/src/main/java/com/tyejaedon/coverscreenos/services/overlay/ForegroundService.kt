@@ -205,6 +205,9 @@ class ForegroundService : Service() {
     private lateinit var appRepository: PackageManagerAppScannerRepository
     private lateinit var launcherSettingsStore: LauncherSettingsStore
     private var launcherOverlayHost: LauncherOverlayHost? = null
+    private val widgetHostManager by lazy {
+        com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(this)
+    }
 
     private val suppressionState = OverlaySuppressionState()
     private val reclaimPolicy = OverlayReclaimPolicy(
@@ -240,6 +243,7 @@ class ForegroundService : Service() {
 
     private var pendingDisplayRetargetJob: Job? = null
     private var suppressionResumePollerJob: Job? = null
+    private var foldPostureJob: Job? = null
 
     private var isOverlaySuppressedForAppLaunch: Boolean
         get() = suppressionState.isOverlaySuppressedForAppLaunch
@@ -466,6 +470,8 @@ class ForegroundService : Service() {
                 overlayRequested = true
                 publishRuntime("Service started")
                 coverDisplayHelper.startLockStatusMonitoring()
+                coverDisplayHelper.startPostureMonitoring(serviceScope)
+                startFoldPostureObservation()
                 registerDisplayListenerIfNeeded()
 
                 // Rehydrate call suppression state after service restarts so active calls
@@ -724,6 +730,11 @@ class ForegroundService : Service() {
         val shouldForceRetarget = overlayWindowController.isOverlayAttached() && activeId != targetId
 
         isOverlayActive = overlayWindowController.showOverlay(targetDisplay, shouldForceRetarget)
+        if (isOverlayActive) {
+            widgetHostManager.startListening()
+        } else {
+            widgetHostManager.stopListening()
+        }
         publishRuntime(if (isOverlayActive) "Overlay attached" else "Overlay attachment failed")
         logDebug { "overlay reason=$reason targetId=$targetId activeId=${overlayWindowController.getActiveDisplayId()} forceRetarget=$shouldForceRetarget attached=$isOverlayActive displays=${coverDisplayHelper.describeDisplays()}" }
     }
@@ -776,10 +787,14 @@ class ForegroundService : Service() {
 
     private fun teardownOverlayRuntime() {
         clearAppLaunchSuppression()
+        foldPostureJob?.cancel()
+        foldPostureJob = null
         overlayRequested = false
         isUnlockPromptActive = false
         clearPendingDisplayWork()
         coverDisplayHelper.stopLockStatusMonitoring()
+        coverDisplayHelper.stopPostureMonitoring()
+        widgetHostManager.stopListening()
         unregisterDisplayListenerIfNeeded()
         overlayWindowController.removeOverlay()
         isOverlayActive = false
@@ -815,6 +830,7 @@ class ForegroundService : Service() {
 
         clearPendingDisplayWork()
         overlayWindowController.suppressOverlayForLaunch()
+        widgetHostManager.stopListening()
         isOverlayActive = false
         publishRuntime("Overlay suppressed: ${reason.name.lowercase()}")
 
@@ -831,6 +847,32 @@ class ForegroundService : Service() {
         }
     }
 
+    private fun startFoldPostureObservation() {
+        foldPostureJob?.cancel()
+        foldPostureJob = serviceScope.launch {
+            coverDisplayHelper.foldPosture.collect { posture ->
+                when (posture) {
+                    com.tyejaedon.coverscreenos.helpers.CoverFoldPosture.HALF_FOLDED,
+                    com.tyejaedon.coverscreenos.helpers.CoverFoldPosture.FLAT -> {
+                        if (isOverlayActive && !isOverlaySuppressedForAppLaunch) {
+                            Log.d(LOG_TAG, "Device unfolded ($posture); suppressing cover overlay")
+                            suppressOverlayForReason(
+                                packageName = "com.android.internal.posture",
+                                reason = OverlaySuppressionReason.POSTURE_UNFOLDED
+                            )
+                        }
+                    }
+                    com.tyejaedon.coverscreenos.helpers.CoverFoldPosture.CLOSED -> {
+                        if (isOverlaySuppressedForAppLaunch && suppressionReason == OverlaySuppressionReason.POSTURE_UNFOLDED) {
+                            Log.d(LOG_TAG, "Device closed ($posture); restoring cover overlay")
+                            completeSuppressionAndRetargetOnce(reason = "posture_closed_resume_overlay")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun maybeResumeOverlayAfterAppLaunch(reason: String) {
         if (!isOverlaySuppressedForAppLaunch) {
             logResumeDecision(reason = reason, decision = "skip_not_suppressed")
@@ -842,10 +884,18 @@ class ForegroundService : Service() {
             return
         }
 
+        if (suppressionReason == OverlaySuppressionReason.POSTURE_UNFOLDED) {
+            if (coverDisplayHelper.foldPosture.value == com.tyejaedon.coverscreenos.helpers.CoverFoldPosture.CLOSED) {
+                completeSuppressionAndRetargetOnce(reason = "posture_closed_resume_overlay")
+            }
+            return
+        }
+
         val suppressedForMs = SystemClock.elapsedRealtime() - launchSuppressedStartedElapsedMs
         val maxSuppressionMs = when (suppressionReason) {
             OverlaySuppressionReason.APP_LAUNCH -> APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS
             OverlaySuppressionReason.INCOMING_CALL -> INCOMING_CALL_SUPPRESSION_MAX_MS
+            OverlaySuppressionReason.POSTURE_UNFOLDED -> Long.MAX_VALUE
             OverlaySuppressionReason.NONE -> APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS
         }
         if (suppressedForMs >= maxSuppressionMs) {
