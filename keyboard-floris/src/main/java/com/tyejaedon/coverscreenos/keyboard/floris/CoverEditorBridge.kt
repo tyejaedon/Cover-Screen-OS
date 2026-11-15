@@ -2,6 +2,9 @@ package com.tyejaedon.coverscreenos.keyboard.floris
 
 import android.view.KeyEvent
 import android.view.inputmethod.InputConnection
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.k3lp.runtime.K3Editor
 import org.k3lp.runtime.K3SurroundingText
 import org.k3lp.runtime.K3TextRange
@@ -34,6 +37,9 @@ interface CoverOverlayInputCallbacks {
  * 1. An Android [InputConnection] (for system IME and API 33+ `flagInputMethodEditor` sessions).
  * 2. An overlay callback interface [CoverOverlayInputCallbacks] (for accessibility node text manipulation
  *    and local launcher search).
+ *
+ * Publishes [mutationRevision] on every text or selection mutation so hosts (like `CoverT9InputMethodService`)
+ * can reactively recompute NLP candidates and auto-capitalization state on every keystroke.
  */
 class CoverEditorBridge(
     private val overlayCallbacks: CoverOverlayInputCallbacks? = null,
@@ -41,6 +47,13 @@ class CoverEditorBridge(
     private val inputConnectionProvider: (() -> InputConnection?)? = null,
     private val editorActionHandler: (() -> Unit)? = null
 ) : K3Editor {
+
+    private val _mutationRevision = MutableStateFlow(0L)
+    val mutationRevision: StateFlow<Long> = _mutationRevision.asStateFlow()
+
+    fun notifyExternalMutation() {
+        _mutationRevision.value += 1L
+    }
 
     private fun currentInputConnection(): InputConnection? =
         inputConnectionProvider?.invoke() ?: inputConnectionRef?.get()
@@ -66,6 +79,7 @@ class CoverEditorBridge(
         } else {
             overlayCallbacks?.replaceText(range, text, newSelection.start)
         }
+        notifyExternalMutation()
     }
 
     override fun setComposition(newComposition: K3TextRange?) {
@@ -77,6 +91,7 @@ class CoverEditorBridge(
                 ic.finishComposingText()
             }
         }
+        notifyExternalMutation()
     }
 
     fun getSurroundingText(charsBefore: Int = 100, charsAfter: Int = 100): K3SurroundingText {
@@ -108,6 +123,21 @@ class CoverEditorBridge(
         } else {
             overlayCallbacks?.onAppend(text)
         }
+        notifyExternalMutation()
+    }
+
+    fun replacePreviousChar(newChar: Char) {
+        val ic = currentInputConnection()
+        if (ic != null) {
+            ic.beginBatchEdit()
+            ic.deleteSurroundingText(1, 0)
+            ic.commitText(newChar.toString(), 1)
+            ic.endBatchEdit()
+        } else {
+            overlayCallbacks?.onDeleteBackward()
+            overlayCallbacks?.onAppend(newChar.toString())
+        }
+        notifyExternalMutation()
     }
 
     fun deleteSurroundingText(charsBefore: Int, charsAfter: Int = 0) {
@@ -119,6 +149,7 @@ class CoverEditorBridge(
                 overlayCallbacks?.onDeleteBackward()
             }
         }
+        notifyExternalMutation()
     }
 
     fun deletePreviousWord() {
@@ -130,6 +161,7 @@ class CoverEditorBridge(
         } else {
             overlayCallbacks?.onDeletePreviousWord()
         }
+        notifyExternalMutation()
     }
 
     fun moveCursor(delta: Int) {
@@ -142,6 +174,7 @@ class CoverEditorBridge(
         } else {
             overlayCallbacks?.onMoveCursor(delta)
         }
+        notifyExternalMutation()
     }
 
     fun commitCandidate(candidate: String, trailingSpace: Boolean = true) {
@@ -157,11 +190,13 @@ class CoverEditorBridge(
         } else {
             overlayCallbacks?.onCommitCandidate(toCommit)
         }
+        notifyExternalMutation()
     }
 
     fun finishInput() {
         if (editorActionHandler != null) {
             editorActionHandler.invoke()
+            notifyExternalMutation()
             return
         }
         val ic = currentInputConnection()
@@ -172,6 +207,7 @@ class CoverEditorBridge(
         } else {
             overlayCallbacks?.onDone()
         }
+        notifyExternalMutation()
     }
 
     fun clearAll() {
@@ -182,5 +218,6 @@ class CoverEditorBridge(
         } else {
             overlayCallbacks?.onClear()
         }
+        notifyExternalMutation()
     }
 }

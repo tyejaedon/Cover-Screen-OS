@@ -1,0 +1,48 @@
+{
+  "type": "characters",
+  "name": "qwerty",
+  "direction": "ltr",
+  "arrangement": [
+    [
+      { "code": 113, "label": "q", "popup": { "main": { "code": 49, "label": "1" } }, "testTag": "keyboard_top_0" },
+      { "code": 119, "label": "w", "popup": { "main": { "code": 50, "label": "2" } }, "testTag": "keyboard_top_1" },
+      { "code": 101, "label": "e", "popup": { "main": { "code": 51, "label": "3" }, "relevant": [{ "code": 233, "label": "é" }, { "code": 232, "label": "è" }, { "code": 234, "label": "ê" }, { "code": 235, "label": "ë" }] }, "testTag": "keyboard_top_2" },
+      { "code": 114, "label": "r", "popup": { "main": { "code": 52, "label": "4" } }, "testTag": "keyboard_top_3" },
+      { "code": 116, "label": "t", "popup": { "main": { "code": 53, "label": "5" } }, "testTag": "keyboard_top_4" },
+      { "code": 121, "label": "y", "popup": { "main": { "code": 54, "label": "6" } }, "testTag": "keyboard_top_5" },
+      { "code": 117, "label": "u", "popup": { "main": { "code": 55, "label": "7" }, "relevant": [{ "code": 250, "label": "ú" }, { "code": 249, "label": "ù" }, { "code": 251, "label": "û" }, { "code": 252, "label": "ü" }] }, "testTag": "keyboard_top_6" },
+      { "code": 105, "label": "i", "popup": { "main": { "code": 56, "label": "8" }, "relevant": [{ "code": 237, "label": "í" }, { "code": 236, "label": "ì" }, { "code": 238, "label": "î" }, { "code": 239, "label": "ï" }] }, "testTag": "keyboard_top_7" },
+      { "code": 111, "label": "o", "popup": { "main": { "code": 57, "label": "9" }, "relevant": [{ "code": 243, "label": "ó" }, { "code": 242, "label": "ò" }, { "code": 244, "label": "ô" }, { "code": 246, "label": "ö" }, { "code": 245, "label": "õ" }] }, "testTag": "keyboard_top_8" },
+      { "code": 112, "label": "p", "popup": { "main": { "code": 48, "label": "0" } }, "testTag": "keyboard_top_9" }
+    ],
+    [
+      { "code": 97, "label": "a", "popup": { "relevant": [{ "code": 225, "label": "á" }, { "code": 224, "label": "à" }, { "code": 226, "label": "â" }, { "code": 228, "label": "ä" }, { "code": 227, "label": "ã" }] }, "testTag": "keyboard_middle_0" },
+      { "code": 115, "label": "s", "popup": { "relevant": [{ "code": 223, "label": "ß" }] }, "testTag": "keyboard_middle_1" },
+      { "code": 100, "label": "d", "testTag": "keyboard_middle_2" },
+      { "code": 102, "label": "f", "testTag": "keyboard_middle_3" },
+      { "code": 103, "label": "g", "testTag": "keyboard_middle_4" },
+      { "code": 104, "label": "h", "testTag": "keyboard_middle_5" },
+      { "code": 106, "label": "j", "testTag": "keyboard_middle_6" },
+      { "code": 107, "label": "k", "testTag": "keyboard_middle_7" },
+      { "code": 108, "label": "l", "testTag": "keyboard_middle_8" }
+    ],
+    [
+      { "type": "modifier", "code": -11, "label": "⇧", "widthFactor": 1.35, "testTag": "keyboard_shift" },
+      { "code": 122, "label": "z", "testTag": "keyboard_lower_0" },
+      { "code": 120, "label": "x", "testTag": "keyboard_lower_1" },
+      { "code": 99, "label": "c", "testTag": "keyboard_lower_2" },
+      { "code": 118, "label": "v", "testTag": "keyboard_lower_3" },
+      { "code": 98, "label": "b", "testTag": "keyboard_lower_4" },
+      { "code": 110, "label": "n", "testTag": "keyboard_lower_5" },
+      { "code": 109, "label": "m", "testTag": "keyboard_lower_6" },
+      { "type": "enter_editing", "code": -5, "label": "⌫", "widthFactor": 1.35, "testTag": "keyboard_backspace" }
+    ],
+    [
+      { "type": "system_gui", "code": -202, "label": "?123", "widthFactor": 1.25, "testTag": "keyboard_symbols" },
+      { "code": 44, "label": ",", "widthFactor": 0.9, "testTag": "keyboard_comma" },
+      { "code": 32, "label": "Space", "widthFactor": 4.2, "testTag": "keyboard_space" },
+      { "code": 46, "label": ".", "widthFactor": 0.9, "popup": { "relevant": [{ "code": 44, "label": "," }, { "code": 59, "label": ";" }, { "code": 58, "label": ":" }, { "code": 33, "label": "!" }, { "code": 63, "label": "?" }, { "code": 64, "label": "@" }] }, "testTag": "keyboard_period" },
+      { "type": "enter_editing", "code": 10, "label": "↵", "widthFactor": 1.35, "testTag": "keyboard_enter" }
+    ]
+  ]
+}

@@ -80,10 +80,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.rememberCoroutineScope
+import com.tyejaedon.coverscreenos.datastore.KeyboardAnchor
+import com.tyejaedon.coverscreenos.datastore.LauncherSettings
+import com.tyejaedon.coverscreenos.keyboard.floris.ClamshellDockAnchor
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverEditorBridge
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverOverlayInputCallbacks
+import com.tyejaedon.coverscreenos.keyboard.floris.FlorisKeyboardCustomization
+import com.tyejaedon.coverscreenos.keyboard.floris.FlorisThemePalette
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9PredictionToggle
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9SuggestionStrip
@@ -2044,21 +2050,61 @@ fun CoverKeyboardOverlayRoot(
                 hint = sessionState.metadata.hintText
             )
 
+            val context = LocalContext.current
+            val settingsStore = remember(context) { LauncherSettingsStore(context.applicationContext) }
+            val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
+            val coroutineScope = rememberCoroutineScope()
+            val bridge = remember {
+                CoverEditorBridge(
+                    overlayCallbacks = CoverInputSessionManager.asOverlayInputCallbacks()
+                )
+            }
+            val dockAnchor = if (settings.keyboardOneHandedAnchor == KeyboardAnchor.Right) {
+                ClamshellDockAnchor.RIGHT
+            } else {
+                ClamshellDockAnchor.LEFT
+            }
+            val beforeCursor = sessionState.buffer.take(sessionState.cursorPosition)
+
             when (sessionState.keyboardMode) {
                 CoverKeyboardMode.NUMERIC_PIN -> {
-                    CoverNumericPinKeypad(
-                        onDigit = { digit ->
-                            CoverInputSessionManager.appendText(digit.toString())
-                        },
-                        onBackspace = {
-                            CoverInputSessionManager.deleteBackward()
-                        },
-                        onClear = {
-                            CoverInputSessionManager.clearBuffer()
-                        },
-                        onDone = {
+                    CoverFlorisKeyboardSurface(
+                        bridge = bridge,
+                        initialMode = CoverLayoutMode.NUMERIC,
+                        onDismissRequest = {
                             CoverInputSessionManager.commitAndFinish()
-                        }
+                        },
+                        textBeforeCursor = beforeCursor,
+                        customization = FlorisKeyboardCustomization(
+                            extraHeightDp = settings.keyboardExtraHeightDp,
+                            onExtraHeightChanged = { newDp ->
+                                coroutineScope.launch { settingsStore.setKeyboardExtraHeightDp(newDp) }
+                            },
+                            oneHandedEnabled = settings.keyboardOneHandedEnabled,
+                            onOneHandedToggle = {
+                                coroutineScope.launch {
+                                    settingsStore.setKeyboardOneHandedEnabled(!settings.keyboardOneHandedEnabled)
+                                }
+                            },
+                            dockAnchor = dockAnchor,
+                            onAnchorToggle = {
+                                val next = if (settings.keyboardOneHandedAnchor == KeyboardAnchor.Left) {
+                                    KeyboardAnchor.Right
+                                } else {
+                                    KeyboardAnchor.Left
+                                }
+                                coroutineScope.launch { settingsStore.setKeyboardOneHandedAnchor(next) }
+                            },
+                            suggestionStripVisible = false,
+                            suggestionsEnabled = false,
+                            autocorrectEnabled = false,
+                            popupKeyPreviewEnabled = false,
+                            imeOptions = sessionState.metadata.imeAction,
+                            showModeSwitchChip = false,
+                            includeClearKey = true,
+                            themePalette = FlorisThemePalette.AmoledCover
+                        ),
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
 
@@ -2078,7 +2124,7 @@ fun CoverKeyboardOverlayRoot(
                         )
                     }
                     CoverT9SuggestionStrip(
-                        textBeforeCursor = sessionState.buffer.take(sessionState.cursorPosition),
+                        textBeforeCursor = beforeCursor,
                         onCandidateCommitted = { candidate ->
                             CoverInputSessionManager.commitCandidate(candidate)
                             t9DigitTrace = ""
@@ -2097,55 +2143,94 @@ fun CoverKeyboardOverlayRoot(
                         sessionState.metadata.boundsInScreen,
                         t9CandidateCommitCount
                     ) {
-                        CoverT9MultiTapKeypad(
-                            isPredictive = sessionState.isT9Predictive,
-                            onPredictiveDigit = CoverInputSessionManager::tapPredictiveDigit,
-                            onDigitTraceChanged = { t9DigitTrace = it },
-                            onAppend = { char ->
-                                CoverInputSessionManager.appendText(char.toString())
-                            },
-                            onReplace = { char ->
-                                CoverInputSessionManager.replacePreviousChar(char)
-                            },
-                            onBackspace = {
-                                CoverInputSessionManager.deleteBackward()
-                            },
-                            onClear = {
-                                CoverInputSessionManager.clearBuffer()
-                            },
-                            onDone = {
+                        CoverFlorisKeyboardSurface(
+                            bridge = bridge,
+                            initialMode = CoverLayoutMode.T9_PREDICTIVE,
+                            onDismissRequest = {
+                                t9DigitTrace = ""
                                 CoverInputSessionManager.commitAndFinish()
-                            }
+                            },
+                            onModeChanged = { newMode ->
+                                if (newMode == CoverLayoutMode.QWERTY) {
+                                    t9DigitTrace = ""
+                                    CoverInputSessionManager.switchMode(CoverKeyboardMode.QWERTY)
+                                }
+                            },
+                            textBeforeCursor = beforeCursor,
+                            onT9PredictiveDigit = CoverInputSessionManager::tapPredictiveDigit,
+                            onT9TraceUpdated = { _, multiTapTrace ->
+                                t9DigitTrace = multiTapTrace
+                            },
+                            t9Engine = CoverKeyboardNlpManager.t9Engine,
+                            customization = FlorisKeyboardCustomization(
+                                extraHeightDp = settings.keyboardExtraHeightDp,
+                                onExtraHeightChanged = { newDp ->
+                                    coroutineScope.launch { settingsStore.setKeyboardExtraHeightDp(newDp) }
+                                },
+                                oneHandedEnabled = settings.keyboardOneHandedEnabled,
+                                onOneHandedToggle = {
+                                    coroutineScope.launch {
+                                        settingsStore.setKeyboardOneHandedEnabled(!settings.keyboardOneHandedEnabled)
+                                    }
+                                },
+                                dockAnchor = dockAnchor,
+                                onAnchorToggle = {
+                                    val next = if (settings.keyboardOneHandedAnchor == KeyboardAnchor.Left) {
+                                        KeyboardAnchor.Right
+                                    } else {
+                                        KeyboardAnchor.Left
+                                    }
+                                    coroutineScope.launch { settingsStore.setKeyboardOneHandedAnchor(next) }
+                                },
+                                suggestionStripVisible = false,
+                                suggestionsEnabled = suggestionsEnabled,
+                                autocorrectEnabled = false,
+                                popupKeyPreviewEnabled = settings.popupKeyPreviewEnabled && !sessionState.metadata.isPassword,
+                                imeOptions = sessionState.metadata.imeAction,
+                                includeClearKey = true,
+                                isT9Predictive = sessionState.isT9Predictive,
+                                onT9PredictiveToggle = if (suggestionsEnabled) {
+                                    {
+                                        val next = !sessionState.isT9Predictive
+                                        CoverInputSessionManager.setT9Predictive(next)
+                                        t9DigitTrace = ""
+                                        t9CandidateCommitCount++
+                                    }
+                                } else null,
+                                themePalette = FlorisThemePalette.AmoledCover
+                            ),
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
 
                 CoverKeyboardMode.QWERTY -> {
                     val clipboardHistory by CoverInputSessionManager.clipboardHistory.collectAsState()
-                    val clipboardManager = LocalContext.current
-                        .getSystemService(ClipboardManager::class.java)
+                    val clipboardManager = context.getSystemService(ClipboardManager::class.java)
                     var canPasteFromClipboard by remember { mutableStateOf(false) }
                     LaunchedEffect(sessionState.isActive) {
                         canPasteFromClipboard = clipboardManager?.hasPrimaryClip() == true
                     }
 
-                    val bridge = remember {
-                        CoverEditorBridge(
-                            overlayCallbacks = CoverInputSessionManager.asOverlayInputCallbacks()
-                        )
-                    }
+                    val suggestionsAllowed = !sessionState.metadata.isPassword &&
+                        !sessionState.metadata.isNumeric &&
+                        !sessionState.metadata.isPhoneNumber
+                    val currentWord = beforeCursor.takeLastWhile { it.isLetterOrDigit() }
 
                     var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
-                    LaunchedEffect(sessionState.buffer, sessionState.cursorPosition) {
-                        if (!sessionState.metadata.isPassword &&
-                            !sessionState.metadata.isNumeric &&
-                            !sessionState.metadata.isPhoneNumber
-                        ) {
-                            val before = sessionState.buffer.take(sessionState.cursorPosition)
-                            val word = before.takeLastWhile { it.isLetterOrDigit() }
-                            candidates = if (word.isNotBlank()) {
-                                CoverKeyboardNlpManager.getQwertySuggestions(word)
-                            } else emptyList()
+                    var nlpRevision by remember { mutableIntStateOf(0) }
+                    LaunchedEffect(sessionState.buffer, sessionState.cursorPosition, nlpRevision) {
+                        if (suggestionsAllowed) {
+                            candidates = when {
+                                currentWord.isNotBlank() -> CoverKeyboardNlpManager.getQwertySuggestions(currentWord)
+                                beforeCursor.isNotBlank() -> {
+                                    val prev = beforeCursor.trimEnd().takeLastWhile { it.isLetter() }
+                                    if (prev.isNotEmpty()) {
+                                        CoverKeyboardNlpManager.getNextWordSuggestions(prev)
+                                    } else emptyList()
+                                }
+                                else -> emptyList()
+                            }
                         } else {
                             candidates = emptyList()
                         }
@@ -2161,34 +2246,77 @@ fun CoverKeyboardOverlayRoot(
                         onDismissRequest = {
                             CoverInputSessionManager.commitAndFinish()
                         },
-                        headerExtraContent = if (sessionState.metadata.isPassword) null else {
-                            {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    ClipboardActionIcons(
-                                        onCopy = { CoverInputSessionManager.copySelection() },
-                                        onCut = { CoverInputSessionManager.cutSelection() },
-                                        onPaste = {
-                                            if (CoverInputSessionManager.pasteText()) {
-                                                canPasteFromClipboard = true
-                                            }
-                                        },
-                                        canPaste = canPasteFromClipboard,
-                                        modifier = Modifier.testTag("clipboard_toolbar")
-                                    )
-                                    if (clipboardHistory.isNotEmpty()) {
-                                        ClipboardHistoryRow(
-                                            history = clipboardHistory,
-                                            onHistorySnippetSelected = { snippet ->
-                                                CoverInputSessionManager.pasteText(snippet)
-                                            }
-                                        )
-                                    }
-                                }
+                        onModeChanged = { newMode ->
+                            if (newMode == CoverLayoutMode.T9_PREDICTIVE) {
+                                CoverInputSessionManager.switchMode(CoverKeyboardMode.T9_MULTITAP)
                             }
                         },
+                        headerExtraContent = if (sessionState.metadata.isPassword) null else {
+                            {
+                                ClipboardActionIcons(
+                                    onCopy = { CoverInputSessionManager.copySelection() },
+                                    onCut = { CoverInputSessionManager.cutSelection() },
+                                    onPaste = {
+                                        if (CoverInputSessionManager.pasteText()) {
+                                            canPasteFromClipboard = true
+                                        }
+                                    },
+                                    canPaste = canPasteFromClipboard,
+                                    modifier = Modifier.testTag("clipboard_toolbar")
+                                )
+                            }
+                        },
+                        clipboardHistoryContent = if (!sessionState.metadata.isPassword && clipboardHistory.isNotEmpty()) {
+                            {
+                                ClipboardHistoryRow(
+                                    history = clipboardHistory,
+                                    onHistorySnippetSelected = { snippet ->
+                                        CoverInputSessionManager.pasteText(snippet)
+                                    }
+                                )
+                            }
+                        } else null,
+                        customization = FlorisKeyboardCustomization(
+                            extraHeightDp = settings.keyboardExtraHeightDp,
+                            onExtraHeightChanged = { newDp ->
+                                coroutineScope.launch { settingsStore.setKeyboardExtraHeightDp(newDp) }
+                            },
+                            oneHandedEnabled = settings.keyboardOneHandedEnabled,
+                            onOneHandedToggle = {
+                                coroutineScope.launch {
+                                    settingsStore.setKeyboardOneHandedEnabled(!settings.keyboardOneHandedEnabled)
+                                }
+                            },
+                            dockAnchor = dockAnchor,
+                            onAnchorToggle = {
+                                val next = if (settings.keyboardOneHandedAnchor == KeyboardAnchor.Left) {
+                                    KeyboardAnchor.Right
+                                } else {
+                                    KeyboardAnchor.Left
+                                }
+                                coroutineScope.launch { settingsStore.setKeyboardOneHandedAnchor(next) }
+                            },
+                            suggestionStripVisible = settings.suggestionStripVisible,
+                            suggestionsEnabled = suggestionsAllowed,
+                            autocorrectEnabled = settings.autocorrectEnabled,
+                            popupKeyPreviewEnabled = settings.popupKeyPreviewEnabled && !sessionState.metadata.isPassword,
+                            imeOptions = sessionState.metadata.imeAction,
+                            includeClearKey = true,
+                            themePalette = FlorisThemePalette.AmoledCover
+                        ),
+                        textBeforeCursor = beforeCursor,
+                        selectedCandidateIndex = if (currentWord.isNotEmpty()) 0 else -1,
+                        onLearnCandidate = { _, word ->
+                            CoverKeyboardNlpManager.learnWord(word, context)
+                            nlpRevision++
+                        },
+                        onSuppressCandidate = { _, word ->
+                            CoverKeyboardNlpManager.suppressWord(word, context)
+                            nlpRevision++
+                        },
+                        onAutocorrectWord = CoverKeyboardNlpManager::autocorrectWord,
+                        t9Engine = CoverKeyboardNlpManager.t9Engine,
+                        glideDecoder = CoverKeyboardNlpManager.glideDecoder,
                         modifier = Modifier
                     )
                 }
@@ -2242,11 +2370,11 @@ private fun CoverInputHeader(
                 selected = activeMode == CoverKeyboardMode.NUMERIC_PIN,
                 onClick = { onModeSelected(CoverKeyboardMode.NUMERIC_PIN) }
             )
-          /*  ModeChip(
+            ModeChip(
                 label = "T9",
                 selected = activeMode == CoverKeyboardMode.T9_MULTITAP,
                 onClick = { onModeSelected(CoverKeyboardMode.T9_MULTITAP) }
-            ) */
+            )
             ModeChip(
                 label = "ABC",
                 selected = activeMode == CoverKeyboardMode.QWERTY,
@@ -2346,379 +2474,3 @@ private fun CoverLiveBufferDisplay(
     }
 }
 
-@Composable
-private fun CoverNumericPinKeypad(
-    onDigit: (Char) -> Unit,
-    onBackspace: () -> Unit,
-    onClear: () -> Unit,
-    onDone: () -> Unit
-) {
-    val rows = listOf(
-        listOf('1', '2', '3'),
-        listOf('4', '5', '6'),
-        listOf('7', '8', '9')
-    )
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        rows.forEach { row ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                row.forEach { digit ->
-                    KeypadButton(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp),
-                        onClick = { onDigit(digit) }
-                    ) {
-                        Text(
-                            text = digit.toString(),
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            KeypadButton(
-                modifier = Modifier
-                    .weight(0.85f)
-                    .height(44.dp),
-                backgroundColor = Color(0xFF2A2A30),
-                onClick = onClear,
-                hapticTier = HapticTier.Strong
-            ) {
-                Text(
-                    text = "CLR",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFFF7043)
-                )
-            }
-
-            KeypadButton(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(44.dp),
-                onClick = { onDigit('0') }
-            ) {
-                Text(
-                    text = "0",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-            }
-
-            KeypadButton(
-                modifier = Modifier
-                    .weight(0.85f)
-                    .height(44.dp),
-                backgroundColor = Color(0xFF2A2A30),
-                onClick = onBackspace,
-                repeating = true,
-                hapticTier = HapticTier.Standard
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Backspace,
-                    contentDescription = "Backspace",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-
-            KeypadButton(
-                modifier = Modifier
-                    .weight(1.1f)
-                    .height(44.dp),
-                backgroundColor = Color(0xFF10B981),
-                onClick = onDone,
-                hapticTier = HapticTier.Strong
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "Submit",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = "DONE",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
-                    )
-                }
-            }
-        }
-    }
-}
-
-private data class T9KeyInfo(val digit: Char, val letters: String)
-
-private val T9_KEYS = listOf(
-    listOf(T9KeyInfo('1', ".,!"), T9KeyInfo('2', "ABC"), T9KeyInfo('3', "DEF")),
-    listOf(T9KeyInfo('4', "GHI"), T9KeyInfo('5', "JKL"), T9KeyInfo('6', "MNO")),
-    listOf(T9KeyInfo('7', "PQRS"), T9KeyInfo('8', "TUV"), T9KeyInfo('9', "WXYZ"))
-)
-
-@Composable
-private fun CoverT9MultiTapKeypad(
-    isPredictive: Boolean,
-    onPredictiveDigit: (Char) -> Unit,
-    onDigitTraceChanged: (String) -> Unit,
-    onAppend: (Char) -> Unit,
-    onReplace: (Char) -> Unit,
-    onBackspace: () -> Unit,
-    onClear: () -> Unit,
-    onDone: () -> Unit
-) {
-    var lastTapDigit by remember { mutableStateOf<Char?>(null) }
-    var lastTapTime by remember { mutableLongStateOf(0L) }
-    var cycleIndex by remember { mutableStateOf(0) }
-    var digitTrace by remember { mutableStateOf("") }
-
-    val handleKeyTap: (T9KeyInfo) -> Unit = { key ->
-        if (isPredictive && key.digit in '2'..'9') {
-            onPredictiveDigit(key.digit)
-        } else {
-            val now = SystemClock.elapsedRealtime()
-            val letters = key.letters.lowercase()
-
-            if (lastTapDigit == key.digit && (now - lastTapTime) < MULTI_TAP_CYCLE_TIMEOUT_MS &&
-                letters.isNotEmpty()
-            ) {
-                val nextIndex = (cycleIndex + 1) % letters.length
-                cycleIndex = nextIndex
-                lastTapTime = now
-                digitTrace = if (key.digit == '1') "" else digitTrace + key.digit
-                onDigitTraceChanged(digitTrace)
-                onReplace(letters[nextIndex])
-            } else {
-                lastTapDigit = key.digit
-                lastTapTime = now
-                cycleIndex = 0
-                digitTrace = when {
-                    key.digit == '1' -> ""
-                    digitTrace.isEmpty() -> key.digit.toString()
-                    else -> "$digitTrace-${key.digit}"
-                }
-                onDigitTraceChanged(digitTrace)
-                val initialChar = if (letters.isNotEmpty()) letters.first() else key.digit
-                onAppend(initialChar)
-            }
-        }
-    }
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        T9_KEYS.forEach { row ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                row.forEach { keyInfo ->
-                    KeypadButton(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp),
-                        onClick = { handleKeyTap(keyInfo) }
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = keyInfo.digit.toString(),
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            if (keyInfo.letters.isNotEmpty()) {
-                                Text(
-                                    text = keyInfo.letters,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color(0xFFA0A0A8)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            KeypadButton(
-                modifier = Modifier
-                    .weight(0.75f)
-                    .height(42.dp),
-                backgroundColor = Color(0xFF2A2A30),
-                onClick = {
-                    digitTrace = ""
-                    onDigitTraceChanged("")
-                    lastTapDigit = null
-                    onClear()
-                },
-                hapticTier = HapticTier.Strong
-            ) {
-                Text("CLR", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF7043))
-            }
-
-            KeypadButton(
-                modifier = Modifier
-                    .weight(1.3f)
-                    .height(42.dp),
-                backgroundColor = Color(0xFF24242A),
-                onClick = {
-                    lastTapDigit = null
-                    digitTrace = ""
-                    onDigitTraceChanged("")
-                    onAppend(' ')
-                },
-                hapticTier = HapticTier.Standard
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SpaceBar,
-                        contentDescription = "Space",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text("SPACE", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                }
-            }
-
-            KeypadButton(
-                modifier = Modifier
-                    .weight(0.85f)
-                    .height(42.dp),
-                backgroundColor = Color(0xFF2A2A30),
-                onClick = {
-                    lastTapDigit = null
-                    digitTrace = digitTrace.substringBeforeLast('-', missingDelimiterValue = "")
-                    onDigitTraceChanged(digitTrace)
-                    onBackspace()
-                },
-                repeating = true,
-                hapticTier = HapticTier.Standard
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Backspace,
-                    contentDescription = "Backspace",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-
-            KeypadButton(
-                modifier = Modifier
-                    .weight(1.1f)
-                    .height(42.dp),
-                backgroundColor = Color(0xFF10B981),
-                onClick = {
-                    digitTrace = ""
-                    onDigitTraceChanged("")
-                    onDone()
-                },
-                hapticTier = HapticTier.Strong
-            ) {
-                Text("ENTER", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-            }
-        }
-    }
-}
-
-
-@Composable
-private fun KeypadButton(
-    modifier: Modifier = Modifier,
-    backgroundColor: Color = Color(0xFF1F1F24),
-    onClick: () -> Unit,
-    repeating: Boolean = false,
-    repeatInitialDelayMillis: Long = 400L,
-    repeatIntervalMillis: Long = 55L,
-    hapticTier: HapticTier = HapticTier.Light,
-    content: @Composable () -> Unit
-) {
-    val callback = androidx.compose.runtime.rememberUpdatedState(onClick)
-    val performHaptic = rememberHapticPerformer(hapticTier)
-    var isPressed by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        if (isPressed) 0.92f else 1f,
-        animationSpec = tween(60),
-        label = "KeypadPressScale"
-    )
-    val pressedBackground by animateColorAsState(
-        if (isPressed) lerp(backgroundColor, Color.White, 0.08f) else backgroundColor,
-        animationSpec = tween(60),
-        label = "KeypadPressColor"
-    )
-
-    androidx.compose.runtime.LaunchedEffect(isPressed, repeating, repeatInitialDelayMillis, repeatIntervalMillis) {
-        if (isPressed && repeating) {
-            kotlinx.coroutines.delay(repeatInitialDelayMillis)
-            while (isPressed) {
-                performHaptic()
-                callback.value.invoke()
-                kotlinx.coroutines.delay(repeatIntervalMillis)
-            }
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .scale(scale)
-            .clip(RoundedCornerShape(6.dp))
-            .background(pressedBackground)
-            .semantics(mergeDescendants = true) {
-                role = Role.Button
-                onClick {
-                    performHaptic()
-                    callback.value.invoke()
-                    true
-                }
-            }
-            .pointerInput(repeating, repeatInitialDelayMillis, repeatIntervalMillis) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    isPressed = true
-                    performHaptic()
-                    callback.value.invoke()
-                    try {
-                        var pressed = true
-                        while (pressed) {
-                            val event = awaitPointerEvent()
-                            pressed = event.changes.any { change -> change.id == down.id && change.pressed }
-                        }
-                    } finally {
-                        isPressed = false
-                    }
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        content()
-    }
-}

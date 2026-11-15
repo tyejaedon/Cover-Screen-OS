@@ -64,10 +64,18 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverEditorBridge
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
+import com.tyejaedon.coverscreenos.datastore.KeyboardAnchor
+import com.tyejaedon.coverscreenos.datastore.LauncherSettings
+import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
+import com.tyejaedon.coverscreenos.keyboard.floris.ClamshellDockAnchor
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
+import com.tyejaedon.coverscreenos.keyboard.floris.FlorisKeyboardCustomization
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
+import kotlinx.coroutines.launch
 
 class CoverT9InputMethodService : InputMethodService() {
 
@@ -75,6 +83,7 @@ class CoverT9InputMethodService : InputMethodService() {
     private var fieldProfile = EditorFieldProfile(isNumeric = false, isSensitive = false)
     private var activeEditorInfo: EditorInfo? = null
     private var uiState by mutableStateOf(CoverImeUiState())
+    private var activeBridge: CoverEditorBridge? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -90,28 +99,52 @@ class CoverT9InputMethodService : InputMethodService() {
             setViewTreeViewModelStoreOwner(composeOwner)
             setContent {
                 CoverOSTheme {
+                    val settingsStore = remember { LauncherSettingsStore(applicationContext) }
+                    val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
+                    val coroutineScope = rememberCoroutineScope()
+
                     val bridge = remember {
                         CoverEditorBridge(
                             inputConnectionProvider = { currentInputConnection },
                             editorActionHandler = ::handleEnterPressed
-                        )
+                        ).also { activeBridge = it }
                     }
+                    val mutationRevision by bridge.mutationRevision.collectAsState()
 
                     var activeLayoutMode by remember(uiState.layout) {
                         mutableStateOf(uiState.layout.toCoverLayoutMode())
                     }
                     var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
+                    var textBeforeCursor by remember { mutableStateOf("") }
 
                     LaunchedEffect(uiState.layout) {
                         activeLayoutMode = uiState.layout.toCoverLayoutMode()
                     }
 
-                    LaunchedEffect(uiState.layout, activeLayoutMode) {
-                        val surrounding = bridge.getSurroundingText(30, 0)
-                        val word = surrounding.textBefore.takeLastWhile { it.isLetterOrDigit() }
-                        candidates = if (word.isNotBlank()) {
-                            CoverKeyboardNlpManager.getCandidates(activeLayoutMode, word)
-                        } else emptyList()
+                    LaunchedEffect(uiState.layout, activeLayoutMode, mutationRevision, uiState.isSensitive) {
+                        val surrounding = bridge.getSurroundingText(50, 0)
+                        textBeforeCursor = surrounding.textBefore
+                        if (uiState.isSensitive || uiState.isNumeric) {
+                            candidates = emptyList()
+                        } else {
+                            val word = surrounding.textBefore.takeLastWhile { it.isLetterOrDigit() }
+                            candidates = when {
+                                word.isNotBlank() -> CoverKeyboardNlpManager.getCandidates(activeLayoutMode, word)
+                                surrounding.textBefore.isNotBlank() -> {
+                                    val prev = surrounding.textBefore.trimEnd().takeLastWhile { it.isLetter() }
+                                    if (prev.isNotEmpty()) {
+                                        CoverKeyboardNlpManager.getNextWordSuggestions(prev)
+                                    } else emptyList()
+                                }
+                                else -> emptyList()
+                            }
+                        }
+                    }
+
+                    val dockAnchor = if (settings.keyboardOneHandedAnchor == KeyboardAnchor.Right) {
+                        ClamshellDockAnchor.RIGHT
+                    } else {
+                        ClamshellDockAnchor.LEFT
                     }
 
                     CoverFlorisKeyboardSurface(
@@ -119,18 +152,68 @@ class CoverT9InputMethodService : InputMethodService() {
                         initialMode = activeLayoutMode,
                         candidates = candidates,
                         onCandidateSelected = { candidate ->
-                            bridge.commitCandidate(candidate)
-                            candidates = emptyList()
+                            bridge.commitCandidate(candidate, trailingSpace = true)
                         },
                         onDismissRequest = { requestHideSelf(0) },
                         onModeChanged = { newMode ->
                             activeLayoutMode = newMode
                             uiState = uiState.copy(layout = newMode.toCoverImeLayout())
-                        }
+                        },
+                        customization = FlorisKeyboardCustomization(
+                            extraHeightDp = settings.keyboardExtraHeightDp,
+                            onExtraHeightChanged = { newDp ->
+                                coroutineScope.launch { settingsStore.setKeyboardExtraHeightDp(newDp) }
+                            },
+                            oneHandedEnabled = settings.keyboardOneHandedEnabled,
+                            onOneHandedToggle = {
+                                coroutineScope.launch {
+                                    settingsStore.setKeyboardOneHandedEnabled(!settings.keyboardOneHandedEnabled)
+                                }
+                            },
+                            dockAnchor = dockAnchor,
+                            onAnchorToggle = {
+                                val next = if (settings.keyboardOneHandedAnchor == KeyboardAnchor.Left) {
+                                    KeyboardAnchor.Right
+                                } else {
+                                    KeyboardAnchor.Left
+                                }
+                                coroutineScope.launch { settingsStore.setKeyboardOneHandedAnchor(next) }
+                            },
+                            suggestionStripVisible = settings.suggestionStripVisible,
+                            suggestionsEnabled = !uiState.isSensitive && !uiState.isNumeric,
+                            autocorrectEnabled = settings.autocorrectEnabled,
+                            popupKeyPreviewEnabled = settings.popupKeyPreviewEnabled && !uiState.isSensitive,
+                            imeOptions = activeEditorInfo?.imeOptions ?: EditorInfo.IME_ACTION_DONE
+                        ),
+                        textBeforeCursor = textBeforeCursor,
+                        selectedCandidateIndex = if (textBeforeCursor.takeLastWhile { it.isLetter() }.isNotEmpty()) 0 else -1,
+                        onLearnCandidate = { _, word ->
+                            CoverKeyboardNlpManager.learnWord(word, applicationContext)
+                            bridge.notifyExternalMutation()
+                        },
+                        onSuppressCandidate = { _, word ->
+                            CoverKeyboardNlpManager.suppressWord(word, applicationContext)
+                            bridge.notifyExternalMutation()
+                        },
+                        onAutocorrectWord = CoverKeyboardNlpManager::autocorrectWord,
+                        t9Engine = CoverKeyboardNlpManager.t9Engine,
+                        glideDecoder = CoverKeyboardNlpManager.glideDecoder
                     )
                 }
             }
         }
+
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        activeBridge?.notifyExternalMutation()
+    }
 
     // Cover displays have limited vertical space; never switch into extract/fullscreen mode.
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -254,7 +337,7 @@ internal fun CoverLayoutMode.toCoverImeLayout(): CoverImeLayout = when (this) {
     CoverLayoutMode.QWERTY -> CoverImeLayout.QWERTY
     CoverLayoutMode.T9_PREDICTIVE -> CoverImeLayout.T9
     CoverLayoutMode.NUMERIC -> CoverImeLayout.NUMBER
-    CoverLayoutMode.SYMBOLS -> CoverImeLayout.SYMBOLS
+    CoverLayoutMode.SYMBOLS, CoverLayoutMode.SYMBOLS_SECONDARY -> CoverImeLayout.SYMBOLS
 }
 
 internal object CoverImePreferences {

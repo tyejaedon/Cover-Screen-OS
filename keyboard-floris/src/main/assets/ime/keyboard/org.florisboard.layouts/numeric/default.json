@@ -1,0 +1,28 @@
+{
+  "type": "numeric",
+  "name": "default",
+  "direction": "ltr",
+  "arrangement": [
+    [
+      { "type": "numeric", "code": 49, "label": "1" },
+      { "type": "numeric", "code": 50, "label": "2" },
+      { "type": "numeric", "code": 51, "label": "3" }
+    ],
+    [
+      { "type": "numeric", "code": 52, "label": "4" },
+      { "type": "numeric", "code": 53, "label": "5" },
+      { "type": "numeric", "code": 54, "label": "6" }
+    ],
+    [
+      { "type": "numeric", "code": 55, "label": "7" },
+      { "type": "numeric", "code": 56, "label": "8" },
+      { "type": "numeric", "code": 57, "label": "9" }
+    ],
+    [
+      { "type": "function", "code": -207, "label": "CLR", "widthFactor": 0.85, "testTag": "keyboard_clear" },
+      { "type": "numeric", "code": 48, "label": "0", "widthFactor": 1.0 },
+      { "type": "enter_editing", "code": -5, "label": "⌫", "widthFactor": 0.85, "testTag": "keyboard_backspace" },
+      { "type": "enter_editing", "code": 10, "label": "DONE", "widthFactor": 1.1, "testTag": "keyboard_enter" }
+    ]
+  ]
+}

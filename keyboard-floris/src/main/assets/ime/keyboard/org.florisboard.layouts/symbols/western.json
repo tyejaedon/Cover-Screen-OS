@@ -1,0 +1,49 @@
+{
+  "type": "symbols",
+  "name": "western",
+  "direction": "ltr",
+  "arrangement": [
+    [
+      { "code": 49, "label": "1", "testTag": "keyboard_top_0" },
+      { "code": 50, "label": "2", "testTag": "keyboard_top_1" },
+      { "code": 51, "label": "3", "testTag": "keyboard_top_2" },
+      { "code": 52, "label": "4", "testTag": "keyboard_top_3" },
+      { "code": 53, "label": "5", "testTag": "keyboard_top_4" },
+      { "code": 54, "label": "6", "testTag": "keyboard_top_5" },
+      { "code": 55, "label": "7", "testTag": "keyboard_top_6" },
+      { "code": 56, "label": "8", "testTag": "keyboard_top_7" },
+      { "code": 57, "label": "9", "testTag": "keyboard_top_8" },
+      { "code": 48, "label": "0", "testTag": "keyboard_top_9" }
+    ],
+    [
+      { "code": 64, "label": "@", "testTag": "keyboard_middle_0" },
+      { "code": 35, "label": "#", "testTag": "keyboard_middle_1" },
+      { "code": 36, "label": "$", "testTag": "keyboard_middle_2" },
+      { "code": 37, "label": "%", "testTag": "keyboard_middle_3" },
+      { "code": 38, "label": "&", "testTag": "keyboard_middle_4" },
+      { "code": 45, "label": "-", "testTag": "keyboard_middle_5" },
+      { "code": 43, "label": "+", "testTag": "keyboard_middle_6" },
+      { "code": 40, "label": "(", "testTag": "keyboard_middle_7" },
+      { "code": 41, "label": ")", "testTag": "keyboard_middle_8" },
+      { "code": 42, "label": "*", "testTag": "keyboard_middle_9" }
+    ],
+    [
+      { "type": "system_gui", "code": -203, "label": "=/<", "widthFactor": 1.2, "testTag": "keyboard_symbols_secondary" },
+      { "code": 33, "label": "!", "testTag": "keyboard_symbol_0" },
+      { "code": 34, "label": "\"", "testTag": "keyboard_symbol_1" },
+      { "code": 39, "label": "'", "testTag": "keyboard_symbol_2" },
+      { "code": 58, "label": ":", "testTag": "keyboard_symbol_3" },
+      { "code": 59, "label": ";", "testTag": "keyboard_symbol_4" },
+      { "code": 47, "label": "/", "testTag": "keyboard_symbol_5" },
+      { "code": 63, "label": "?", "testTag": "keyboard_symbol_6" },
+      { "type": "enter_editing", "code": -5, "label": "⌫", "widthFactor": 1.2, "testTag": "keyboard_backspace" }
+    ],
+    [
+      { "type": "system_gui", "code": -201, "label": "ABC", "widthFactor": 1.4, "testTag": "keyboard_symbols" },
+      { "code": 44, "label": ",", "widthFactor": 1.0, "testTag": "keyboard_comma" },
+      { "code": 32, "label": "Space", "widthFactor": 4.0, "testTag": "keyboard_space" },
+      { "code": 46, "label": ".", "widthFactor": 1.0, "testTag": "keyboard_period" },
+      { "type": "enter_editing", "code": 10, "label": "↵", "widthFactor": 1.4, "testTag": "keyboard_enter" }
+    ]
+  ]
+}
