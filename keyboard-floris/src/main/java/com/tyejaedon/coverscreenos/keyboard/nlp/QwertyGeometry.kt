@@ -109,11 +109,14 @@ object QwertyGeometry {
                     0.5f + min(1.5f, dist * 0.25f)
                 }
 
+                val deletionCost = if (i > 1 && a[i - 1] == a[i - 2]) 0.6f else 1.0f
+                val insertionCost = if (j > 1 && b[j - 1] == b[j - 2]) 0.6f else 1.0f
+
                 // Standard operations: deletion, insertion, substitution
                 var minCost = min(
-                    dp[i - 1][j] + 1.0f, // deletion
+                    dp[i - 1][j] + deletionCost, // deletion
                     min(
-                        dp[i][j - 1] + 1.0f, // insertion
+                        dp[i][j - 1] + insertionCost, // insertion
                         dp[i - 1][j - 1] + substitutionCost // substitution
                     )
                 )

@@ -1,0 +1,27 @@
+{
+  "type": "t9",
+  "name": "default",
+  "direction": "ltr",
+  "arrangement": [
+    [
+      { "code": 49, "label": "1", "t9Chars": "1", "popup": { "main": { "code": 46, "label": "@.-" } } },
+      { "code": 50, "label": "2", "t9Chars": "abc", "popup": { "main": { "code": 50, "label": "ABC" } } },
+      { "code": 51, "label": "3", "t9Chars": "def", "popup": { "main": { "code": 51, "label": "DEF" } } }
+    ],
+    [
+      { "code": 52, "label": "4", "t9Chars": "ghi", "popup": { "main": { "code": 52, "label": "GHI" } } },
+      { "code": 53, "label": "5", "t9Chars": "jkl", "popup": { "main": { "code": 53, "label": "JKL" } } },
+      { "code": 54, "label": "6", "t9Chars": "mno", "popup": { "main": { "code": 54, "label": "MNO" } } }
+    ],
+    [
+      { "code": 55, "label": "7", "t9Chars": "pqrs", "popup": { "main": { "code": 55, "label": "PQRS" } } },
+      { "code": 56, "label": "8", "t9Chars": "tuv", "popup": { "main": { "code": 56, "label": "TUV" } } },
+      { "code": 57, "label": "9", "t9Chars": "wxyz", "popup": { "main": { "code": 57, "label": "WXYZ" } } }
+    ],
+    [
+      { "type": "system_gui", "code": -201, "label": "ABC" },
+      { "code": 32, "label": "0", "t9Chars": " ", "popup": { "main": { "code": 32, "label": "␣" } } },
+      { "type": "enter_editing", "code": -5, "label": "⌫" }
+    ]
+  ]
+}
