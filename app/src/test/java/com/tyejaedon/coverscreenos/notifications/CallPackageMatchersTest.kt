@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services
+package com.tyejaedon.coverscreenos.notifications
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

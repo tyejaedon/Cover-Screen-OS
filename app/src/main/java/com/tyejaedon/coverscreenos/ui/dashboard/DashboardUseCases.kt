@@ -17,8 +17,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.collectAsState
 import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
-import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
-import com.tyejaedon.coverscreenos.services.overlay.RuntimeSnapshot
+import com.tyejaedon.coverscreenos.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.overlay.RuntimeSnapshot
 
 data class DashboardPermissions(
     val notifications: Boolean,

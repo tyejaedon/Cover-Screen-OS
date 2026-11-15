@@ -13,8 +13,8 @@ import android.view.inputmethod.InputMethodManager
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
-import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
-import com.tyejaedon.coverscreenos.services.overlay.CoverAccessibilityService
+import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
+import com.tyejaedon.coverscreenos.overlay.CoverAccessibilityService
 
 object AppPermissionHelper {
 

@@ -3,7 +3,7 @@ package com.tyejaedon.coverscreenos.helpers
 import android.content.Context
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.overlay.ForegroundService
 
 object ForegroundServiceHelper {
 

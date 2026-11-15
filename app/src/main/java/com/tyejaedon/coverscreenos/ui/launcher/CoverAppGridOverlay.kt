@@ -111,7 +111,7 @@ import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
-import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
+import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.AppGridPageTile
 import com.tyejaedon.coverscreenos.ui.CompactNowPlayingCard
 import com.tyejaedon.coverscreenos.ui.OneUiDockRow
@@ -960,26 +960,12 @@ private fun InteractiveSection(
                         },
                         onOpenImePicker = { showSystemImePicker() },
                         isCoverKeyboardVisible = isCoverKeyboardVisible,
-                        onCharTyped = { char ->
-                            onSearchQueryChanged((searchQuery + char).take(SEARCH_QUERY_MAX_LENGTH))
-                            voiceHintMessage = null
-                        },
-                        onBackspacePressed = {
-                            if (searchQuery.isNotEmpty()) {
-                                onSearchQueryChanged(searchQuery.dropLast(1))
-                            }
-                            voiceHintMessage = null
-                        },
                         onDonePressed = {
                             focusManager.clearFocus(force = true)
                             keyboardController?.hide()
                             onCoverKeyboardVisibilityChanged(false)
                         },
                         modifier = Modifier.fillMaxSize(),
-                        onClearPressed = {
-                            onSearchQueryChanged("")
-
-                        },
                         hazeState = hazeState
 
                     )

@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services.overlay
+package com.tyejaedon.coverscreenos.overlay
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -25,8 +25,8 @@ import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
 import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
-import com.tyejaedon.coverscreenos.services.CallPackageMatchers
-import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
+import com.tyejaedon.coverscreenos.notifications.CallPackageMatchers
+import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
 import com.tyejaedon.coverscreenos.ui.controllers.UnlockBridgeActivity
 import kotlinx.coroutines.CoroutineScope

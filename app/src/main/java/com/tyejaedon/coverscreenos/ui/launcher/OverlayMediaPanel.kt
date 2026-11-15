@@ -62,7 +62,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.models.CoverMediaModel
-import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
+import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
 import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUITokens
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiElevatedPanel

@@ -5,7 +5,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.provider.Settings
 import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
-import com.tyejaedon.coverscreenos.services.overlay.CoverAccessibilityService
+import com.tyejaedon.coverscreenos.overlay.CoverAccessibilityService
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test

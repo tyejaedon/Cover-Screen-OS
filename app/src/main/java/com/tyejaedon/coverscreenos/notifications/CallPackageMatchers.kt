@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services
+package com.tyejaedon.coverscreenos.notifications
 
 internal object CallPackageMatchers {
     private val INCOMING_CALL_EXACT_PACKAGES = setOf(

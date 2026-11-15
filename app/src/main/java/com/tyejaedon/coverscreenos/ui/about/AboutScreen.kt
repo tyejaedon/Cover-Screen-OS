@@ -36,7 +36,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.BuildConfig
 import com.tyejaedon.coverscreenos.R
-import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.overlay.ForegroundService
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme
 import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUICardGroup

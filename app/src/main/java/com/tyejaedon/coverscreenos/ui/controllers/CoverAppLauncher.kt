@@ -11,8 +11,8 @@ import android.util.Log
 import android.view.Display
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
-import com.tyejaedon.coverscreenos.services.overlay.CoverAccessibilityService
-import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.overlay.CoverAccessibilityService
+import com.tyejaedon.coverscreenos.overlay.ForegroundService
 
 object CoverAppLauncher {
 

@@ -1,6 +1,6 @@
 package com.tyejaedon.coverscreenos.ui.dashboard
 
-import com.tyejaedon.coverscreenos.services.overlay.RuntimeSnapshot
+import com.tyejaedon.coverscreenos.overlay.RuntimeSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

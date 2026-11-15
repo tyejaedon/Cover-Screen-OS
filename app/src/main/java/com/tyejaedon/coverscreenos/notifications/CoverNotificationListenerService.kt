@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services.notifications
+package com.tyejaedon.coverscreenos.notifications
 
 import android.app.PendingIntent
 import android.app.ActivityOptions
@@ -23,8 +23,8 @@ import androidx.annotation.RequiresApi
 import com.tyejaedon.coverscreenos.models.CoverMediaModel
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.receivers.LockStatusReceiver
-import com.tyejaedon.coverscreenos.services.CallPackageMatchers
-import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.notifications.CallPackageMatchers
+import com.tyejaedon.coverscreenos.overlay.ForegroundService
 import com.tyejaedon.coverscreenos.ui.controllers.CoverAppLauncher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

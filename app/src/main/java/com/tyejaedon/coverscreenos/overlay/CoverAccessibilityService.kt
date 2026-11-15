@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services.overlay
+package com.tyejaedon.coverscreenos.overlay
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityGestureEvent
@@ -17,7 +17,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.overlay.surface.CoverComposeSurface
-import com.tyejaedon.coverscreenos.services.CallPackageMatchers
+import com.tyejaedon.coverscreenos.notifications.CallPackageMatchers
 import com.tyejaedon.coverscreenos.ui.launcher.CoverAppGridOverlay
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import java.lang.ref.WeakReference
