@@ -56,7 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
-import com.tyejaedon.coverscreenos.services.notifications.CoverNotificationListenerService
+import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSDestructiveColor
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
 import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType

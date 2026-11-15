@@ -1,6 +1,6 @@
 package com.tyejaedon.coverscreenos.services
 
-import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.overlay.ForegroundService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue

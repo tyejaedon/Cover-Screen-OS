@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services.overlay
+package com.tyejaedon.coverscreenos.overlay
 
 internal enum class OverlaySuppressionReason {
     NONE,

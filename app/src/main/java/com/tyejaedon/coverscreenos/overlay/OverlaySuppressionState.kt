@@ -1,4 +1,4 @@
-package com.tyejaedon.coverscreenos.services.overlay
+package com.tyejaedon.coverscreenos.overlay
 
 internal class OverlaySuppressionState {
     var isOverlaySuppressedForAppLaunch: Boolean = false

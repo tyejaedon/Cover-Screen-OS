@@ -16,7 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.tyejaedon.coverscreenos.services.overlay.OverlayEvent
+import com.tyejaedon.coverscreenos.overlay.OverlayEvent
 
 @Composable
 fun RecentActivityCard(events: List<OverlayEvent>, modifier: Modifier = Modifier) {

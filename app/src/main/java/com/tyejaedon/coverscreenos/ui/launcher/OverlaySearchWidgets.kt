@@ -62,7 +62,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
 import com.tyejaedon.coverscreenos.ui.CoverSearchUiTestTags
-import com.tyejaedon.coverscreenos.ui.keyboard.CoverCompactQwertyKeyboard
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ComposingTextPreview
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
@@ -100,10 +99,7 @@ internal fun WidgetGridPageTile(
     onKeyboardStrategyToggle: () -> Unit,
     onOpenImePicker: () -> Unit,
     isCoverKeyboardVisible: Boolean,
-    onCharTyped: (Char) -> Unit,
-    onBackspacePressed: () -> Unit,
     onDonePressed: () -> Unit,
-    onClearPressed: () -> Unit,
     hazeState: HazeState,
     modifier: Modifier = Modifier
 ) {
@@ -166,12 +162,9 @@ internal fun WidgetGridPageTile(
                 onKeyboardStrategyToggle = onKeyboardStrategyToggle,
                 onOpenImePicker = onOpenImePicker,
                 isCoverKeyboardVisible = isCoverKeyboardVisible,
-                onCharTyped = onCharTyped,
-                onBackspacePressed = onBackspacePressed,
                 onDonePressed = onDonePressed,
                 modifier = Modifier.fillMaxWidth(),
-                hazeState = hazeState,
-                onClearPressed = onClearPressed
+                hazeState = hazeState
             )
         }
     }
@@ -192,9 +185,6 @@ private fun SearchWidgetTile(
     onKeyboardStrategyToggle: () -> Unit,
     onOpenImePicker: () -> Unit,
     isCoverKeyboardVisible: Boolean,
-    onCharTyped: (Char) -> Unit,
-    onBackspacePressed: () -> Unit,
-    onClearPressed: () -> Unit,
     onDonePressed: () -> Unit,
     hazeState: HazeState, // Pass HazeState from the parent screen
     modifier: Modifier = Modifier
@@ -237,13 +227,28 @@ private fun SearchWidgetTile(
             )
 
             if (keyboardStrategy == KeyboardStrategy.T9 && isCoverKeyboardVisible) {
-                CoverSearchKeyboardHost(
-                    onCharTyped = onCharTyped,
-                    onBackspacePressed = onBackspacePressed,
-                    onDonePressed = onDonePressed,
-                    onClearPressed = onClearPressed,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                val keyboardShape = RoundedCornerShape(CoverOneUITokens.radiusPanel)
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT)
+                        .oneUiPanel(shape = keyboardShape),
+                    shape = keyboardShape,
+                    color = Color.Transparent
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .coverScreenPadding(horizontal = 6.dp, vertical = 6.dp)
+                    ) {
+                        SearchFlorisKeyboardHost(
+                            query = searchQuery,
+                            onQueryChanged = onQueryChanged,
+                            onDonePressed = onDonePressed,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             }
 
             Text(
@@ -590,37 +595,5 @@ private fun mapSpeechRecognizerError(errorCode: Int): String {
         SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected. Try again."
         SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Voice recognizer is busy. Try again in a moment."
         else -> "Voice search failed (error=$errorCode)."
-    }
-}
-
-@Composable
-private fun CoverSearchKeyboardHost(
-    onCharTyped: (Char) -> Unit,
-    onBackspacePressed: () -> Unit,
-    onDonePressed: () -> Unit,
-    onClearPressed: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val keyboardShape = RoundedCornerShape(CoverOneUITokens.radiusPanel)
-    Surface(
-        modifier = modifier
-            .testTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT)
-            .oneUiPanel(shape = keyboardShape),
-        shape = keyboardShape,
-        color = Color.Transparent
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .coverScreenPadding(horizontal = 6.dp, vertical = 6.dp)
-        ) {
-            CoverCompactQwertyKeyboard(
-                onChar = onCharTyped,
-                onBackspace = onBackspacePressed,
-                onDone = onDonePressed,
-                onClear = onClearPressed,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
     }
 }

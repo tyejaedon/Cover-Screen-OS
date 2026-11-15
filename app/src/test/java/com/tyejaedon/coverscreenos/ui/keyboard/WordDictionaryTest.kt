@@ -167,17 +167,5 @@ class WordDictionaryTest {
         assertEquals("zelda", dictionary.suggest("zeld").first())
     }
 
-    @Test fun shiftDoubleTapAndSentenceCaps() {
-        assertEquals(ShiftMode.Once, nextShiftMode(ShiftMode.Off, -1000L, 1000L))
-        assertEquals(ShiftMode.Locked, nextShiftMode(ShiftMode.Once, 1000L, 1200L))
-        assertEquals(ShiftMode.Off, nextShiftMode(ShiftMode.Locked, 1200L, 1300L))
-        assertEquals(ShiftMode.Off, nextShiftMode(ShiftMode.Once, 1000L, 1500L))
-        assertTrue(shouldAutoCap("Hello. "))
-        assertFalse(shouldAutoCap("Hello "))
-        assertEquals(6, previousWordLength("hello "))
-        assertEquals(5, previousWordLength("hello world"))
-        assertEquals(VibrationEffect.EFFECT_TICK, HapticTier.Light.toVibrationEffect())
-        assertEquals(VibrationEffect.EFFECT_CLICK, HapticTier.Standard.toVibrationEffect())
-        assertEquals(VibrationEffect.EFFECT_HEAVY_CLICK, HapticTier.Strong.toVibrationEffect())
-    }
+
 }

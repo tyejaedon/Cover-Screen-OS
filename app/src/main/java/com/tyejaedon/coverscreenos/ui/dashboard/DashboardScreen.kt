@@ -180,7 +180,7 @@ fun DashboardScreenPreview() {
                     batteryExemption = true,
                     inputAccessibility = true
                 ),
-                runtime = com.tyejaedon.coverscreenos.services.overlay.RuntimeSnapshot(
+                runtime = com.tyejaedon.coverscreenos.overlay.RuntimeSnapshot(
                     serviceActive = true,
                     launcherHostActive = true,
                     overlayActive = true,

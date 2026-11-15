@@ -14,7 +14,7 @@ import android.view.Display
 import android.view.WindowManager
 import androidx.annotation.VisibleForTesting
 import androidx.fragment.app.FragmentActivity
-import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.overlay.ForegroundService
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 

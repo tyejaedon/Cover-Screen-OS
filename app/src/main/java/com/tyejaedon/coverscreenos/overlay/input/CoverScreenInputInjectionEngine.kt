@@ -85,10 +85,8 @@ import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverOverlayInputCallbacks
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
-import com.tyejaedon.coverscreenos.ui.keyboard.CoverCompactQwertyKeyboard
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9PredictionToggle
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9SuggestionStrip
-import com.tyejaedon.coverscreenos.ui.keyboard.previousWordLength
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardHistory
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardActionIcons
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardHistoryRow
@@ -98,8 +96,8 @@ import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberHapticPerforme
 import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
 import com.tyejaedon.coverscreenos.overlay.surface.CoverComposeSurface
 import com.tyejaedon.coverscreenos.overlay.surface.CoverSurfaceWindowConfig
-import com.tyejaedon.coverscreenos.services.CallPackageMatchers
-import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.notifications.CallPackageMatchers
+import com.tyejaedon.coverscreenos.overlay.ForegroundService
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.TextBuffer
 import kotlinx.coroutines.flow.MutableStateFlow

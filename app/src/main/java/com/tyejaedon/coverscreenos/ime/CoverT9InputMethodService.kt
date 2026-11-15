@@ -6,9 +6,7 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
 import android.os.Bundle
-import android.os.SystemClock
 import android.text.InputType
-import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -28,7 +26,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.KeyboardHide
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -70,13 +67,10 @@ import com.tyejaedon.coverscreenos.keyboard.floris.CoverEditorBridge
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
-import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKey
-import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKeyColors
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 
 class CoverT9InputMethodService : InputMethodService() {
 
-    private val t9Engine = T9Engine()
     private val composeOwner = ImeComposeOwner()
     private var fieldProfile = EditorFieldProfile(isNumeric = false, isSensitive = false)
     private var activeEditorInfo: EditorInfo? = null
@@ -160,7 +154,6 @@ class CoverT9InputMethodService : InputMethodService() {
         super.onStartInput(attribute, restarting)
         activeEditorInfo = attribute
         fieldProfile = EditorFieldProfile.from(attribute)
-        t9Engine.reset()
         uiState = CoverImeUiState(
             layout = CoverImePreferences.defaultLayout(this, attribute),
             isNumeric = fieldProfile.isNumeric,
@@ -171,57 +164,12 @@ class CoverT9InputMethodService : InputMethodService() {
 
     override fun onFinishInput() {
         super.onFinishInput()
-        t9Engine.reset()
         activeEditorInfo = null
         fieldProfile = EditorFieldProfile(isNumeric = false, isSensitive = false)
         uiState = CoverImeUiState()
     }
 
-    private fun selectLayout(layout: CoverImeLayout) {
-        if (layout != uiState.layout) {
-            t9Engine.reset()
-            uiState = uiState.copy(layout = layout, shifted = false)
-        }
-    }
-
-    private fun handleCharacterPressed(text: String) {
-        t9Engine.reset()
-        currentInputConnection?.commitText(text, 1)
-        if (uiState.shifted) uiState = uiState.copy(shifted = false)
-    }
-
-    private fun handleDigitPressed(digit: Char, letters: String) {
-        val action = t9Engine.onTap(
-            digit = digit,
-            letters = letters,
-            nowElapsedMs = SystemClock.elapsedRealtime(),
-            forceDigit = fieldProfile.isNumeric
-        )
-        applyCommitAction(action)
-    }
-
-    private fun handleBackspacePressed() {
-        t9Engine.reset()
-        val connection = currentInputConnection ?: return
-        if (!connection.getSelectedText(0).isNullOrEmpty()) {
-            connection.commitText("", 1)
-        } else if (!connection.deleteSurroundingTextInCodePoints(1, 0)) {
-            sendKey(connection, KeyEvent.KEYCODE_DEL)
-        }
-    }
-
-    private fun handleClearPressed() {
-        t9Engine.reset()
-        val connection = currentInputConnection ?: return
-        if (!connection.getSelectedText(0).isNullOrEmpty()) {
-            connection.commitText("", 1)
-        } else {
-            connection.deleteSurroundingText(CLEAR_BEFORE_CURSOR_LIMIT_CHARS, 0)
-        }
-    }
-
     private fun handleEnterPressed() {
-        t9Engine.reset()
         val connection = currentInputConnection ?: return
         val imeAction = activeEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
             ?: EditorInfo.IME_ACTION_UNSPECIFIED
@@ -229,30 +177,12 @@ class CoverT9InputMethodService : InputMethodService() {
         val performed = allowsAction && imeAction != EditorInfo.IME_ACTION_NONE &&
             imeAction != EditorInfo.IME_ACTION_UNSPECIFIED &&
             connection.performEditorAction(imeAction)
-        if (!performed) sendKey(connection, KeyEvent.KEYCODE_ENTER)
+        if (!performed) sendKey(connection)
     }
 
-    private fun sendKey(connection: android.view.inputmethod.InputConnection, code: Int) {
-        connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
-        connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
-    }
-
-    private fun applyCommitAction(action: T9CommitAction) {
-        val connection = currentInputConnection
-        if (connection == null) {
-            Log.w(IME_LOG_TAG, "No active input connection while committing T9 action.")
-            t9Engine.reset()
-            return
-        }
-        when (action) {
-            is T9CommitAction.Append -> connection.commitText(action.text, 1)
-            is T9CommitAction.ReplacePrevious -> {
-                if (connection.getSelectedText(0).isNullOrEmpty()) {
-                    connection.deleteSurroundingText(1, 0)
-                }
-                connection.commitText(action.text, 1)
-            }
-        }
+    private fun sendKey(connection: android.view.inputmethod.InputConnection) {
+        connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+        connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
     }
 }
 
@@ -508,8 +438,6 @@ internal object ContactsSuggestionConsent {
     }
 }
 
-private const val CONTACTS_PERMISSION_REQUEST = 201
-
 internal data class CoverImeUiState(
     val layout: CoverImeLayout = CoverImeLayout.QWERTY,
     val isNumeric: Boolean = false,
@@ -532,142 +460,3 @@ internal fun imeActionLabel(editorInfo: EditorInfo?): String {
     }
 }
 
-private const val IME_LOG_TAG = "CoverT9IME"
-private const val CLEAR_BEFORE_CURSOR_LIMIT_CHARS = 4096
-
-private val QWERTY_ROWS = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
-private val NUMBER_ROWS = listOf("123", "456", "789", "-0.")
-private val SYMBOL_ROWS = listOf("1234567890", "@#\$%&-+()/", "*\"':;!?_=", ".,")
-
-@Composable
-internal fun CoverKeyboardHost(
-    state: CoverImeUiState,
-    onLayoutSelected: (CoverImeLayout) -> Unit,
-    onShiftPressed: () -> Unit,
-    onCharacterPressed: (String) -> Unit,
-    onDigitPressed: (Char, String) -> Unit,
-    onBackspacePressed: () -> Unit,
-    onClearPressed: () -> Unit,
-    onEnterPressed: () -> Unit,
-    onHidePressed: () -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            CoverImeLayout.entries.forEach { layout ->
-                KeyboardKey(
-                    label = layout.label,
-                    onClick = { onLayoutSelected(layout) },
-                    modifier = Modifier.weight(1f).height(36.dp).testTag("ime_layout_${layout.name.lowercase()}"),
-                    colors = if (state.layout == layout) KeyboardKeyColors.accent() else KeyboardKeyColors.default()
-                )
-            }
-        }
-        when (state.layout) {
-            CoverImeLayout.QWERTY -> {
-                QWERTY_ROWS.forEachIndexed { index, row ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().testTag("ime_qwerty_row_$index"),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        if (index == 2) {
-                            KeyboardKey(
-                                label = "⇧",
-                                contentDescription = "Shift",
-                                onClick = onShiftPressed,
-                                modifier = Modifier.weight(1.25f).height(40.dp),
-                                colors = if (state.shifted) KeyboardKeyColors.accent() else KeyboardKeyColors.default()
-                            )
-                        }
-                        row.forEach { char ->
-                            val text = if (state.shifted) char.uppercaseChar().toString() else char.toString()
-                            KeyboardKey(
-                                label = text,
-                                onClick = { onCharacterPressed(text) },
-                                modifier = Modifier.weight(1f).height(40.dp),
-                                showKeyPreview = !state.isSensitive
-                            )
-                        }
-                        if (index == 2) {
-                            KeyboardKey(
-                                icon = Icons.AutoMirrored.Filled.Backspace,
-                                contentDescription = "Backspace",
-                                onClick = onBackspacePressed,
-                                repeatOnHold = true,
-                                modifier = Modifier.weight(1.25f).height(40.dp)
-                            )
-                        }
-                    }
-                }
-            }
-            CoverImeLayout.T9 -> {
-                T9_KEY_LAYOUT_ROWS.forEachIndexed { index, row ->
-                    Row(modifier = Modifier.fillMaxWidth().testTag("ime_t9_row_$index"), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        row.forEach { key ->
-                            KeyboardKey(
-                                label = if (state.isNumeric || key.letters.isEmpty()) {
-                                    key.digit.toString()
-                                } else {
-                                    "${key.digit} ${key.letters}"
-                                },
-                                onClick = { onDigitPressed(key.digit, key.letters) },
-                                modifier = Modifier.weight(1f).height(42.dp)
-                            )
-                        }
-                    }
-                }
-            }
-            CoverImeLayout.NUMBER, CoverImeLayout.SYMBOLS -> {
-                val rows = if (state.layout == CoverImeLayout.NUMBER) NUMBER_ROWS else SYMBOL_ROWS
-                rows.forEachIndexed { index, row ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().testTag("ime_${state.layout.name.lowercase()}_row_$index"),
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        row.forEach { char ->
-                            KeyboardKey(
-                                label = char.toString(),
-                                onClick = { onCharacterPressed(char.toString()) },
-                                modifier = Modifier.weight(1f).height(40.dp),
-                                showKeyPreview = !state.isSensitive
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            KeyboardKey(
-                label = "CLR",
-                onClick = onClearPressed,
-                modifier = Modifier.weight(1f).height(42.dp)
-            )
-            KeyboardKey(
-                label = if (state.isNumeric) "0" else "SPACE",
-                onClick = { onCharacterPressed(if (state.isNumeric) "0" else " ") },
-                modifier = Modifier.weight(2f).height(42.dp)
-            )
-            KeyboardKey(
-                icon = Icons.AutoMirrored.Filled.Backspace,
-                contentDescription = "Backspace",
-                onClick = onBackspacePressed,
-                repeatOnHold = true,
-                modifier = Modifier.weight(1f).height(42.dp)
-            )
-            KeyboardKey(
-                label = state.actionLabel,
-                onClick = onEnterPressed,
-                modifier = Modifier.weight(1.5f).height(42.dp),
-                colors = KeyboardKeyColors.accent()
-            )
-            KeyboardKey(
-                icon = Icons.Filled.KeyboardHide,
-                contentDescription = "Hide keyboard",
-                onClick = onHidePressed,
-                modifier = Modifier.weight(1f).height(42.dp)
-            )
-        }
-    }
-}

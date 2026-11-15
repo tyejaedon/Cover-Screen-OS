@@ -13,7 +13,7 @@ import android.net.wifi.WifiManager
 import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.tyejaedon.coverscreenos.services.overlay.ForegroundService
+import com.tyejaedon.coverscreenos.overlay.ForegroundService
 import kotlin.math.roundToInt
 
 /**

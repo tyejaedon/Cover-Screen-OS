@@ -15,8 +15,8 @@ import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
-import com.tyejaedon.coverscreenos.services.overlay.CoverLaunchCoordinator
-import com.tyejaedon.coverscreenos.services.overlay.LauncherOverlayHost
+import com.tyejaedon.coverscreenos.overlay.CoverLaunchCoordinator
+import com.tyejaedon.coverscreenos.overlay.LauncherOverlayHost
 import com.tyejaedon.coverscreenos.ui.launcher.CoverAppGridOverlay
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +26,7 @@ import org.junit.runner.RunWith
 
 /**
  * Boots [CoverAppGridOverlay] with the same compose parameters the
- * Phase 3 [com.tyejaedon.coverscreenos.services.overlay.CoverAccessibilityService.showLauncher]
+ * Phase 3 [com.tyejaedon.coverscreenos.overlay.CoverAccessibilityService.showLauncher]
  * uses when attaching the launcher to a `TYPE_ACCESSIBILITY_OVERLAY`
  * window — i.e. plumbed entirely through a mock [LauncherOverlayHost]
  * rather than by reading state from the running foreground service.
@@ -38,7 +38,7 @@ import org.junit.runner.RunWith
  *     grid is composed via `LauncherOverlayHost.*` accessors.
  *   - The `Flow<LauncherSettings>` collection wiring inside the AS
  *     `showLauncher` compose lambda produces the same first-frame
- *     content as the legacy [com.tyejaedon.coverscreenos.services.overlay.OverlayWindowController]
+ *     content as the legacy [com.tyejaedon.coverscreenos.overlay.OverlayWindowController]
  *     path.
  *
  * See `docs/architecture/Overlay-architecture-shift-plan.md` §8.2.
