@@ -119,7 +119,8 @@ class ForegroundService : Service() {
 
         private val TRANSIENT_SYSTEM_UI_RESUME_SAFE_PREFIXES = arrayOf(
             "com.samsung.systemui",
-            "com.samsung.android.app.aodservice"
+            "com.samsung.android.app.aodservice",
+            "com.samsung.android.smartsuggestions"
         )
 
         private val OVERLAY_RESUME_PACKAGE_PREFIXES = arrayOf(
@@ -128,13 +129,17 @@ class ForegroundService : Service() {
             "com.samsung.android.app.aodservice",
             "com.sec.android.app.launcher",
             "com.samsung.android.app.cocktailbarservice",
-            "com.samsung.android.app.clockface"
+            "com.samsung.android.app.clockface",
+            "com.samsung.android.smartsuggestions",
+            "com.samsung.android.multistar"
         )
 
         private val LAUNCHER_PACKAGE_PREFIXES = arrayOf(
             "com.sec.android.app.launcher",
             "com.android.launcher",
-            "com.google.android.apps.nexuslauncher"
+            "com.google.android.apps.nexuslauncher",
+            "com.samsung.android.smartsuggestions",
+            "com.samsung.android.multistar"
         )
 
         @Volatile
@@ -394,6 +399,7 @@ class ForegroundService : Service() {
             appRepository = appRepository,
             launcherSettingsStore = launcherSettingsStore,
             launchCoordinator = launchCoordinator,
+            widgetHostManager = widgetHostManager,
             deviceLockState = coverDisplayHelper.isDeviceLocked,
             onAppSelected = { appModel ->
                 val packageName = appModel.packageName
@@ -439,6 +445,64 @@ class ForegroundService : Service() {
                     )
                     launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
                     launched
+                }
+            },
+            onAddWidgetRequest = {
+                val coverDisplayId = overlayWindowController.getActiveDisplayId()
+                    ?: coverDisplayHelper.getCoverDisplayId()
+                if (coverDisplayHelper.isDeviceLocked.value) {
+                    UnlockBridgeActivity.startUnlockRequest(
+                        context = appContext,
+                        packageName = null,
+                        displayId = coverDisplayId
+                    )
+                    false
+                } else {
+                    val packageName = appContext.packageName
+                    val ready = launchCoordinator.beginLaunch(packageName)
+                    if (!ready) {
+                        Log.w(LOG_TAG, "LauncherOverlayHost.onAddWidgetRequest rejected")
+                        false
+                    } else {
+                        val pickIntent = com.tyejaedon.coverscreenos.ui.widgets.WidgetPickerBridgeActivity
+                            .createPickIntent(appContext)
+                        val launched = CoverAppLauncher.launchIntentOnDisplay(
+                            context = appContext,
+                            intent = pickIntent,
+                            displayId = coverDisplayId
+                        )
+                        launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
+                        launched
+                    }
+                }
+            },
+            onConfigureWidgetRequest = { widgetId ->
+                val coverDisplayId = overlayWindowController.getActiveDisplayId()
+                    ?: coverDisplayHelper.getCoverDisplayId()
+                if (coverDisplayHelper.isDeviceLocked.value) {
+                    UnlockBridgeActivity.startUnlockRequest(
+                        context = appContext,
+                        packageName = null,
+                        displayId = coverDisplayId
+                    )
+                    false
+                } else {
+                    val packageName = appContext.packageName
+                    val ready = launchCoordinator.beginLaunch(packageName)
+                    if (!ready) {
+                        Log.w(LOG_TAG, "LauncherOverlayHost.onConfigureWidgetRequest rejected")
+                        false
+                    } else {
+                        val configIntent = com.tyejaedon.coverscreenos.ui.widgets.WidgetPickerBridgeActivity
+                            .createReconfigureIntent(appContext, widgetId)
+                        val launched = CoverAppLauncher.launchIntentOnDisplay(
+                            context = appContext,
+                            intent = configIntent,
+                            displayId = coverDisplayId
+                        )
+                        launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
+                        launched
+                    }
                 }
             }
         )
@@ -1047,6 +1111,11 @@ class ForegroundService : Service() {
     }
 
     private fun resolveForegroundPackageForResume(): String? {
+        val topCoverWindowPkg = CoverInputAccessibilityService.getTopCoverDisplayPackage()
+        if (topCoverWindowPkg != null && shouldResumeOverlayForPackage(topCoverWindowPkg)) {
+            return topCoverWindowPkg
+        }
+
         val (foregroundPackage, eventAgeMs) = latestForegroundSignal()
             ?: run {
                 logResumeDecision(reason = "resolve", decision = "no_foreground_package")

@@ -161,8 +161,8 @@ class UnlockBridgeActivity : FragmentActivity() {
         val biometricStatus = biometricManager?.canAuthenticate(authenticators)
             ?: BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE
         if (biometricStatus != BiometricManager.BIOMETRIC_SUCCESS) {
-            Log.w(LOG_TAG, "BiometricPrompt unavailable status=$biometricStatus requestId=${request.requestId}")
-            completeAndFinish(reason = "biometric_unavailable")
+            Log.d(LOG_TAG, "BiometricPrompt unavailable status=$biometricStatus; falling back to system keyguard requestId=${request.requestId}")
+            dismissKeyguardAndLaunch(request)
             return
         }
 
@@ -177,8 +177,16 @@ class UnlockBridgeActivity : FragmentActivity() {
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 val reason = "auth_error code=$errorCode message=${errString.toString()}"
-                Log.d(LOG_TAG, "Unlock canceled requestId=${request.requestId} reason=$reason")
-                completeAndFinish(reason = reason)
+                if (errorCode != BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED &&
+                    errorCode != BiometricPrompt.BIOMETRIC_ERROR_CANCELED &&
+                    errorCode != 13 // BIOMETRIC_ERROR_NEGATIVE_BUTTON
+                ) {
+                    Log.d(LOG_TAG, "Biometric errored ($reason); falling back to system keyguard requestId=${request.requestId}")
+                    dismissKeyguardAndLaunch(request)
+                } else {
+                    Log.d(LOG_TAG, "Unlock canceled requestId=${request.requestId} reason=$reason")
+                    completeAndFinish(reason = reason)
+                }
             }
 
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
@@ -203,8 +211,8 @@ class UnlockBridgeActivity : FragmentActivity() {
         runCatching {
             prompt.authenticate(cancellationSignal, mainExecutor, callback)
         }.onFailure { error ->
-            Log.w(LOG_TAG, "Failed to start biometric prompt requestId=${request.requestId}: ${error.message}")
-            completeAndFinish(reason = "prompt_start_failed")
+            Log.w(LOG_TAG, "Failed to start biometric prompt; falling back to keyguard requestId=${request.requestId}: ${error.message}")
+            dismissKeyguardAndLaunch(request)
         }
     }
 
@@ -251,7 +259,12 @@ class UnlockBridgeActivity : FragmentActivity() {
 
         val dismissCallback = object : KeyguardManager.KeyguardDismissCallback() {
             override fun onDismissSucceeded() {
-                Log.d(LOG_TAG, "Keyguard dismissed after biometric success requestId=${request.requestId}")
+                if (keyguardManager.isDeviceLocked) {
+                    Log.w(LOG_TAG, "Keyguard dismiss reported success but device is still locked requestId=${request.requestId}")
+                    completeAndFinish(reason = "keyguard_still_locked")
+                    return
+                }
+                Log.d(LOG_TAG, "Keyguard dismissed after unlock requestId=${request.requestId}")
                 completeAndFinish(reason = "auth_succeeded_keyguard_dismissed") {
                     dispatchLaunchAfterUnlock(request)
                 }
@@ -272,9 +285,12 @@ class UnlockBridgeActivity : FragmentActivity() {
             keyguardManager.requestDismissKeyguard(this, dismissCallback)
         }.onFailure { error ->
             Log.w(LOG_TAG, "requestDismissKeyguard threw requestId=${request.requestId}: ${error.message}")
-            completeAndFinish(reason = "keyguard_dismiss_threw") {
-                // Best-effort: still try the launch — worst case it no-ops and the user retries.
-                dispatchLaunchAfterUnlock(request)
+            if (!keyguardManager.isDeviceLocked) {
+                completeAndFinish(reason = "keyguard_dismiss_threw_unlocked") {
+                    dispatchLaunchAfterUnlock(request)
+                }
+            } else {
+                completeAndFinish(reason = "keyguard_dismiss_threw_locked")
             }
         }
     }
