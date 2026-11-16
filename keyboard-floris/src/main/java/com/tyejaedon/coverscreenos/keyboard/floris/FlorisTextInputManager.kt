@@ -36,6 +36,26 @@ class FlorisTextInputManager(
             '9' to "wxyz"
         )
 
+        const val DOUBLE_SPACE_WINDOW_MS = 350L
+
+        private val CONTRACTIONS = mapOf(
+            "dont" to "don't", "cant" to "can't", "wont" to "won't",
+            "im" to "I'm", "ive" to "I've", "didnt" to "didn't",
+            "isnt" to "isn't", "arent" to "aren't", "wasnt" to "wasn't",
+            "youre" to "you're", "theyre" to "they're", "weve" to "we've",
+            "thats" to "that's", "whats" to "what's", "doesnt" to "doesn't",
+            "couldnt" to "couldn't", "shouldnt" to "shouldn't", "wouldnt" to "wouldn't"
+        )
+
+        /** Returns the apostrophe form of [word] (preserving leading capital) or null. */
+        fun expandContraction(word: String): String? {
+            if (word.isEmpty()) return null
+            val expanded = CONTRACTIONS[word.lowercase()] ?: return null
+            return if (word.first().isUpperCase() && expanded.first().isLowerCase()) {
+                expanded.replaceFirstChar { it.uppercaseChar() }
+            } else expanded
+        }
+
         fun shouldAutoCap(textBeforeCursor: String): Boolean =
             textBeforeCursor.isBlank() || Regex("[.!?]\\s*$").containsMatchIn(textBeforeCursor)
     }
@@ -296,14 +316,40 @@ class FlorisTextInputManager(
         bridge.deleteSurroundingText(1, 0)
     }
 
+    private var lastSpaceTapMs: Long = 0L
+
     fun handleSpace(
         autocorrectEnabled: Boolean = true,
         currentTextBeforeCursor: String? = null,
-        onCommitAutocorrect: ((String) -> Unit)? = null
+        onCommitAutocorrect: ((String) -> Unit)? = null,
+        nowMs: Long = System.currentTimeMillis()
     ) {
         lastClearedText = null
         resetT9Composing()
-        if (autocorrectEnabled && activeMode == CoverLayoutMode.QWERTY) {
+        val isQwerty = activeMode == CoverLayoutMode.QWERTY
+        if (isQwerty) {
+            val before = currentTextBeforeCursor ?: bridge.getSurroundingText(50, 0).textBefore
+            // Double-space -> ". " and auto-capitalize next letter.
+            if (nowMs - lastSpaceTapMs in 1..DOUBLE_SPACE_WINDOW_MS &&
+                before.length >= 2 && before.last() == ' ' &&
+                before[before.length - 2].let { it.isLetterOrDigit() || it == ')' }
+            ) {
+                lastSpaceTapMs = 0L
+                bridge.deleteSurroundingText(1, 0)
+                bridge.insertText(". ")
+                shiftState = CoverShiftState.SINGLE_SHIFT
+                return
+            }
+            // Contraction expansion (dont -> don't).
+            val rawWord = before.takeLastWhile { it.isLetter() }
+            expandContraction(rawWord)?.let { expanded ->
+                lastSpaceTapMs = nowMs
+                bridge.commitCandidate(expanded, trailingSpace = true)
+                return
+            }
+        }
+        lastSpaceTapMs = nowMs
+        if (autocorrectEnabled && isQwerty) {
             val before = currentTextBeforeCursor ?: bridge.getSurroundingText(50, 0).textBefore
             val word = before.takeLastWhile { it.isLetter() }
             if (word.isNotEmpty()) {

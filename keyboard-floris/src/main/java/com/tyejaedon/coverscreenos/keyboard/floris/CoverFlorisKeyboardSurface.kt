@@ -42,10 +42,12 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
@@ -74,6 +76,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tyejaedon.coverscreenos.keyboard.nlp.DTWGlideDecoder
+import com.tyejaedon.coverscreenos.keyboard.nlp.DigramModel
+import com.tyejaedon.coverscreenos.keyboard.nlp.QwertyGeometry
 import com.tyejaedon.coverscreenos.keyboard.nlp.T9PredictiveEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -292,10 +296,34 @@ fun CoverFlorisKeyboardSurface(
         }
     }
 
+    var lastSpaceTapUptimeMs by remember { mutableLongStateOf(0L) }
+
     fun handleSpaceKey() {
         lastClearedText = null
         inputManager.resetT9Composing()
         val currentWord = effectiveBeforeCursor.takeLastWhile { it.isLetter() }
+        if (activeMode == CoverLayoutMode.QWERTY) {
+            val nowMs = SystemClock.uptimeMillis()
+            val b = effectiveBeforeCursor
+            // Double-space -> ". " + auto-cap.
+            if (nowMs - lastSpaceTapUptimeMs in 1..FlorisTextInputManager.DOUBLE_SPACE_WINDOW_MS &&
+                b.length >= 2 && b.last() == ' ' &&
+                b[b.length - 2].let { it.isLetterOrDigit() || it == ')' }
+            ) {
+                lastSpaceTapUptimeMs = 0L
+                bridge.deleteSurroundingText(1, 0)
+                bridge.insertText(". ")
+                internalBuffer = b.dropLast(1) + ". "
+                shiftState = CoverShiftState.SINGLE_SHIFT
+                return
+            }
+            lastSpaceTapUptimeMs = nowMs
+            // Contraction expansion (dont -> don't).
+            FlorisTextInputManager.expandContraction(currentWord)?.let { expanded ->
+                commitWord(expanded, trailingSpace = true)
+                return
+            }
+        }
         if (customization.autocorrectEnabled &&
             customization.suggestionsEnabled &&
             activeMode == CoverLayoutMode.QWERTY &&
@@ -316,9 +344,12 @@ fun CoverFlorisKeyboardSurface(
         else -> Alignment.CenterStart
     }
 
+    var isPeeking by remember { mutableStateOf(false) }
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
+            .alpha(if (isPeeking) 0.15f else 1f)
             .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
         color = themePalette.keyboardSurface,
         contentColor = themePalette.keyForeground,
@@ -331,8 +362,8 @@ fun CoverFlorisKeyboardSurface(
             Column(
                 modifier = Modifier
                     .fillMaxWidth(if (effectiveOneHanded) 0.82f else 1f)
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                    .padding(horizontal = 2.dp, vertical = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 // 1. Floris Resize, One-Handed & Mode Control Bar
                 FlorisResizeAndControlBar(
@@ -381,6 +412,7 @@ fun CoverFlorisKeyboardSurface(
                             inputManager.resetT9Composing()
                         }
                     } else null,
+                    onPeekChanged = { isPeeking = it },
                     onDismissRequest = onDismissRequest,
                     onHaptic = ::performFeedback,
                     themePalette = themePalette,
@@ -494,7 +526,7 @@ fun CoverFlorisKeyboardSurface(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(effectiveRowHeight),
-                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                horizontalArrangement = Arrangement.spacedBy(1.5.dp)
                             ) {
                                 rowKeys.forEach { keyItem ->
                                     CoverKeyView(
@@ -503,6 +535,8 @@ fun CoverFlorisKeyboardSurface(
                                         shiftState = effectiveShiftState,
                                         themePalette = themePalette,
                                         showKeyPreview = customization.popupKeyPreviewEnabled && !keyItem.isFunctional,
+                                        previousLetter = effectiveBeforeCursor.lastOrNull(),
+                                        enableSpatialBias = activeMode == CoverLayoutMode.QWERTY,
                                         onFeedback = ::performFeedback,
                                         onAction = { action ->
                                             when (action) {
@@ -529,12 +563,15 @@ fun CoverFlorisKeyboardSurface(
                                                     }
                                                 }
                                                 CoverKeyAction.ClearOrUndo -> {
-                                                    if (effectiveBeforeCursor.isEmpty() && lastClearedText != null) {
+                                                    val surrounding = bridge.getSurroundingText(500, 500)
+                                                    val fullText = surrounding.textBefore + surrounding.textAfter
+                                                    val hasText = effectiveBeforeCursor.isNotEmpty() || fullText.isNotEmpty()
+                                                    if (!hasText && lastClearedText != null) {
                                                         val restored = lastClearedText.orEmpty()
                                                         lastClearedText = null
                                                         restored.forEach { ch -> emitChar(ch) }
-                                                    } else if (activeMode == CoverLayoutMode.NUMERIC && effectiveBeforeCursor.isNotEmpty()) {
-                                                        lastClearedText = effectiveBeforeCursor
+                                                    } else if (hasText) {
+                                                        lastClearedText = fullText.ifEmpty { effectiveBeforeCursor }
                                                         internalBuffer = ""
                                                         inputManager.resetT9Composing()
                                                         if (onClearOverride != null) {
@@ -690,6 +727,8 @@ private fun RowScope.CoverKeyView(
     shiftState: CoverShiftState,
     themePalette: FlorisThemePalette,
     showKeyPreview: Boolean,
+    previousLetter: Char? = null,
+    enableSpatialBias: Boolean = false,
     onFeedback: () -> Unit,
     onAction: (CoverKeyAction) -> Unit,
     onLongPressAction: () -> Boolean,
@@ -700,11 +739,14 @@ private fun RowScope.CoverKeyView(
     var popupMenuExpanded by remember { mutableStateOf(false) }
     var cursorDragPixels by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
+    val keyScope = rememberCoroutineScope()
 
     val onActionState = rememberUpdatedState(onAction)
     val onLongPressState = rememberUpdatedState(onLongPressAction)
     val onFeedbackState = rememberUpdatedState(onFeedback)
     val onMoveCursorState = rememberUpdatedState(onMoveCursor)
+    val previousLetterState = rememberUpdatedState(previousLetter)
+    val enableSpatialBiasState = rememberUpdatedState(enableSpatialBias)
 
     val isBackspace = item.action == CoverKeyAction.Backspace
     val isSpace = item.action == CoverKeyAction.Space
@@ -749,11 +791,7 @@ private fun RowScope.CoverKeyView(
         else -> themePalette.keyBackground
     }
     val pressedBg = lerp(idleBg, Color.White, 0.12f)
-    val bg by animateColorAsState(
-        targetValue = if (isPressed) pressedBg else idleBg,
-        animationSpec = tween(60),
-        label = "FlorisKeyBg"
-    )
+    val bg = if (isPressed) pressedBg else idleBg
     val fgColor = when {
         isEnter -> themePalette.actionKeyForeground
         isShiftActive -> themePalette.shiftActiveForeground
@@ -761,13 +799,9 @@ private fun RowScope.CoverKeyView(
         item.isFunctional -> themePalette.functionalKeyForeground
         else -> themePalette.keyForeground
     }
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.92f else 1f,
-        animationSpec = tween(60),
-        label = "FlorisKeyScale"
-    )
+    val scale = if (isPressed) 0.94f else 1f
 
-    val hasLongPress = isClear || item.popupSet.main != null || item.popupOptions.isNotEmpty()
+    val hasLongPress = item.popupSet.main != null || item.popupOptions.isNotEmpty()
 
     Box(
         modifier = Modifier
@@ -794,7 +828,6 @@ private fun RowScope.CoverKeyView(
                 }
             }
             .pointerInput(item.id, isBackspace, isSpace, hasLongPress) {
-                val scope = CoroutineScope(currentCoroutineContext())
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     isPressed = true
@@ -805,26 +838,28 @@ private fun RowScope.CoverKeyView(
                     var lastX = down.position.x
                     cursorDragPixels = 0f
 
-                    val holdJob: Job = scope.launch {
-                        if (isBackspace) {
-                            delay(350L)
-                            while (isPressed && !dragged) {
-                                onFeedbackState.value()
-                                onActionState.value(CoverKeyAction.Backspace)
-                                delay(60L)
-                            }
-                        } else if (hasLongPress) {
-                            delay(400L)
-                            if (isPressed && !dragged) {
-                                held = true
-                                onFeedbackState.value()
-                                val handledDirectly = onLongPressState.value()
-                                if (!handledDirectly && item.popupOptions.isNotEmpty()) {
-                                    popupMenuExpanded = true
+                    val holdJob: Job? = if (isBackspace || hasLongPress) {
+                        keyScope.launch {
+                            if (isBackspace) {
+                                delay(350L)
+                                while (isPressed && !dragged) {
+                                    onFeedbackState.value()
+                                    onActionState.value(CoverKeyAction.Backspace)
+                                    delay(60L)
+                                }
+                            } else {
+                                delay(400L)
+                                if (isPressed && !dragged) {
+                                    held = true
+                                    onFeedbackState.value()
+                                    val handledDirectly = onLongPressState.value()
+                                    if (!handledDirectly && item.popupOptions.isNotEmpty()) {
+                                        popupMenuExpanded = true
+                                    }
                                 }
                             }
                         }
-                    }
+                    } else null
 
                     while (!released) {
                         val event = awaitPointerEvent()
@@ -837,9 +872,30 @@ private fun RowScope.CoverKeyView(
                                 pointer.position.y in 0f..size.height.toFloat()
                             val wasTap = inBoundsOnRelease && pointer.previousPressed
                             isPressed = false
-                            holdJob.cancel()
+                            holdJob?.cancel()
                             if (wasTap && !held && !dragged) {
-                                onActionState.value(item.action)
+                                val action = item.action
+                                val resolvedAction = if (enableSpatialBiasState.value &&
+                                    action is CoverKeyAction.InputChar &&
+                                    action.char.isLetter() &&
+                                    size.width > 0 && size.height > 0 &&
+                                    (pointer!!.position.x < size.width * 0.18f || pointer.position.x > size.width * 0.82f)
+                                ) {
+                                    val centroid = QwertyGeometry.getCentroid(action.char)
+                                    if (centroid != null) {
+                                        val normX = centroid.x + ((pointer.position.x / size.width.toFloat()) - 0.5f)
+                                        val normY = centroid.y + ((pointer.position.y / size.height.toFloat()) - 0.5f)
+                                        val best = DigramModel.resolveNearestKey(
+                                            Offset(normX, normY),
+                                            previousLetterState.value
+                                        )
+                                        if (best != null && best != action.char.lowercaseChar()) {
+                                            val outChar = if (action.char.isUpperCase()) best.uppercaseChar() else best
+                                            CoverKeyAction.InputChar(outChar)
+                                        } else action
+                                    } else action
+                                } else action
+                                onActionState.value(resolvedAction)
                             }
                         } else {
                             val inBounds = pointer.position.x in 0f..size.width.toFloat() &&
@@ -851,7 +907,7 @@ private fun RowScope.CoverKeyView(
                                         onActionState.value(CoverKeyAction.DeleteWord)
                                     }
                                     dragged = true
-                                    holdJob.cancel()
+                                    holdJob?.cancel()
                                     if (isSpace) {
                                         val deltaX = pointer.position.x - lastX
                                         cursorDragPixels += deltaX

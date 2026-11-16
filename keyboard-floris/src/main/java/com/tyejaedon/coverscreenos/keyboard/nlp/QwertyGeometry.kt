@@ -136,3 +136,44 @@ object QwertyGeometry {
         return dp[lenA][lenB]
     }
 }
+
+/**
+ * Lightweight English digram prior used to bias ambiguous touches that land near a key border.
+ */
+object DigramModel {
+    private val COMMON_DIGRAMS = setOf(
+        "th", "he", "in", "er", "an", "re", "on", "at", "en", "nd", "ti", "es", "or", "te",
+        "of", "ed", "is", "it", "al", "ar", "st", "to", "nt", "ng", "se", "ha", "as", "ou",
+        "io", "le", "ve", "co", "me", "de", "hi", "ri", "ro", "ic", "ne", "ea"
+    )
+
+    /** Distance multiplier: <1 favours likely transitions, 1 is neutral. */
+    fun distanceMultiplier(prev: Char?, candidate: Char): Float {
+        if (prev == null || !prev.isLetter() || !candidate.isLetter()) return 1.0f
+        val pair = "${prev.lowercaseChar()}${candidate.lowercaseChar()}"
+        return if (pair in COMMON_DIGRAMS) 0.75f else 1.0f
+    }
+
+    /**
+     * Resolves a touch (in normalized key units, see [QwertyGeometry]) to the most likely letter
+     * using centroid distance weighted by [distanceMultiplier]. Returns null if no letter is within
+     * [maxDistance] key-units.
+     */
+    fun resolveNearestKey(
+        touch: androidx.compose.ui.geometry.Offset,
+        prev: Char?,
+        maxDistance: Float = 1.2f
+    ): Char? {
+        var best: Char? = null
+        var bestScore = Float.MAX_VALUE
+        for ((ch, c) in QwertyGeometry.getDefaultCentroidMap()) {
+            val dx = touch.x - c.x
+            val dy = touch.y - c.y
+            val d = kotlin.math.sqrt(dx * dx + dy * dy)
+            if (d > maxDistance) continue
+            val score = d * distanceMultiplier(prev, ch)
+            if (score < bestScore) { bestScore = score; best = ch }
+        }
+        return best
+    }
+}
