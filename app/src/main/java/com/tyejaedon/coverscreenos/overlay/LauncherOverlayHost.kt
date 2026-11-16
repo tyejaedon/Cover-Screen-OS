@@ -5,6 +5,7 @@ import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
+import com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -47,11 +48,14 @@ class LauncherOverlayHost internal constructor(
     val appRepository: PackageManagerAppScannerRepository,
     val launcherSettingsStore: LauncherSettingsStore,
     internal val launchCoordinator: CoverLaunchCoordinator,
+    val widgetHostManager: CoverAppWidgetHostManager,
     val deviceLockState: StateFlow<Boolean>,
     val onAppSelected: (AppModel) -> Boolean,
     val persistKeyboardStrategy: suspend (KeyboardStrategy) -> Unit,
     val onRequestUnlock: () -> Unit = {},
-    val onOpenCustomize: () -> Boolean = { false }
+    val onOpenCustomize: () -> Boolean = { false },
+    val onAddWidgetRequest: () -> Boolean = { false },
+    val onConfigureWidgetRequest: (Int) -> Boolean = { false }
 ) {
     /** Convenience alias for `launcherSettingsStore.settings`. */
     val settings: Flow<LauncherSettings> get() = launcherSettingsStore.settings

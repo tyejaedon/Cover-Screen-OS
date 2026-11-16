@@ -404,8 +404,11 @@ fun CoverAppGridOverlay(
     keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
     onKeyboardStrategyChanged: (KeyboardStrategy) -> Unit = {},
     widgetIds: List<Int> = emptyList(),
+    widgetHostManager: com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager? = null,
     onRemoveWidget: (Int) -> Unit = {},
     onAddWidgetRequest: () -> Unit = {},
+    onConfigureWidget: (Int) -> Unit = {},
+    onReorderWidgets: (List<Int>) -> Unit = {},
     onRequestUnlock: () -> Unit = {},
     onRequestScreenOff: () -> Unit = {},
     onOpenCustomize: () -> Unit = {}
@@ -414,7 +417,7 @@ fun CoverAppGridOverlay(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val packageManager = remember(context) { context.packageManager }
-    val widgetHostManager = remember(context) {
+    val resolvedWidgetHostManager = widgetHostManager ?: remember(context) {
         com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(context)
     }
     val overlayComposeStartMs = remember { SystemClock.uptimeMillis() }
@@ -573,9 +576,11 @@ fun CoverAppGridOverlay(
                         keyboardStrategy = keyboardStrategy,
                         onKeyboardStrategyChanged = onKeyboardStrategyChanged,
                         widgetIds = widgetIds,
-                        widgetHostManager = widgetHostManager,
+                        widgetHostManager = resolvedWidgetHostManager,
                         onRemoveWidget = onRemoveWidget,
                         onAddWidgetRequest = onAddWidgetRequest,
+                        onConfigureWidget = onConfigureWidget,
+                        onReorderWidgets = onReorderWidgets,
                         onRequestUnlock = onRequestUnlock,
                         onRequestScreenOff = onRequestScreenOff,
                         onOpenCustomize = onOpenCustomize,
@@ -617,6 +622,8 @@ private fun InteractiveSection(
     widgetHostManager: com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager,
     onRemoveWidget: (Int) -> Unit,
     onAddWidgetRequest: () -> Unit,
+    onConfigureWidget: (Int) -> Unit,
+    onReorderWidgets: (List<Int>) -> Unit,
     onRequestUnlock: () -> Unit,
     onRequestScreenOff: () -> Unit,
     onOpenCustomize: () -> Unit,
@@ -881,6 +888,8 @@ private fun InteractiveSection(
                                     widgetHostManager = widgetHostManager,
                                     onRemoveWidget = onRemoveWidget,
                                     onAddWidgetRequest = onAddWidgetRequest,
+                                    onConfigureWidget = onConfigureWidget,
+                                    onReorderWidgets = onReorderWidgets,
                                     hazeState = hazeState,
                                     modifier = Modifier.fillMaxSize()
                                 )
