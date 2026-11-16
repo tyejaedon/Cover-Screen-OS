@@ -63,8 +63,8 @@ object AppPermissionHelper {
             ENABLED_NOTIFICATION_LISTENERS_KEY
         ) ?: return false
 
-        val targetListener = ComponentName(context, CoverNotificationListenerService::class.java).flattenToString()
-        return enabledListeners.split(':').any { it.equals(targetListener, ignoreCase = true) }
+        val target = ComponentName(context, CoverNotificationListenerService::class.java)
+        return matchesEnabledComponent(enabledListeners, target)
     }
 
     private fun isAccessibilityServiceEnabled(
@@ -83,8 +83,20 @@ object AppPermissionHelper {
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
 
-        val targetService = ComponentName(context, serviceClass).flattenToString()
-        return enabledServices.split(':').any { it.equals(targetService, ignoreCase = true) }
+        val target = ComponentName(context, serviceClass)
+        return matchesEnabledComponent(enabledServices, target)
+    }
+
+    private fun matchesEnabledComponent(enabledList: String, target: ComponentName): Boolean {
+        val full = target.flattenToString()
+        val short = target.flattenToShortString()
+        return enabledList.split(':').any { raw ->
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty()) return@any false
+            ComponentName.unflattenFromString(trimmed) == target ||
+                trimmed.equals(full, ignoreCase = true) ||
+                trimmed.equals(short, ignoreCase = true)
+        }
     }
 
     fun createAccessibilitySettingsIntent(): Intent {

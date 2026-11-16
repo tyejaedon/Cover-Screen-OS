@@ -338,10 +338,21 @@ class CoverAccessibilityService : AccessibilityService() {
                     wallpaperRotation = launcherSettings.wallpaperRotation,
                     keyboardStrategy = launcherSettings.keyboardStrategy,
                     widgetIds = launcherSettings.widgetIds,
+                    widgetHostManager = host.widgetHostManager,
                     onRemoveWidget = { id ->
+                        host.widgetHostManager.deleteAppWidgetId(id)
                         overlayScope.launch {
                             runCatching {
                                 host.launcherSettingsStore.removeWidgetId(id)
+                            }
+                        }
+                    },
+                    onAddWidgetRequest = { host.onAddWidgetRequest() },
+                    onConfigureWidget = { id -> host.onConfigureWidgetRequest(id) },
+                    onReorderWidgets = { reorderedIds ->
+                        overlayScope.launch {
+                            runCatching {
+                                host.launcherSettingsStore.setWidgetIds(reorderedIds)
                             }
                         }
                     },

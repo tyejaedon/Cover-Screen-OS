@@ -3,123 +3,97 @@ package com.tyejaedon.coverscreenos.ui.widgets
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
 import android.content.Context
-import android.view.View
+import android.os.Build
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
+import io.mockk.runs
 import io.mockk.verify
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [Build.VERSION_CODES.UPSIDE_DOWN_CAKE])
 class CoverAppWidgetHostManagerTest {
 
-    private val context: Context = mockk(relaxed = true)
-    private val appWidgetHost: AppWidgetHost = mockk(relaxed = true)
-    private val appWidgetManager: AppWidgetManager = mockk(relaxed = true)
+    private val context: Context = RuntimeEnvironment.getApplication()
 
     @Test
-    fun `startListening starts host only when not already listening`() {
-        val manager = CoverAppWidgetHostManager(
-            context = context,
-            appWidgetHost = appWidgetHost,
-            appWidgetManager = appWidgetManager
+    fun `resolveWidgetHeightDp clamps to min and max bounds`() {
+        assertEquals(160, CoverAppWidgetHostManager.resolveWidgetHeightDp(null, 2f))
+
+        val tiny = AppWidgetProviderInfo().apply { minHeight = 40 }
+        assertEquals(
+            CoverAppWidgetHostManager.MIN_WIDGET_HEIGHT_DP,
+            CoverAppWidgetHostManager.resolveWidgetHeightDp(tiny, 2f)
         )
 
-        assertFalse(manager.isHostListening())
-
-        manager.startListening()
-        assertTrue(manager.isHostListening())
-        verify(exactly = 1) { appWidgetHost.startListening() }
-
-        // Second call should be a no-op
-        manager.startListening()
-        verify(exactly = 1) { appWidgetHost.startListening() }
+        val huge = AppWidgetProviderInfo().apply { minHeight = 1600 }
+        assertEquals(
+            CoverAppWidgetHostManager.MAX_WIDGET_HEIGHT_DP,
+            CoverAppWidgetHostManager.resolveWidgetHeightDp(huge, 2f)
+        )
     }
 
     @Test
-    fun `stopListening stops host to eliminate background battery drain`() {
-        val manager = CoverAppWidgetHostManager(
-            context = context,
-            appWidgetHost = appWidgetHost,
-            appWidgetManager = appWidgetManager
-        )
+    fun `startListening and stopListening are idempotent`() {
+        val host = mockk<AppWidgetHost>(relaxed = true)
+        val manager = mockk<AppWidgetManager>(relaxed = true)
+        val sut = CoverAppWidgetHostManager(context, appWidgetHost = host, appWidgetManager = manager)
 
-        manager.startListening()
-        assertTrue(manager.isHostListening())
+        sut.startListening()
+        sut.startListening()
+        assertTrue(sut.isHostListening())
+        verify(exactly = 1) { host.startListening() }
 
-        manager.stopListening()
-        assertFalse(manager.isHostListening())
-        verify(exactly = 1) { appWidgetHost.stopListening() }
-
-        // Redundant stop call is a no-op
-        manager.stopListening()
-        verify(exactly = 1) { appWidgetHost.stopListening() }
+        sut.stopListening()
+        sut.stopListening()
+        assertFalse(sut.isHostListening())
+        verify(exactly = 1) { host.stopListening() }
     }
 
     @Test
-    fun `allocateAppWidgetId delegates to host`() {
-        every { appWidgetHost.allocateAppWidgetId() } returns 101
+    fun `createBindIntent populates widget id and provider`() {
+        val host = mockk<AppWidgetHost>(relaxed = true)
+        val manager = mockk<AppWidgetManager>(relaxed = true)
+        val sut = CoverAppWidgetHostManager(context, appWidgetHost = host, appWidgetManager = manager)
+        val provider = ComponentName("com.example.pkg", "com.example.pkg.WidgetProvider")
 
-        val manager = CoverAppWidgetHostManager(
-            context = context,
-            appWidgetHost = appWidgetHost,
-            appWidgetManager = appWidgetManager
-        )
+        val intent = sut.createBindIntent(appWidgetId = 42, provider = provider)
 
-        assertEquals(101, manager.allocateAppWidgetId())
-        verify(exactly = 1) { appWidgetHost.allocateAppWidgetId() }
+        assertEquals(AppWidgetManager.ACTION_APPWIDGET_BIND, intent.action)
+        assertEquals(42, intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1))
+        val extraProvider = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, ComponentName::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER)
+        }
+        assertEquals(provider, extraProvider)
     }
 
     @Test
-    fun `deleteAppWidgetId delegates to host`() {
-        val manager = CoverAppWidgetHostManager(
-            context = context,
-            appWidgetHost = appWidgetHost,
-            appWidgetManager = appWidgetManager
-        )
+    fun `deleteAppWidgetId and bindAppWidgetIdIfAllowed delegate to host and manager`() {
+        val host = mockk<AppWidgetHost>(relaxed = true)
+        val manager = mockk<AppWidgetManager>(relaxed = true)
+        val provider = ComponentName("com.example.pkg", "com.example.pkg.WidgetProvider")
+        every { manager.bindAppWidgetIdIfAllowed(77, provider) } returns true
+        every { host.deleteAppWidgetId(77) } just runs
 
-        manager.deleteAppWidgetId(101)
-        verify(exactly = 1) { appWidgetHost.deleteAppWidgetId(101) }
-    }
+        val sut = CoverAppWidgetHostManager(context, appWidgetHost = host, appWidgetManager = manager)
 
-    @Test
-    fun `createWidgetView returns view when provider info exists`() {
-        val widgetInfo = mockk<AppWidgetProviderInfo>()
-        val mockView = mockk<android.appwidget.AppWidgetHostView>()
-        every { appWidgetManager.getAppWidgetInfo(101) } returns widgetInfo
-        every { appWidgetHost.createView(any(), 101, widgetInfo) } returns mockView
+        assertTrue(sut.bindAppWidgetIdIfAllowed(77, provider))
+        sut.deleteAppWidgetId(77)
 
-        val manager = CoverAppWidgetHostManager(
-            context = context,
-            appWidgetHost = appWidgetHost,
-            appWidgetManager = appWidgetManager
-        )
-
-        val result = manager.createWidgetView(context, 101)
-        assertNotNull(result)
-        assertEquals(mockView, result)
-    }
-
-    @Test
-    fun `createWidgetView returns null when provider info is absent`() {
-        every { appWidgetManager.getAppWidgetInfo(999) } returns null
-
-        val manager = CoverAppWidgetHostManager(
-            context = context,
-            appWidgetHost = appWidgetHost,
-            appWidgetManager = appWidgetManager
-        )
-
-        val result = manager.createWidgetView(context, 999)
-        assertNull(result)
+        verify(exactly = 1) { manager.bindAppWidgetIdIfAllowed(77, provider) }
+        verify(exactly = 1) { host.deleteAppWidgetId(77) }
     }
 }

@@ -329,23 +329,24 @@ internal fun PermissionsContent(
             }
         }
 
-        if (grants.requiredMissing) {
-            Surface(
+        Surface(
+            shape = CircleShape,
+            color = OneUITheme.colors.cardSurface,
+            border = BorderStroke(1.dp, OneUITheme.colors.hairlineBorder),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Button(
+                onClick = onContinue,
                 shape = CircleShape,
-                color = OneUITheme.colors.cardSurface,
-                border = BorderStroke(1.dp, OneUITheme.colors.hairlineBorder),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
+                colors = ButtonDefaults.buttonColors(containerColor = OneUITheme.colors.accent),
+                modifier = Modifier.fillMaxWidth().coverMinimumTouchTarget()
             ) {
-                Button(
-                    onClick = onContinue,
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(containerColor = OneUITheme.colors.accent),
-                    modifier = Modifier.fillMaxWidth().coverMinimumTouchTarget()
-                ) {
-                    Text("Continue with limited features", color = androidx.compose.ui.graphics.Color.White)
-                }
+                Text(
+                    text = if (grants.requiredMissing) "Continue with limited features" else "Continue",
+                    color = androidx.compose.ui.graphics.Color.White
+                )
             }
         }
     }

@@ -218,12 +218,14 @@ fun FlorisResizeAndControlBar(
     modifier: Modifier = Modifier,
     isT9Predictive: Boolean = true,
     onT9PredictiveToggle: (() -> Unit)? = null,
+    onPeekChanged: ((Boolean) -> Unit)? = null,
     themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover,
     trailingContent: (@Composable RowScope.() -> Unit)? = null
 ) {
     val density = LocalDensity.current
     val onExtraHeightChangedState = rememberUpdatedState(onExtraHeightChanged)
     val onHapticState = rememberUpdatedState(onHaptic)
+    val onPeekChangedState = rememberUpdatedState(onPeekChanged)
 
     Row(
         modifier = modifier
@@ -245,12 +247,34 @@ fun FlorisResizeAndControlBar(
                 }
                 .pointerInput(Unit) {
                     var lastSnapped = extraHeightDp
+                    var downwardOverflowDp = 0f
                     detectVerticalDragGestures(
-                        onDragStart = { lastSnapped = extraHeightDp },
+                        onDragStart = {
+                            lastSnapped = extraHeightDp
+                            downwardOverflowDp = 0f
+                        },
+                        onDragEnd = {
+                            downwardOverflowDp = 0f
+                            onPeekChangedState.value?.invoke(false)
+                        },
+                        onDragCancel = {
+                            downwardOverflowDp = 0f
+                            onPeekChangedState.value?.invoke(false)
+                        },
                         onVerticalDrag = { change, dragAmount ->
                             change.consume()
                             val deltaDp = with(density) { -dragAmount.toDp().value }
-                            val next = (extraHeightDp + deltaDp).coerceIn(0f, 24f)
+                            val rawNext = extraHeightDp + deltaDp
+                            if (rawNext <= 0f && deltaDp < 0f) {
+                                downwardOverflowDp += -deltaDp
+                                if (downwardOverflowDp >= 18f) {
+                                    onPeekChangedState.value?.invoke(true)
+                                }
+                            } else {
+                                downwardOverflowDp = 0f
+                                onPeekChangedState.value?.invoke(false)
+                            }
+                            val next = rawNext.coerceIn(0f, 24f)
                             onExtraHeightChangedState.value(next)
                             if (abs(next - lastSnapped) >= 6f) {
                                 lastSnapped = next
