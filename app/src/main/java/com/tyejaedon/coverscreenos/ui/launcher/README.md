@@ -6,7 +6,11 @@ The cover-display launcher UI rendered inside the accessibility-hosted `CoverCom
 
 | File | Key Types | Responsibility |
 | --- | --- | --- |
-| `CoverAppGridOverlay.kt` | `CoverAppGridOverlay`, `OverlayBitmapIconCache`, `rememberBatteryStatus` | Root cover launcher composable hosting the pager, status header, dock, and panels |
+| `CoverAppGridOverlay.kt` | `CoverAppGridOverlay`, `InteractiveSection`, `resolveDockSlots` | Root cover launcher composable hosting the pager, gestures, and panels |
+| `OverlayDisplayPolishSpec.kt` | `CoverDisplayPolishSpec`, `rememberCoverDisplayPolishSpec` | Display-cutout and container-height layout polish specifications |
+| `OverlayPackageIconCache.kt` | `OverlayBitmapIconCache`, `rememberPackageIconBitmap`, `rememberPackageLabel` | In-memory LRU + disk-backed app icon and label resolution |
+| `OverlayBatteryStatus.kt` | `BatteryStatusSnapshot`, `rememberBatteryStatus`, `BatteryStatusPill` | Live battery level/charging monitor and status pill |
+| `OverlayLockscreenTile.kt` | `LockAndDockTile`, `currentCoverTime`, `currentCoverDate` | Lockscreen clock, status pills, media card, and dock tile |
 | `OverlayAppGridComponents.kt` | `AppGridPageTile`, `GridPageLetterTooltip`, `PageIndicator`, `OneUiDockRow` | Paginated app icon grid, letter scrubber tooltip, and pinned One UI dock row |
 | `OverlayIconThumbnailDiskCache.kt` | `OverlayIconThumbnailDiskCache` | Disk cache for app icon bitmaps to avoid repeated `Drawable` rasterization |
 | `OverlayLayoutSpec.kt` | `OverlayLayoutSpec` | Responsive grid, spacing, and panel sizing calculations for cover display dimensions |
