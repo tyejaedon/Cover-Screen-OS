@@ -1,21 +1,24 @@
 package com.tyejaedon.coverscreenos.ui.keyboard
 
-import android.view.inputmethod.EditorInfo
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.click
-import androidx.compose.ui.test.longClick
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
-import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.swipeLeft
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverEditorBridge
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKey
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.SuggestionStrip
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.TextBuffer
@@ -34,10 +37,15 @@ class CoverCompactQwertyKeyboardTest {
         val typed = mutableStateOf("")
         rule.setContent {
             CoverOSTheme {
-                CoverCompactQwertyKeyboard(
-                    onChar = { typed.value += it }, onBackspace = {},
-                    onDone = {}, onClear = {}, textBeforeCursor = typed.value
-                )
+                val bridge = remember {
+                    CoverEditorBridge(
+                        overlayCallbacks = CoverBufferOverlayCallbacks(
+                            getText = { typed.value },
+                            setText = { typed.value = it }
+                        )
+                    )
+                }
+                CoverFlorisKeyboardSurface(bridge = bridge)
             }
         }
         rule.onNodeWithTag("keyboard_shift").performTouchInput { click() }
@@ -46,54 +54,52 @@ class CoverCompactQwertyKeyboardTest {
         rule.runOnIdle { assertEquals("Q", typed.value) }
         rule.onNodeWithTag("keyboard_top_0").assertTextEquals("q")
         rule.onNodeWithTag("keyboard_symbols").performTouchInput { click() }
-        rule.onNodeWithTag("keyboard_top_0").assertTextEquals("1")
-        rule.onNodeWithTag("keyboard_middle_9").assertTextEquals("\"")
-        rule.onNodeWithTag("keyboard_symbols").performTouchInput { click() }
+        rule.onNodeWithText("@").assertExists()
+        rule.onNodeWithText("ABC").performTouchInput { click() }
         rule.onNodeWithTag("keyboard_top_0").assertTextEquals("q")
     }
 
-    @Test fun enterGlyphReflectsEditorAction() {
-        val action = mutableStateOf(EditorInfo.IME_ACTION_SEARCH)
+    @Test fun enterTriggersDoneCallback() {
+        var doneCount = 0
         rule.setContent {
             CoverOSTheme {
-                CoverCompactQwertyKeyboard(
-                    onChar = {}, onBackspace = {}, onDone = {}, onClear = {},
-                    imeOptions = action.value, suggestionsEnabled = false
-                )
+                val bridge = remember {
+                    CoverEditorBridge(
+                        overlayCallbacks = CoverBufferOverlayCallbacks(
+                            getText = { "" },
+                            setText = {},
+                            onDoneAction = { doneCount++ }
+                        )
+                    )
+                }
+                CoverFlorisKeyboardSurface(bridge = bridge)
             }
         }
-        rule.onNodeWithTag("keyboard_enter").assertContentDescriptionEquals("Search")
-        rule.runOnIdle { action.value = EditorInfo.IME_ACTION_SEND }
-        rule.onNodeWithTag("keyboard_enter").assertContentDescriptionEquals("Send")
+        rule.onNodeWithTag("keyboard_enter").performTouchInput { click() }
+        rule.runOnIdle { assertEquals(1, doneCount) }
     }
 
-    @Test fun longPressTopRowEmitsDigitAndNotLetter() {
-        val typed = mutableStateOf("")
+    @Test fun t9ModeToggleNotifiesHost() {
+        var currentMode = CoverLayoutMode.QWERTY
         rule.setContent {
             CoverOSTheme {
-                CoverCompactQwertyKeyboard(
-                    onChar = { typed.value += it }, onBackspace = {},
-                    onDone = {}, onClear = {}, suggestionsEnabled = false
+                val bridge = remember {
+                    CoverEditorBridge(
+                        overlayCallbacks = CoverBufferOverlayCallbacks(
+                            getText = { "" },
+                            setText = {}
+                        )
+                    )
+                }
+                CoverFlorisKeyboardSurface(
+                    bridge = bridge,
+                    onModeChanged = { currentMode = it }
                 )
             }
         }
-        rule.onNodeWithTag("keyboard_top_0").performTouchInput { longClick(durationMillis = 500) }
-        rule.runOnIdle { assertEquals("1", typed.value) }
-    }
-
-    @Test fun spaceCorrectsHelo() {
-        val typed = mutableStateOf("helo")
-        rule.setContent {
-            CoverOSTheme {
-                CoverCompactQwertyKeyboard(
-                    onChar = { typed.value += it },
-                    onBackspace = { typed.value = typed.value.dropLast(1) },
-                    onDone = {}, onClear = {}, textBeforeCursor = typed.value
-                )
-            }
-        }
-        rule.onNodeWithTag("keyboard_space").performTouchInput { click() }
-        rule.runOnIdle { assertEquals("hello ", typed.value) }
+        rule.onNodeWithText("QWERTY").performTouchInput { click() }
+        rule.runOnIdle { assertEquals(CoverLayoutMode.T9_PREDICTIVE, currentMode) }
+        rule.onNodeWithText("T9").assertExists()
     }
 
     @Test fun t9SuggestionTapCommitsCandidate() {
@@ -151,19 +157,24 @@ class CoverCompactQwertyKeyboardTest {
         val text = mutableStateOf("helo")
         rule.setContent {
             CoverOSTheme {
-                CoverCompactQwertyKeyboard(
-                    onChar = { text.value += it },
-                    onBackspace = { text.value = text.value.dropLast(1) },
-                    onDone = {}, onClear = {}, textBeforeCursor = text.value,
-                    onCandidateCommitted = { candidate ->
-                        text.value = TextBuffer(text.value, text.value.length..text.value.length)
-                            .commitCurrentWord(candidate).text
-                    }
+                val callbacks = remember {
+                    CoverBufferOverlayCallbacks(
+                        getText = { text.value },
+                        setText = { text.value = it }
+                    )
+                }
+                val bridge = remember(callbacks) {
+                    CoverEditorBridge(overlayCallbacks = callbacks)
+                }
+                CoverFlorisKeyboardSurface(
+                    bridge = bridge,
+                    candidates = listOf("hello"),
+                    onCandidateSelected = { callbacks.onCommitCandidate(it) }
                 )
             }
         }
         rule.onNodeWithText("hello").performTouchInput { click() }
-        rule.runOnIdle { assertEquals("hello", text.value) }
+        rule.runOnIdle { assertEquals("hello ", text.value) }
     }
 
     @Test fun repeatingKeyFiresOnShortTap() {
@@ -221,50 +232,21 @@ class CoverCompactQwertyKeyboardTest {
     @Test fun symbolRowGridIncludesCommonSymbols() {
         rule.setContent {
             CoverOSTheme {
-                CoverCompactQwertyKeyboard(
-                    onChar = {}, onBackspace = {}, onDone = {}, onClear = {}
-                )
+                val bridge = remember {
+                    CoverEditorBridge(
+                        overlayCallbacks = CoverBufferOverlayCallbacks(
+                            getText = { "" },
+                            setText = {}
+                        )
+                    )
+                }
+                CoverFlorisKeyboardSurface(bridge = bridge)
             }
         }
         rule.onNodeWithTag("keyboard_symbols").performTouchInput { click() }
-        val expectedSymbols = listOf("#", "%", "*", "+", "=", "!", "?", "'")
-        expectedSymbols.forEachIndexed { index, symbol ->
-            rule.onNodeWithTag("keyboard_symbol_$index").assertTextEquals(symbol)
-        }
-    }
-
-    @Test fun accidentalTapOnClearDoesNotWipeBufferAndLongPressWipesWithUndo() {
-        val typed = mutableStateOf("hello world")
-        var clearCalled = 0
-        rule.setContent {
-            CoverOSTheme {
-                CoverCompactQwertyKeyboard(
-                    onChar = { typed.value += it },
-                    onBackspace = { typed.value = typed.value.dropLast(1) },
-                    onDone = {},
-                    onClear = { clearCalled++; typed.value = "" },
-                    textBeforeCursor = typed.value
-                )
-            }
-        }
-        // Accidental tap should NOT clear
-        rule.onNodeWithTag("keyboard_clear").performTouchInput { click() }
-        rule.runOnIdle {
-            assertEquals("hello world", typed.value)
-            assertEquals(0, clearCalled)
-        }
-
-        // Long press SHOULD clear
-        rule.onNodeWithTag("keyboard_clear").performTouchInput { longClick(durationMillis = 500) }
-        rule.runOnIdle {
-            assertEquals("", typed.value)
-            assertEquals(1, clearCalled)
-        }
-
-        // Tap after clear should undo
-        rule.onNodeWithTag("keyboard_clear").performTouchInput { click() }
-        rule.runOnIdle {
-            assertEquals("hello world", typed.value)
+        val expectedSymbols = listOf("#", "%", "*", "+", "!", "?", "'", "@")
+        expectedSymbols.forEach { symbol ->
+            rule.onNodeWithText(symbol).assertExists()
         }
     }
 

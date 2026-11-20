@@ -85,7 +85,6 @@ import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverOverlayInputCallbacks
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
-import com.tyejaedon.coverscreenos.ui.keyboard.CoverCompactQwertyKeyboard
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9PredictionToggle
 import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9SuggestionStrip
 import com.tyejaedon.coverscreenos.ui.keyboard.previousWordLength
@@ -280,7 +279,7 @@ internal fun compatibleKeyboardMode(
     saved: CoverKeyboardMode?
 ): CoverKeyboardMode = when {
     metadata.isNumeric || metadata.isPhoneNumber || metadata.isPassword -> CoverKeyboardMode.NUMERIC_PIN
-    else -> saved ?: CoverKeyboardMode.T9_MULTITAP
+    else -> saved ?: CoverKeyboardMode.QWERTY
 }
 
 internal class FocusLossGate {
@@ -331,7 +330,7 @@ data class CoverInputSessionState(
     val isActive: Boolean = false,
     val buffer: String = "",
     val cursorPosition: Int = 0,
-    val keyboardMode: CoverKeyboardMode = CoverKeyboardMode.NUMERIC_PIN,
+    val keyboardMode: CoverKeyboardMode = CoverKeyboardMode.QWERTY,
     val isT9Predictive: Boolean = false,
     val t9PredictiveDigits: String = "",
     val metadata: CoverFieldMetadata = CoverFieldMetadata(),
@@ -634,13 +633,18 @@ object CoverInputSessionManager {
 
     fun setT9Predictive(enabled: Boolean) {
         val state = _sessionState.value
-        if (!state.isActive || state.keyboardMode != CoverKeyboardMode.T9_MULTITAP ||
+        if (!state.isActive ||
             state.metadata.isPassword || state.metadata.isNumeric || state.metadata.isPhoneNumber
         ) {
             Log.w(TAG, "Predictive T9 unavailable for this field")
             return
         }
-        if (state.isT9Predictive == enabled) return
+        val targetMode = if (enabled && state.keyboardMode != CoverKeyboardMode.T9_MULTITAP) {
+            CoverKeyboardMode.T9_MULTITAP
+        } else {
+            state.keyboardMode
+        }
+        if (state.isT9Predictive == enabled && state.keyboardMode == targetMode) return
         if (enabled && textBuffer.text.take(textBuffer.selection.first).lastOrNull()?.isLetter() == true) {
             _sessionState.value = state.copy(lastStatusMessage = "Finish this word before predictive T9")
             return
@@ -650,6 +654,7 @@ object CoverInputSessionManager {
             Log.w(TAG, "Discarding uncommitted predictive digits on mode change")
         }
         _sessionState.value = state.copy(
+            keyboardMode = targetMode,
             isT9Predictive = enabled,
             t9PredictiveDigits = "",
             lastStatusMessage = when {

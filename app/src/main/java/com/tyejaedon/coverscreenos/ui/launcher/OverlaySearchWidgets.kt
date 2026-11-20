@@ -44,8 +44,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,8 +65,12 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverEditorBridge
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
+import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
 import com.tyejaedon.coverscreenos.ui.CoverSearchUiTestTags
-import com.tyejaedon.coverscreenos.ui.keyboard.CoverCompactQwertyKeyboard
+import com.tyejaedon.coverscreenos.ui.keyboard.CoverBufferOverlayCallbacks
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ComposingTextPreview
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
@@ -238,6 +246,8 @@ private fun SearchWidgetTile(
 
             if (keyboardStrategy == KeyboardStrategy.T9 && isCoverKeyboardVisible) {
                 CoverSearchKeyboardHost(
+                    searchQuery = searchQuery,
+                    onQueryChanged = onQueryChanged,
                     onCharTyped = onCharTyped,
                     onBackspacePressed = onBackspacePressed,
                     onDonePressed = onDonePressed,
@@ -595,6 +605,8 @@ private fun mapSpeechRecognizerError(errorCode: Int): String {
 
 @Composable
 private fun CoverSearchKeyboardHost(
+    searchQuery: String,
+    onQueryChanged: (String) -> Unit,
     onCharTyped: (Char) -> Unit,
     onBackspacePressed: () -> Unit,
     onDonePressed: () -> Unit,
@@ -614,11 +626,48 @@ private fun CoverSearchKeyboardHost(
                 .fillMaxWidth()
                 .coverScreenPadding(horizontal = 6.dp, vertical = 6.dp)
         ) {
-            CoverCompactQwertyKeyboard(
-                onChar = onCharTyped,
-                onBackspace = onBackspacePressed,
-                onDone = onDonePressed,
-                onClear = onClearPressed,
+            val latestSearchQuery by rememberUpdatedState(searchQuery)
+            val latestOnQueryChanged by rememberUpdatedState(onQueryChanged)
+            val latestOnCharTyped by rememberUpdatedState(onCharTyped)
+            val latestOnBackspacePressed by rememberUpdatedState(onBackspacePressed)
+            val latestOnDonePressed by rememberUpdatedState(onDonePressed)
+            val latestOnClearPressed by rememberUpdatedState(onClearPressed)
+
+            val callbacks = remember {
+                CoverBufferOverlayCallbacks(
+                    getText = { latestSearchQuery },
+                    setText = { latestOnQueryChanged(it) },
+                    onCharTyped = { latestOnCharTyped(it) },
+                    onBackspace = { latestOnBackspacePressed() },
+                    onClearAction = { latestOnClearPressed() },
+                    onDoneAction = { latestOnDonePressed() }
+                )
+            }
+
+            val bridge = remember(callbacks) {
+                CoverEditorBridge(overlayCallbacks = callbacks)
+            }
+
+            var activeLayoutMode by remember { mutableStateOf(CoverLayoutMode.QWERTY) }
+            var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
+            LaunchedEffect(searchQuery, activeLayoutMode) {
+                val word = searchQuery.takeLastWhile { it.isLetterOrDigit() }
+                candidates = if (word.isNotBlank()) {
+                    CoverKeyboardNlpManager.getCandidates(activeLayoutMode, word)
+                } else {
+                    emptyList()
+                }
+            }
+
+            CoverFlorisKeyboardSurface(
+                bridge = bridge,
+                initialMode = activeLayoutMode,
+                candidates = candidates,
+                onCandidateSelected = { candidate ->
+                    callbacks.onCommitCandidate(candidate)
+                },
+                onDismissRequest = { latestOnDonePressed() },
+                onModeChanged = { activeLayoutMode = it },
                 modifier = Modifier.fillMaxWidth()
             )
         }

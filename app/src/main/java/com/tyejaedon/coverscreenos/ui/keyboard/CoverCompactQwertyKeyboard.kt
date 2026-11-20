@@ -78,6 +78,7 @@ internal fun previousWordLength(textBeforeCursor: String): Int =
  * editable buffer should supply [textBeforeCursor] and [onMoveCursor] to enable
  * accurate predictions and space-drag cursor motion.
  */
+@Deprecated("Use CoverFlorisKeyboardSurface from :keyboard-floris instead.", level = DeprecationLevel.WARNING)
 @Composable
 internal fun CoverCompactQwertyKeyboard(
     onChar: (Char) -> Unit,

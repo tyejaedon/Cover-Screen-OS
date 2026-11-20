@@ -23,6 +23,7 @@ import androidx.core.app.ServiceCompat
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
 import com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper
+import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
 import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.services.CallPackageMatchers
@@ -375,6 +376,7 @@ class ForegroundService : Service() {
         activeServiceRef = WeakReference(this)
         publishRuntime("Service created")
         createNotificationChannel()
+        CoverKeyboardNlpManager.initializeFromContext(applicationContext)
 
         launchCoordinator = CoverLaunchCoordinator(
             onBeginLaunch = ::prepareForOverlayAppLaunch,

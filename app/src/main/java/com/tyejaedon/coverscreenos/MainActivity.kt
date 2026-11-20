@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
+import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
 import com.tyejaedon.coverscreenos.ui.appshell.AppShell
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 
@@ -18,6 +19,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        CoverKeyboardNlpManager.initializeFromContext(applicationContext)
 
         setContent {
             val settingsStore = remember { LauncherSettingsStore(applicationContext) }

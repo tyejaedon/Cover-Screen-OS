@@ -1,23 +1,29 @@
 package com.tyejaedon.coverscreenos.ui.customize.input
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.BuildConfig
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
 import com.tyejaedon.coverscreenos.datastore.HapticStrength
 import com.tyejaedon.coverscreenos.datastore.KeyboardAnchor
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
-import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKey
-import com.tyejaedon.coverscreenos.ui.keyboard.primitives.SuggestionStrip
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverEditorBridge
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
+import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
+import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
+import com.tyejaedon.coverscreenos.ui.keyboard.CoverBufferOverlayCallbacks
 
 @Composable
 internal fun InputScreen(
@@ -67,22 +73,43 @@ internal fun InputScreen(
             Text(if (showPreview) "Hide QA keyboard preview" else "Show QA keyboard preview")
         }
         if (showPreview) {
-            Column {
-                Text("Keyboard primitives preview (does not change your input method)")
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("FlorisBoard preview (does not change your input method)")
                 Text("Sample: $sampleText")
-                SuggestionStrip(
-                    suggestions = listOf("hello", "help", "held"),
-                    onSelected = { _, word -> sampleText = word }
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("2", "A", "B", "C").forEach { label ->
-                        KeyboardKey(
-                            label = label,
-                            onClick = { sampleText += label },
-                            showKeyPreview = true
-                        )
+                val callbacks = remember {
+                    CoverBufferOverlayCallbacks(
+                        getText = { sampleText },
+                        setText = { sampleText = it },
+                        onDoneAction = { showPreview = false }
+                    )
+                }
+                val bridge = remember(callbacks) {
+                    CoverEditorBridge(overlayCallbacks = callbacks)
+                }
+                var activeLayoutMode by remember { mutableStateOf(CoverLayoutMode.QWERTY) }
+                var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
+                LaunchedEffect(sampleText, activeLayoutMode) {
+                    val word = sampleText.takeLastWhile { it.isLetterOrDigit() }
+                    candidates = if (word.isNotBlank()) {
+                        CoverKeyboardNlpManager.getCandidates(activeLayoutMode, word)
+                    } else {
+                        emptyList()
                     }
                 }
+                CoverFlorisKeyboardSurface(
+                    bridge = bridge,
+                    initialMode = activeLayoutMode,
+                    candidates = candidates,
+                    onCandidateSelected = { candidate ->
+                        callbacks.onCommitCandidate(candidate)
+                    },
+                    onDismissRequest = { showPreview = false },
+                    onModeChanged = { activeLayoutMode = it },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }
