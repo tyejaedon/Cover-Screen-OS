@@ -4,7 +4,6 @@ import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Context
-import android.view.View
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -121,5 +120,64 @@ class CoverAppWidgetHostManagerTest {
 
         val result = manager.createWidgetView(context, 999)
         assertNull(result)
+    }
+
+    @Test
+    fun `getInstalledProviders returns providers from AppWidgetManager`() {
+        val info = mockk<AppWidgetProviderInfo>()
+        every { appWidgetManager.installedProviders } returns listOf(info)
+
+        val manager = CoverAppWidgetHostManager(
+            context = context,
+            appWidgetHost = appWidgetHost,
+            appWidgetManager = appWidgetManager
+        )
+
+        assertEquals(listOf(info), manager.getInstalledProviders())
+    }
+
+    @Test
+    fun `bindAppWidgetIdIfAllowed delegates to AppWidgetManager`() {
+        val component = android.content.ComponentName("com.example", "com.example.WidgetProvider")
+        val profile = android.os.Process.myUserHandle()
+        val info = mockk<AppWidgetProviderInfo>(relaxed = true) {
+            provider = component
+            every { this@mockk.profile } returns profile
+        }
+        every {
+            appWidgetManager.bindAppWidgetIdIfAllowed(101, profile, component, null)
+        } returns true
+
+        val manager = CoverAppWidgetHostManager(
+            context = context,
+            appWidgetHost = appWidgetHost,
+            appWidgetManager = appWidgetManager
+        )
+
+        assertTrue(manager.bindAppWidgetIdIfAllowed(101, info))
+    }
+
+    @Test
+    fun `createBindIntent populates widget id and provider extras`() {
+        val component = android.content.ComponentName("com.example", "com.example.WidgetProvider")
+        val profile = android.os.Process.myUserHandle()
+        val info = mockk<AppWidgetProviderInfo>(relaxed = true) {
+            provider = component
+            every { this@mockk.profile } returns profile
+        }
+        val manager = CoverAppWidgetHostManager(
+            context = context,
+            appWidgetHost = appWidgetHost,
+            appWidgetManager = appWidgetManager
+        )
+
+        val intent = manager.createBindIntent(202, info)
+        assertEquals(AppWidgetManager.ACTION_APPWIDGET_BIND, intent.action)
+        assertEquals(202, intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1))
+        @Suppress("DEPRECATION")
+        assertEquals(
+            component,
+            intent.getParcelableExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER)
+        )
     }
 }

@@ -27,8 +27,8 @@ enum class ClamshellDockAnchor {
 data class ClamshellLayoutSpec(
     val maxHeightRatio: Float = 0.44f,
     val keyHeightFloorDp: Dp = 34.dp,
-    val keyHeightCeilingDp: Dp = 58.dp,
-    val rowSpacingDp: Dp = 3.dp,
+    val keyHeightCeilingDp: Dp = 52.dp,
+    val rowSpacingDp: Dp = 5.dp,
     val dockAnchor: ClamshellDockAnchor = ClamshellDockAnchor.CENTER,
     val isOneHandedEnabled: Boolean = false,
     val extraHeightDp: Float = 0f

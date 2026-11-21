@@ -10,6 +10,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -50,12 +51,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.models.AppModel
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusSmall
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTextStyles
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayAccent
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayOnAccent
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
-import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
 import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
 import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUITokens
@@ -73,7 +72,7 @@ private const val INDICATOR_SCRUB_SENSITIVITY = 1.45f
 private const val INDICATOR_SCRUB_INTERVAL_MS = 42L
 
 private val GRID_TILE_GAP = 6.dp
-private val GRID_CONTENT_PADDING = coverScreenContentPadding(horizontal = 6.dp, vertical = 2.dp)
+private val GRID_CONTENT_PADDING = PaddingValues(start = 6.dp, top = 14.dp, end = 6.dp, bottom = 2.dp)
 
 @Composable
 internal fun AppGridPageTile(
@@ -443,18 +442,12 @@ private fun AppGridTile(
                 }
             }
 
-            // Blurred backdrop pill behind the label so the package name stays
-            // legible over any wallpaper. Falls back to no backdrop when no
-            // HazeState is threaded through (e.g. isolated previews).
-            val labelBackdrop = if (hazeState != null) {
-                Modifier.oneUiPanel(
-                    shape = RoundedCornerShape(CoverOneUITokens.radiusChip),
-                    hazeState = hazeState,
-                    blurRadius = 18.dp
-                )
-            } else {
-                Modifier
-            }
+            // Translucent pill behind the label so the package name stays legible
+            // over any wallpaper without spawning a separate Haze blur pass per tile.
+            val labelBackdrop = Modifier.background(
+                color = Color.Black.copy(alpha = 0.52f),
+                shape = RoundedCornerShape(CoverOneUITokens.radiusChip)
+            )
 
             Text(
                 text = app.name,

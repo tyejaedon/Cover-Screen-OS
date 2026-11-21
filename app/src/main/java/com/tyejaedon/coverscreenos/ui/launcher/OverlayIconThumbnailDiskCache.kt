@@ -19,7 +19,7 @@ private const val ICON_THUMBNAIL_EDGE_PX = 128
 private const val ICON_THUMBNAIL_CACHE_MAX_BYTES = 36L * 1024L * 1024L
 
 internal object OverlayIconThumbnailDiskCache {
-    fun get(context: Context, packageName: String, versionToken: String?): Drawable? {
+    fun getBitmap(context: Context, packageName: String, versionToken: String?): Bitmap? {
         val cacheFile = cacheFileFor(
             context = context,
             packageName = packageName,
@@ -30,13 +30,17 @@ internal object OverlayIconThumbnailDiskCache {
         return runCatching {
             val bitmap = android.graphics.BitmapFactory.decodeFile(cacheFile.absolutePath) ?: return null
             cacheFile.setLastModified(System.currentTimeMillis())
-            bitmap.toDrawable(context.resources)
+            bitmap
         }.onFailure { error ->
             Log.w(
                 ICON_THUMBNAIL_CACHE_LOG_TAG,
                 "Icon disk cache read failed package=$packageName error=${error.message}"
             )
         }.getOrNull()
+    }
+
+    fun get(context: Context, packageName: String, versionToken: String?): Drawable? {
+        return getBitmap(context, packageName, versionToken)?.toDrawable(context.resources)
     }
 
     fun put(context: Context, packageName: String, versionToken: String?, drawable: Drawable) {

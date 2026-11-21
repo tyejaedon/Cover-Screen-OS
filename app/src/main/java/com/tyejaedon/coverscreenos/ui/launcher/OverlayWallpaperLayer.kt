@@ -51,7 +51,7 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 private const val WALLPAPER_LOG_TAG = "CoverWallpaper"
-private const val MAX_WALLPAPER_DECODE_PIXELS = 6_000_000L
+private const val MAX_WALLPAPER_DECODE_PIXELS = 1_800_000L
 
 @Composable
 internal fun CoverWallpaperLayer(

@@ -16,7 +16,7 @@ import com.tyejaedon.coverscreenos.ui.OverlayIconThumbnailDiskCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private const val ICON_CACHE_MAX_BYTES = 12L * 1024L * 1024L
+private const val ICON_CACHE_MAX_BYTES = 6L * 1024L * 1024L
 private const val ICON_CACHE_SIZE_UNIT_BYTES = 1024
 private const val ICON_BITMAP_EDGE_PX = 128
 
@@ -69,12 +69,12 @@ internal suspend fun resolvePackageIconBitmap(
 
     val resolved = withContext(Dispatchers.IO) {
         val versionToken = resolvePackageIconVersionToken(packageManager, packageName)
-        OverlayIconThumbnailDiskCache.get(
+        OverlayIconThumbnailDiskCache.getBitmap(
             context = context,
             packageName = packageName,
             versionToken = versionToken
-        )?.let { diskCachedDrawable ->
-            return@withContext drawableToImageBitmap(diskCachedDrawable)
+        )?.let { cachedBitmap ->
+            return@withContext cachedBitmap.asImageBitmap()
         }
 
         runCatching {

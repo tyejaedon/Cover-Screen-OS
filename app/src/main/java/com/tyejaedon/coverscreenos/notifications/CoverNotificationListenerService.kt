@@ -596,8 +596,17 @@ class CoverNotificationListenerService : NotificationListenerService() {
     }
 
     private fun toArgb8888Bitmap(bitmap: Bitmap): Bitmap {
-        if (bitmap.config == Bitmap.Config.ARGB_8888) return bitmap
-        return bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: bitmap
+        val maxEdge = maxOf(bitmap.width, bitmap.height)
+        val scaled = if (maxEdge > 512) {
+            val scale = 512f / maxEdge.toFloat()
+            val targetW = (bitmap.width * scale).toInt().coerceAtLeast(1)
+            val targetH = (bitmap.height * scale).toInt().coerceAtLeast(1)
+            runCatching { Bitmap.createScaledBitmap(bitmap, targetW, targetH, true) }.getOrDefault(bitmap)
+        } else {
+            bitmap
+        }
+        if (scaled.config == Bitmap.Config.ARGB_8888) return scaled
+        return scaled.copy(Bitmap.Config.ARGB_8888, false) ?: scaled
     }
 
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)

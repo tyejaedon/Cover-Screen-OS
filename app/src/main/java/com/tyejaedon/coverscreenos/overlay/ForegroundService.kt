@@ -446,6 +446,31 @@ class ForegroundService : Service() {
                     launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
                     launched
                 }
+            },
+            widgetHostManager = widgetHostManager,
+            onAddWidgetRequest = {
+                val packageName = appContext.packageName
+                val ready = launchCoordinator.beginLaunch(packageName)
+                if (!ready) {
+                    Log.w(LOG_TAG, "LauncherOverlayHost.onAddWidgetRequest rejected")
+                    false
+                } else {
+                    val coverDisplayId = overlayWindowController.getActiveDisplayId()
+                        ?: coverDisplayHelper.getCoverDisplayId()
+                    val pickerIntent = Intent(
+                        appContext,
+                        com.tyejaedon.coverscreenos.ui.widgets.CoverWidgetPickerActivity::class.java
+                    ).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    }
+                    val launched = CoverAppLauncher.launchIntentOnDisplay(
+                        context = appContext,
+                        intent = pickerIntent,
+                        displayId = coverDisplayId
+                    )
+                    launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
+                    launched
+                }
             }
         )
         launcherOverlayHost = host

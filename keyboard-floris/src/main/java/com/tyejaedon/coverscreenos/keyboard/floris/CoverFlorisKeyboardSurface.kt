@@ -1,37 +1,40 @@
 package com.tyejaedon.coverscreenos.keyboard.floris
 
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.provider.Settings
 import android.view.HapticFeedbackConstants
 import android.view.inputmethod.EditorInfo
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.automirrored.filled.Backspace
-import androidx.compose.material.icons.automirrored.filled.KeyboardReturn
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SpaceBar
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.Backspace
+import androidx.compose.material.icons.automirrored.rounded.KeyboardReturn
+import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -148,6 +151,7 @@ fun CoverFlorisKeyboardSurface(
     val screenHeightDp = config.screenHeightDp.dp
     val view = LocalView.current
     val density = LocalDensity.current
+    val vibrator = remember(context) { context.getSystemService(Vibrator::class.java) }
     val themePalette = customization.themePalette
 
     var activeMode by remember { mutableStateOf(initialMode) }
@@ -247,8 +251,17 @@ fun CoverFlorisKeyboardSurface(
     fun performFeedback() {
         if (onHapticOverride != null) {
             onHapticOverride()
-        } else {
-            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        } else if (Settings.System.getInt(
+                context.contentResolver,
+                Settings.System.HAPTIC_FEEDBACK_ENABLED,
+                1
+            ) != 0
+        ) {
+            if (vibrator?.hasVibrator() == true) {
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+            } else {
+                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            }
         }
         onSoundOverride?.invoke()
     }
@@ -319,10 +332,15 @@ fun CoverFlorisKeyboardSurface(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
+            .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {}
+            ),
         color = themePalette.keyboardSurface,
         contentColor = themePalette.keyForeground,
-        tonalElevation = 6.dp
+        tonalElevation = 0.dp
     ) {
         Box(
             modifier = Modifier.fillMaxWidth(),
@@ -331,11 +349,19 @@ fun CoverFlorisKeyboardSurface(
             Column(
                 modifier = Modifier
                     .fillMaxWidth(if (effectiveOneHanded) 0.82f else 1f)
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                    .padding(start = 5.dp, end = 5.dp, top = 2.dp, bottom = 5.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // 1. Floris Resize, One-Handed & Mode Control Bar
-                FlorisResizeAndControlBar(
+                // 1. Unified One UI / Gboard Top Bar (Suggestions when typing, Quick Tools when idle)
+                CoverKeyboardTopBar(
+                    candidates = candidates,
+                    selectedIndex = selectedCandidateIndex,
+                    suggestionsVisible = customization.suggestionsEnabled && customization.suggestionStripVisible,
+                    onCandidateSelected = { _, candidate ->
+                        commitWord(candidate, trailingSpace = false)
+                    },
+                    onLearnCandidate = onLearnCandidate,
+                    onSuppressCandidate = onSuppressCandidate,
                     activeMode = activeMode,
                     showModeSwitchChip = customization.showModeSwitchChip,
                     onToggleMode = {
@@ -390,23 +416,7 @@ fun CoverFlorisKeyboardSurface(
                 // Optional clipboard history row slot
                 clipboardHistoryContent?.invoke()
 
-                // 2. Floris Smartbar (Candidate Suggestions Strip)
-                if (customization.suggestionsEnabled && customization.suggestionStripVisible) {
-                    FlorisSmartbar(
-                        candidates = candidates,
-                        selectedIndex = selectedCandidateIndex,
-                        onCandidateSelected = { _, candidate ->
-                            commitWord(candidate, trailingSpace = false)
-                        },
-                        onLearnCandidate = onLearnCandidate,
-                        onSuppressCandidate = onSuppressCandidate,
-                        onHaptic = ::performFeedback,
-                        themePalette = themePalette,
-                        modifier = Modifier.testTag("keyboard_suggestions")
-                    )
-                }
-
-                // 3. Keyboard Key Rows + Interactive Glide-Typing Trail Overlay
+                // 2. Keyboard Key Rows + Interactive Glide-Typing Trail Overlay
                 val maxRowsHeight = effectiveRowHeight * currentRows.size +
                     layoutSpec.rowSpacingDp * (currentRows.size - 1).coerceAtLeast(0)
                 val glideEnabled = activeMode == CoverLayoutMode.QWERTY && glideDecoder != null
@@ -489,13 +499,17 @@ fun CoverFlorisKeyboardSurface(
                             .heightIn(max = maxRowsHeight),
                         verticalArrangement = Arrangement.spacedBy(layoutSpec.rowSpacingDp)
                     ) {
-                        currentRows.forEach { rowKeys ->
+                        currentRows.forEachIndexed { rowIndex, rowKeys ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(effectiveRowHeight),
-                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
+                                val centerQwertyRow2 = activeMode == CoverLayoutMode.QWERTY && rowIndex == 1
+                                if (centerQwertyRow2) {
+                                    Spacer(modifier = Modifier.weight(0.45f))
+                                }
                                 rowKeys.forEach { keyItem ->
                                     CoverKeyView(
                                         item = keyItem,
@@ -624,6 +638,9 @@ fun CoverFlorisKeyboardSurface(
                                         }
                                     )
                                 }
+                                if (centerQwertyRow2) {
+                                    Spacer(modifier = Modifier.weight(0.45f))
+                                }
                             }
                         }
                     }
@@ -714,19 +731,18 @@ private fun RowScope.CoverKeyView(
 
     val (enterIcon, enterDescription) = remember(imeOptions) {
         when (imeOptions and EditorInfo.IME_MASK_ACTION) {
-            EditorInfo.IME_ACTION_SEARCH -> Icons.Default.Search to "Search"
-            EditorInfo.IME_ACTION_SEND -> Icons.AutoMirrored.Filled.Send to "Send"
-            EditorInfo.IME_ACTION_GO -> Icons.AutoMirrored.Filled.ArrowForward to "Go"
-            EditorInfo.IME_ACTION_NEXT -> Icons.AutoMirrored.Filled.ArrowForward to "Next"
-            EditorInfo.IME_ACTION_DONE -> Icons.Default.Check to "Done"
-            else -> Icons.AutoMirrored.Filled.KeyboardReturn to "Enter"
+            EditorInfo.IME_ACTION_SEARCH -> Icons.Rounded.Search to "Search"
+            EditorInfo.IME_ACTION_SEND -> Icons.AutoMirrored.Rounded.Send to "Send"
+            EditorInfo.IME_ACTION_GO -> Icons.AutoMirrored.Rounded.ArrowForward to "Go"
+            EditorInfo.IME_ACTION_NEXT -> Icons.AutoMirrored.Rounded.ArrowForward to "Next"
+            EditorInfo.IME_ACTION_DONE -> Icons.Rounded.Check to "Done"
+            else -> Icons.AutoMirrored.Rounded.KeyboardReturn to "Enter"
         }
     }
 
     val iconVector: ImageVector? = when {
-        isBackspace -> Icons.AutoMirrored.Filled.Backspace
-        isSpace -> Icons.Default.SpaceBar
-        isClear -> Icons.Default.Clear
+        isBackspace -> Icons.AutoMirrored.Rounded.Backspace
+        isClear -> Icons.Rounded.Clear
         isEnter -> enterIcon
         else -> null
     }
@@ -748,12 +764,8 @@ private fun RowScope.CoverKeyView(
         item.isFunctional -> themePalette.functionalKeyBackground
         else -> themePalette.keyBackground
     }
-    val pressedBg = lerp(idleBg, Color.White, 0.12f)
-    val bg by animateColorAsState(
-        targetValue = if (isPressed) pressedBg else idleBg,
-        animationSpec = tween(60),
-        label = "FlorisKeyBg"
-    )
+    val pressedBg = lerp(idleBg, Color.White, 0.14f)
+    val bg = if (isPressed) pressedBg else idleBg
     val fgColor = when {
         isEnter -> themePalette.actionKeyForeground
         isShiftActive -> themePalette.shiftActiveForeground
@@ -761,26 +773,23 @@ private fun RowScope.CoverKeyView(
         item.isFunctional -> themePalette.functionalKeyForeground
         else -> themePalette.keyForeground
     }
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.92f else 1f,
-        animationSpec = tween(60),
-        label = "FlorisKeyScale"
-    )
+    val keyScale = if (isPressed) 0.96f else 1f
 
     val hasLongPress = isClear || item.popupSet.main != null || item.popupOptions.isNotEmpty()
+    val keyShape = RoundedCornerShape(6.dp)
 
     Box(
         modifier = Modifier
             .weight(item.weight)
             .fillMaxHeight()
-            .defaultMinSize(minWidth = 28.dp, minHeight = 32.dp)
+            .defaultMinSize(minWidth = 26.dp, minHeight = 28.dp)
             .then(if (item.tag != null) Modifier.testTag(item.tag) else Modifier)
-            .scale(scale)
-            .clip(RoundedCornerShape(8.dp))
+            .scale(keyScale)
+            .clip(keyShape)
             .background(bg)
             .then(
                 if (isShiftLocked) {
-                    Modifier.border(1.5.dp, themePalette.shiftLockedBorder, RoundedCornerShape(8.dp))
+                    Modifier.border(1.5.dp, themePalette.shiftLockedBorder, keyShape)
                 } else {
                     Modifier
                 }
@@ -805,26 +814,28 @@ private fun RowScope.CoverKeyView(
                     var lastX = down.position.x
                     cursorDragPixels = 0f
 
-                    val holdJob: Job = scope.launch {
-                        if (isBackspace) {
-                            delay(350L)
-                            while (isPressed && !dragged) {
-                                onFeedbackState.value()
-                                onActionState.value(CoverKeyAction.Backspace)
-                                delay(60L)
-                            }
-                        } else if (hasLongPress) {
-                            delay(400L)
-                            if (isPressed && !dragged) {
-                                held = true
-                                onFeedbackState.value()
-                                val handledDirectly = onLongPressState.value()
-                                if (!handledDirectly && item.popupOptions.isNotEmpty()) {
-                                    popupMenuExpanded = true
+                    val holdJob: Job? = if (isBackspace || hasLongPress) {
+                        scope.launch {
+                            if (isBackspace) {
+                                delay(350L)
+                                while (isPressed && !dragged) {
+                                    onFeedbackState.value()
+                                    onActionState.value(CoverKeyAction.Backspace)
+                                    delay(60L)
+                                }
+                            } else {
+                                delay(400L)
+                                if (isPressed && !dragged) {
+                                    held = true
+                                    onFeedbackState.value()
+                                    val handledDirectly = onLongPressState.value()
+                                    if (!handledDirectly && item.popupOptions.isNotEmpty()) {
+                                        popupMenuExpanded = true
+                                    }
                                 }
                             }
                         }
-                    }
+                    } else null
 
                     while (!released) {
                         val event = awaitPointerEvent()
@@ -837,7 +848,7 @@ private fun RowScope.CoverKeyView(
                                 pointer.position.y in 0f..size.height.toFloat()
                             val wasTap = inBoundsOnRelease && pointer.previousPressed
                             isPressed = false
-                            holdJob.cancel()
+                            holdJob?.cancel()
                             if (wasTap && !held && !dragged) {
                                 onActionState.value(item.action)
                             }
@@ -851,7 +862,7 @@ private fun RowScope.CoverKeyView(
                                         onActionState.value(CoverKeyAction.DeleteWord)
                                     }
                                     dragged = true
-                                    holdJob.cancel()
+                                    holdJob?.cancel()
                                     if (isSpace) {
                                         val deltaX = pointer.position.x - lastX
                                         cursorDragPixels += deltaX
@@ -874,13 +885,24 @@ private fun RowScope.CoverKeyView(
             },
         contentAlignment = Alignment.Center
     ) {
-        if (iconVector != null) {
+        if (isShift) {
+            ShiftKeyIcon(shiftState = shiftState, tint = fgColor)
+        } else if (iconVector != null) {
             Icon(
                 imageVector = iconVector,
                 contentDescription = null,
-                tint = fgColor
+                tint = fgColor,
+                modifier = Modifier.size(18.dp)
             )
-        } else {
+        } else if (isSpace) {
+            Text(
+                text = if (item.t9Chars.isNotEmpty() || item.primaryLabel == "0") "0  ␣" else "English",
+                color = themePalette.keySecondaryForeground,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+                textAlign = TextAlign.Center
+            )
+        } else if (item.t9Chars.isNotEmpty()) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
@@ -888,24 +910,53 @@ private fun RowScope.CoverKeyView(
                 Text(
                     text = item.primaryLabel,
                     color = fgColor,
-                    fontSize = if (item.primaryLabel.length > 2) 11.sp else 17.sp,
-                    fontWeight = if (item.isFunctional) FontWeight.SemiBold else FontWeight.Medium,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center
                 )
-
-                if (!item.secondaryLabel.isNullOrEmpty() || item.t9Chars.isNotEmpty()) {
-                    Text(
-                        text = item.secondaryLabel ?: item.t9Chars,
-                        color = themePalette.keySecondaryForeground,
-                        fontSize = 9.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.clearAndSetSemantics {}
-                    )
-                }
+                Text(
+                    text = item.t9Chars.uppercase(),
+                    color = themePalette.keySecondaryForeground,
+                    fontSize = 8.5.sp,
+                    letterSpacing = 0.5.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.clearAndSetSemantics {}
+                )
             }
+        } else {
+            val hasSecondaryHint = !item.secondaryLabel.isNullOrEmpty()
+            if (hasSecondaryHint) {
+                Text(
+                    text = item.secondaryLabel.orEmpty(),
+                    color = themePalette.keySecondaryForeground.copy(alpha = 0.72f),
+                    fontSize = 8.sp,
+                    lineHeight = 8.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    fontWeight = FontWeight.Normal,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 3.dp)
+                        .clearAndSetSemantics {}
+                )
+            }
+            Text(
+                text = item.primaryLabel,
+                color = fgColor,
+                fontSize = when {
+                    item.primaryLabel.length > 3 -> 10.sp
+                    item.primaryLabel.length > 2 -> 11.sp
+                    else -> 17.sp
+                },
+                maxLines = 1,
+                softWrap = false,
+                fontWeight = if (item.isFunctional) FontWeight.Medium else FontWeight.Normal,
+                textAlign = TextAlign.Center,
+                modifier = if (hasSecondaryHint) Modifier.padding(top = 5.dp) else Modifier
+            )
         }
 
-        if (showKeyPreview && iconVector == null && isPressed) {
+        if (showKeyPreview && !isShift && !isSpace && iconVector == null && isPressed) {
             FlorisKeyPreviewBubble(
                 label = item.primaryLabel,
                 themePalette = themePalette
@@ -916,7 +967,46 @@ private fun RowScope.CoverKeyView(
             expanded = popupMenuExpanded,
             options = item.popupOptions,
             onDismiss = { popupMenuExpanded = false },
-            onOptionSelected = onPopupOptionSelected
+            onOptionSelected = onPopupOptionSelected,
+            themePalette = themePalette
         )
+    }
+}
+
+@Composable
+private fun ShiftKeyIcon(shiftState: CoverShiftState, tint: Color) {
+    Canvas(modifier = Modifier.size(16.dp)) {
+        val w = size.width
+        val h = size.height
+        val isFilled = shiftState != CoverShiftState.LOWERCASE
+        val arrowBottom = if (shiftState == CoverShiftState.CAPS_LOCK) h * 0.76f else h * 0.88f
+        val path = Path().apply {
+            moveTo(w * 0.5f, h * 0.12f)
+            lineTo(w * 0.92f, h * 0.54f)
+            lineTo(w * 0.68f, h * 0.54f)
+            lineTo(w * 0.68f, arrowBottom)
+            lineTo(w * 0.32f, arrowBottom)
+            lineTo(w * 0.32f, h * 0.54f)
+            lineTo(w * 0.08f, h * 0.54f)
+            close()
+        }
+        if (isFilled) {
+            drawPath(path = path, color = tint)
+        } else {
+            drawPath(
+                path = path,
+                color = tint,
+                style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+            )
+        }
+        if (shiftState == CoverShiftState.CAPS_LOCK) {
+            drawLine(
+                color = tint,
+                start = Offset(w * 0.28f, h * 0.92f),
+                end = Offset(w * 0.72f, h * 0.92f),
+                strokeWidth = 1.8.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+        }
     }
 }

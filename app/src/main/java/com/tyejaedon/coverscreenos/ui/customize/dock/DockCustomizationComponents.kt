@@ -423,9 +423,12 @@ internal fun DockAppPickerDialog(
                                             }
                                         },
                                         update = { imageView ->
-                                            if (imageView.tag !== app.iconDrawable) {
-                                                imageView.setImageDrawable(app.iconDrawable)
-                                                imageView.tag = app.iconDrawable
+                                            val resolvedIcon = app.iconDrawable ?: runCatching {
+                                                imageView.context.packageManager.getApplicationIcon(app.packageName)
+                                            }.getOrNull()
+                                            if (imageView.tag !== resolvedIcon) {
+                                                imageView.setImageDrawable(resolvedIcon)
+                                                imageView.tag = resolvedIcon
                                             }
                                         },
                                         modifier = Modifier

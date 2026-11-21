@@ -6,12 +6,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -22,15 +22,19 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material.icons.rounded.Dialpad
+import androidx.compose.material.icons.rounded.Keyboard
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Smartphone
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +48,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,12 +79,272 @@ data class FlorisKeyboardCustomization(
 )
 
 /**
- * Upstream FlorisBoard Smartbar component adapted for clamshell cover displays.
- *
- * Renders:
- * - Horizontally scrollable candidate suggestions with hero primary highlight.
- * - Long-press candidate menu to learn or suppress dictionary words.
- * - Stable fixed container height (`32.dp`) so the keyboard rows never jump when candidates appear.
+ * Unified One UI / Gboard-style 34dp top bar combining:
+ * - Candidate suggestions when typing (with a compact leading button to peek at quick tools)
+ * - Clean icon-only quick toolbar when idle (mode switch, one-handed dock, clipboard, dismiss)
+ * - Integrated vertical drag-to-resize gesture on the bar itself (no extra grip row)
+ */
+@Composable
+fun CoverKeyboardTopBar(
+    candidates: List<String>,
+    selectedIndex: Int,
+    suggestionsVisible: Boolean,
+    onCandidateSelected: (Int, String) -> Unit,
+    onLearnCandidate: ((Int, String) -> Unit)?,
+    onSuppressCandidate: ((Int, String) -> Unit)?,
+    activeMode: CoverLayoutMode,
+    showModeSwitchChip: Boolean,
+    onToggleMode: () -> Unit,
+    extraHeightDp: Float,
+    onExtraHeightChanged: (Float) -> Unit,
+    oneHandedEnabled: Boolean,
+    onOneHandedToggle: () -> Unit,
+    dockAnchor: ClamshellDockAnchor,
+    onAnchorToggle: () -> Unit,
+    onDismissRequest: (() -> Unit)?,
+    onHaptic: () -> Unit,
+    modifier: Modifier = Modifier,
+    isT9Predictive: Boolean = true,
+    onT9PredictiveToggle: (() -> Unit)? = null,
+    themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover,
+    trailingContent: (@Composable RowScope.() -> Unit)? = null
+) {
+    val density = LocalDensity.current
+    val onExtraHeightChangedState = rememberUpdatedState(onExtraHeightChanged)
+    val onHapticState = rememberUpdatedState(onHaptic)
+
+    var forceToolsVisible by remember { mutableStateOf(false) }
+    val showCandidates = suggestionsVisible && candidates.isNotEmpty() && !forceToolsVisible
+
+    LaunchedEffect(candidates.isEmpty()) {
+        if (candidates.isEmpty()) {
+            forceToolsVisible = false
+        }
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(34.dp)
+            .background(themePalette.smartbarBackground)
+            .padding(horizontal = 4.dp)
+            .testTag("keyboard_resize_controls")
+            .pointerInput(Unit) {
+                var lastSnapped = extraHeightDp
+                detectVerticalDragGestures(
+                    onDragStart = { lastSnapped = extraHeightDp },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        val deltaDp = with(density) { -dragAmount.toDp().value }
+                        val next = (extraHeightDp + deltaDp).coerceIn(0f, 24f)
+                        onExtraHeightChangedState.value(next)
+                        if (abs(next - lastSnapped) >= 6f) {
+                            lastSnapped = next
+                            onHapticState.value()
+                        }
+                    }
+                )
+            },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (showCandidates) {
+            SmartbarIconButton(
+                onClick = {
+                    onHaptic()
+                    forceToolsVisible = true
+                },
+                contentDescription = "Show keyboard tools",
+                tint = themePalette.keySecondaryForeground,
+                modifier = Modifier.testTag("floris_tools_back")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ChevronLeft,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            FlorisSmartbar(
+                candidates = candidates,
+                selectedIndex = selectedIndex,
+                onCandidateSelected = onCandidateSelected,
+                onLearnCandidate = onLearnCandidate,
+                onSuppressCandidate = onSuppressCandidate,
+                onHaptic = onHaptic,
+                stripHeight = 34.dp,
+                themePalette = themePalette,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("keyboard_suggestions")
+            )
+        } else {
+            if (suggestionsVisible && candidates.isNotEmpty()) {
+                SmartbarIconButton(
+                    onClick = {
+                        onHaptic()
+                        forceToolsVisible = false
+                    },
+                    contentDescription = "Back to suggestions",
+                    tint = themePalette.actionKeyBackground
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.ChevronLeft,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            if (showModeSwitchChip) {
+                val isT9 = activeMode == CoverLayoutMode.T9_PREDICTIVE
+                SmartbarIconButton(
+                    onClick = {
+                        onHaptic()
+                        onToggleMode()
+                    },
+                    contentDescription = if (isT9) "Switch to QWERTY" else "Switch to T9",
+                    tint = themePalette.functionalKeyForeground,
+                    modifier = Modifier.testTag("floris_mode_toggle")
+                ) {
+                    Icon(
+                        imageVector = if (isT9) Icons.Rounded.Keyboard else Icons.Rounded.Dialpad,
+                        contentDescription = null,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+
+            if (activeMode == CoverLayoutMode.T9_PREDICTIVE && onT9PredictiveToggle != null) {
+                Box(
+                    modifier = Modifier
+                        .height(26.dp)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(
+                            if (isT9Predictive) themePalette.actionKeyBackground.copy(alpha = 0.18f)
+                            else themePalette.functionalKeyBackground
+                        )
+                        .clickable {
+                            onHaptic()
+                            onT9PredictiveToggle()
+                        }
+                        .padding(horizontal = 8.dp)
+                        .testTag("t9_prediction_mode_toggle"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isT9Predictive) "T9" else "Abc",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isT9Predictive) themePalette.actionKeyBackground
+                        else themePalette.functionalKeyForeground
+                    )
+                }
+            }
+
+            SmartbarIconButton(
+                onClick = {
+                    onOneHandedToggle()
+                    onHaptic()
+                },
+                contentDescription = if (oneHandedEnabled) "Disable one-handed mode" else "One-handed mode",
+                tint = if (oneHandedEnabled) themePalette.actionKeyBackground
+                else themePalette.functionalKeyForeground,
+                modifier = Modifier.testTag("keyboard_one_handed_toggle")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Smartphone,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            if (oneHandedEnabled) {
+                val anchorName = if (dockAnchor == ClamshellDockAnchor.RIGHT) "Right" else "Left"
+                SmartbarIconButton(
+                    onClick = {
+                        onAnchorToggle()
+                        onHaptic()
+                    },
+                    contentDescription = "Swap one-handed side (currently $anchorName)",
+                    tint = themePalette.functionalKeyForeground,
+                    modifier = Modifier.testTag("keyboard_one_handed_anchor_swap")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.SwapHoriz,
+                        contentDescription = null,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .testTag("keyboard_resize_grip"),
+                contentAlignment = Alignment.Center
+            ) {
+                // Subtle pill indicator for vertical drag-to-resize
+                Box(
+                    modifier = Modifier
+                        .width(24.dp)
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(1.5.dp))
+                        .background(themePalette.keySecondaryForeground.copy(alpha = 0.25f))
+                )
+            }
+
+            trailingContent?.invoke(this)
+
+            if (onDismissRequest != null) {
+                SmartbarIconButton(
+                    onClick = {
+                        onHaptic()
+                        onDismissRequest()
+                    },
+                    contentDescription = "Hide keyboard",
+                    tint = themePalette.functionalKeyForeground,
+                    modifier = Modifier.testTag("floris_dismiss_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SmartbarIconButton(
+    onClick: () -> Unit,
+    contentDescription: String,
+    tint: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .size(30.dp)
+            .clip(CircleShape)
+            .clickable(role = Role.Button, onClickLabel = contentDescription, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.material3.LocalContentColor provides tint
+        ) {
+            content()
+        }
+    }
+}
+
+/**
+ * One UI / Gboard-style Smartbar candidate strip:
+ * - Clean borderless typography with subtle vertical dividers between suggestions
+ * - Soft pill highlight only on the primary/selected candidate
+ * - Long-press candidate menu to learn or suppress dictionary words
  */
 @Composable
 fun FlorisSmartbar(
@@ -90,7 +355,7 @@ fun FlorisSmartbar(
     onLearnCandidate: ((Int, String) -> Unit)? = null,
     onSuppressCandidate: ((Int, String) -> Unit)? = null,
     onHaptic: () -> Unit = {},
-    stripHeight: Dp = 32.dp,
+    stripHeight: Dp = 34.dp,
     themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover
 ) {
     val listState = rememberLazyListState()
@@ -105,12 +370,21 @@ fun FlorisSmartbar(
 
         LazyRow(
             state = listState,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            contentPadding = PaddingValues(horizontal = 8.dp),
+            contentPadding = PaddingValues(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().height(stripHeight)
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(stripHeight)
         ) {
             items(count = candidates.size) { index ->
+                if (index > 0) {
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(14.dp)
+                            .background(themePalette.keySecondaryForeground.copy(alpha = 0.2f))
+                    )
+                }
                 val candidate = candidates[index]
                 FlorisCandidateChip(
                     label = candidate,
@@ -150,11 +424,11 @@ private fun FlorisCandidateChip(
         themePalette.candidateChipForeground
     }
 
-    Box {
+    Box(modifier = Modifier.padding(horizontal = 2.dp)) {
         Box(
             modifier = Modifier
-                .defaultMinSize(minWidth = 32.dp, minHeight = 28.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .defaultMinSize(minWidth = 44.dp, minHeight = 26.dp)
+                .clip(RoundedCornerShape(13.dp))
                 .background(bg)
                 .combinedClickable(
                     role = Role.Button,
@@ -163,11 +437,13 @@ private fun FlorisCandidateChip(
                         { menuExpanded = true }
                     } else null
                 )
-                .padding(horizontal = 12.dp, vertical = 4.dp),
+                .padding(horizontal = 10.dp, vertical = 3.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 style = LocalTextStyle.current.copy(
                     fontSize = 14.sp,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
@@ -194,184 +470,6 @@ private fun FlorisCandidateChip(
                     }
                 )
             }
-        }
-    }
-}
-
-/**
- * Top control bar combining drag-to-resize grip, one-handed mode toggle & anchor swap,
- * optional QWERTY <-> T9 mode switch, clipboard actions slot, and dismiss button.
- */
-@Composable
-fun FlorisResizeAndControlBar(
-    activeMode: CoverLayoutMode,
-    showModeSwitchChip: Boolean,
-    onToggleMode: () -> Unit,
-    extraHeightDp: Float,
-    onExtraHeightChanged: (Float) -> Unit,
-    oneHandedEnabled: Boolean,
-    onOneHandedToggle: () -> Unit,
-    dockAnchor: ClamshellDockAnchor,
-    onAnchorToggle: () -> Unit,
-    onDismissRequest: (() -> Unit)?,
-    onHaptic: () -> Unit,
-    modifier: Modifier = Modifier,
-    isT9Predictive: Boolean = true,
-    onT9PredictiveToggle: (() -> Unit)? = null,
-    themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover,
-    trailingContent: (@Composable RowScope.() -> Unit)? = null
-) {
-    val density = LocalDensity.current
-    val onExtraHeightChangedState = rememberUpdatedState(onExtraHeightChanged)
-    val onHapticState = rememberUpdatedState(onHaptic)
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .testTag("keyboard_resize_controls"),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Vertical drag resize grip
-        Box(
-            modifier = Modifier
-                .width(36.dp)
-                .height(16.dp)
-                .testTag("keyboard_resize_grip")
-                .clickable {
-                    onHaptic()
-                    val next = if (extraHeightDp >= 16f) 0f else extraHeightDp + 8f
-                    onExtraHeightChanged(next)
-                }
-                .pointerInput(Unit) {
-                    var lastSnapped = extraHeightDp
-                    detectVerticalDragGestures(
-                        onDragStart = { lastSnapped = extraHeightDp },
-                        onVerticalDrag = { change, dragAmount ->
-                            change.consume()
-                            val deltaDp = with(density) { -dragAmount.toDp().value }
-                            val next = (extraHeightDp + deltaDp).coerceIn(0f, 24f)
-                            onExtraHeightChangedState.value(next)
-                            if (abs(next - lastSnapped) >= 6f) {
-                                lastSnapped = next
-                                onHapticState.value()
-                            }
-                        }
-                    )
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(28.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(themePalette.keySecondaryForeground.copy(alpha = 0.6f))
-            )
-        }
-
-        // One-handed mode toggle
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .background(
-                    if (oneHandedEnabled) themePalette.actionKeyBackground
-                    else themePalette.functionalKeyBackground
-                )
-                .clickable {
-                    onOneHandedToggle()
-                    onHaptic()
-                }
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-                .testTag("keyboard_one_handed_toggle")
-        ) {
-            Text(
-                text = if (oneHandedEnabled) "1-hand: on" else "1-hand",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (oneHandedEnabled) themePalette.actionKeyForeground
-                else themePalette.functionalKeyForeground
-            )
-        }
-
-        if (oneHandedEnabled) {
-            val anchorName = if (dockAnchor == ClamshellDockAnchor.RIGHT) "Right" else "Left"
-            Icon(
-                imageVector = Icons.Filled.SwapHoriz,
-                contentDescription = "Swap one-handed side (currently $anchorName)",
-                tint = themePalette.functionalKeyForeground,
-                modifier = Modifier
-                    .size(20.dp)
-                    .clip(CircleShape)
-                    .clickable {
-                        onAnchorToggle()
-                        onHaptic()
-                    }
-                    .testTag("keyboard_one_handed_anchor_swap")
-            )
-        }
-
-        if (showModeSwitchChip) {
-            Text(
-                text = if (activeMode == CoverLayoutMode.T9_PREDICTIVE) "T9" else "QWERTY",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = themePalette.actionKeyForeground
-                ),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(themePalette.actionKeyBackground)
-                    .clickable {
-                        onHaptic()
-                        onToggleMode()
-                    }
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                    .testTag("floris_mode_toggle")
-            )
-        }
-
-        if (activeMode == CoverLayoutMode.T9_PREDICTIVE && onT9PredictiveToggle != null) {
-            Text(
-                text = if (isT9Predictive) "T9 Pred" else "Multi-Tap",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (isT9Predictive) themePalette.actionKeyForeground else themePalette.functionalKeyForeground
-                ),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(
-                        if (isT9Predictive) themePalette.actionKeyBackground
-                        else themePalette.functionalKeyBackground
-                    )
-                    .clickable {
-                        onHaptic()
-                        onT9PredictiveToggle()
-                    }
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                    .testTag("t9_prediction_mode_toggle")
-            )
-        }
-
-        Box(modifier = Modifier.weight(1f))
-
-        trailingContent?.invoke(this)
-
-        if (onDismissRequest != null) {
-            Text(
-                text = "✕",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = themePalette.functionalKeyForeground
-                ),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(themePalette.functionalKeyBackground)
-                    .clickable {
-                        onHaptic()
-                        onDismissRequest()
-                    }
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                    .testTag("floris_dismiss_button")
-            )
         }
     }
 }

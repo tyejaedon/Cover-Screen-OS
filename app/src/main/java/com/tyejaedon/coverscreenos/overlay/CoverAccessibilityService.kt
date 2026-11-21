@@ -423,13 +423,16 @@ class CoverAccessibilityService : AccessibilityService() {
                     wallpaperRotation = launcherSettings.wallpaperRotation,
                     keyboardStrategy = launcherSettings.keyboardStrategy,
                     widgetIds = launcherSettings.widgetIds,
+                    widgetHostManager = host.widgetHostManager,
                     onRemoveWidget = { id ->
+                        host.widgetHostManager?.deleteAppWidgetId(id)
                         overlayScope.launch {
                             runCatching {
                                 host.launcherSettingsStore.removeWidgetId(id)
                             }
                         }
                     },
+                    onAddWidgetRequest = { host.onAddWidgetRequest() },
                     onRequestUnlock = { host.onRequestUnlock() },
                     onRequestScreenOff = { requestScreenOff() },
                     onRequestSystemShade = { requestSystemShade() },

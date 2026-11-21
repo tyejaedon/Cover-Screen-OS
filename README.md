@@ -9,6 +9,12 @@ search, and Quick Settings.
 **Requirements:** Android 14+ (API 34) and a device that exposes a usable secondary
 display. Cover-display behavior depends on the phone's Android and OEM build.
 
+## Screenshots
+
+| Lockscreen & Media | App Grid | Widgets | Cover Keyboard |
+| :---: | :---: | :---: | :---: |
+| ![Cover Lockscreen](docs/screenshots/cover_lockscreen.png) | ![Cover App Grid](docs/screenshots/cover_app_grid.png) | ![Cover Widgets](docs/screenshots/cover_widgets.png) | ![Cover Keyboard](docs/screenshots/cover_keyboard.png) |
+
 ## Documentation
 
 | Guide | Purpose |

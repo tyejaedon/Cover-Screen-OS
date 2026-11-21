@@ -1,11 +1,5 @@
 package com.tyejaedon.coverscreenos.ui.launcher
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -73,8 +67,6 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import kotlin.math.cos
-import kotlin.math.sin
 
 @Composable
 internal fun LockAndDockTile(
@@ -234,59 +226,28 @@ private val LOCK_PILL_DIM_RGB_COLORS = listOf(
     Color(0xFFD66A78)
 )
 
-@Composable
-private fun Modifier.dimRgbGlow(): Modifier {
-    val transition = rememberInfiniteTransition(label = "dimRgbGlow")
-    val phaseRadians by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = (Math.PI * 2.0).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 4200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "dimRgbPhase"
+private fun Modifier.dimRgbGlow(): Modifier = this.drawBehind {
+    val cornerPx = CoverOneUITokens.radiusChip.toPx()
+    val start = Offset(0f, 0f)
+    val end = Offset(size.width, size.height)
+    val outerColors = LOCK_PILL_DIM_RGB_COLORS.map { it.copy(alpha = 0.16f) }
+    val innerColors = LOCK_PILL_DIM_RGB_COLORS.map { it.copy(alpha = 0.34f) }
+    val outerExpandPx = 3.dp.toPx()
+    drawRoundRect(
+        brush = Brush.linearGradient(colors = outerColors, start = start, end = end),
+        topLeft = Offset(-outerExpandPx, -outerExpandPx),
+        size = Size(size.width + outerExpandPx * 2f, size.height + outerExpandPx * 2f),
+        cornerRadius = CornerRadius(cornerPx + outerExpandPx, cornerPx + outerExpandPx),
+        style = Stroke(width = 3.dp.toPx())
     )
-    val glowAlpha by transition.animateFloat(
-        initialValue = 0.28f,
-        targetValue = 0.46f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2200),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "dimRgbAlpha"
+    val borderExpandPx = 0.75.dp.toPx()
+    drawRoundRect(
+        brush = Brush.linearGradient(colors = innerColors, start = start, end = end),
+        topLeft = Offset(-borderExpandPx, -borderExpandPx),
+        size = Size(size.width + borderExpandPx * 2f, size.height + borderExpandPx * 2f),
+        cornerRadius = CornerRadius(cornerPx + borderExpandPx, cornerPx + borderExpandPx),
+        style = Stroke(width = 1.2.dp.toPx())
     )
-
-    return this.drawBehind {
-        val cornerPx = CoverOneUITokens.radiusChip.toPx()
-        val dirX = cos(phaseRadians)
-        val dirY = sin(phaseRadians)
-        val start = Offset(
-            x = center.x - dirX * (size.width * 0.65f),
-            y = center.y - dirY * (size.height * 0.9f)
-        )
-        val end = Offset(
-            x = center.x + dirX * (size.width * 0.65f),
-            y = center.y + dirY * (size.height * 0.9f)
-        )
-        val outerColors = LOCK_PILL_DIM_RGB_COLORS.map { it.copy(alpha = glowAlpha * 0.45f) }
-        val innerColors = LOCK_PILL_DIM_RGB_COLORS.map { it.copy(alpha = glowAlpha * 0.85f) }
-        val outerExpandPx = 3.dp.toPx()
-        drawRoundRect(
-            brush = Brush.linearGradient(colors = outerColors, start = start, end = end),
-            topLeft = Offset(-outerExpandPx, -outerExpandPx),
-            size = Size(size.width + outerExpandPx * 2f, size.height + outerExpandPx * 2f),
-            cornerRadius = CornerRadius(cornerPx + outerExpandPx, cornerPx + outerExpandPx),
-            style = Stroke(width = 3.5.dp.toPx())
-        )
-        val borderExpandPx = 0.75.dp.toPx()
-        drawRoundRect(
-            brush = Brush.linearGradient(colors = innerColors, start = start, end = end),
-            topLeft = Offset(-borderExpandPx, -borderExpandPx),
-            size = Size(size.width + borderExpandPx * 2f, size.height + borderExpandPx * 2f),
-            cornerRadius = CornerRadius(cornerPx + borderExpandPx, cornerPx + borderExpandPx),
-            style = Stroke(width = 1.4.dp.toPx())
-        )
-    }
 }
 
 @Composable

@@ -1,14 +1,13 @@
 package com.tyejaedon.coverscreenos.keyboard.floris
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -25,7 +24,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 
 /**
- * Upstream FlorisBoard key preview bubble displayed above a pressed character key.
+ * Gboard / One UI style key preview bubble displayed above a pressed character key.
  */
 @Composable
 fun FlorisKeyPreviewBubble(
@@ -34,7 +33,7 @@ fun FlorisKeyPreviewBubble(
     themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover
 ) {
     val density = LocalDensity.current
-    val yOffsetPx = with(density) { (-46).dp.roundToPx() }
+    val yOffsetPx = with(density) { (-48).dp.roundToPx() }
 
     Popup(
         alignment = Alignment.TopCenter,
@@ -49,18 +48,17 @@ fun FlorisKeyPreviewBubble(
         Box(
             modifier = modifier
                 .testTag("floris_key_preview_popup")
-                .defaultMinSize(minWidth = 36.dp, minHeight = 40.dp)
-                .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp))
-                .clip(RoundedCornerShape(8.dp))
+                .defaultMinSize(minWidth = 38.dp, minHeight = 44.dp)
+                .shadow(elevation = 8.dp, shape = RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(10.dp))
                 .background(themePalette.popupBubbleBackground)
-                .border(1.dp, themePalette.popupBubbleBorder, RoundedCornerShape(8.dp))
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = label,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
+                fontSize = 21.sp,
+                fontWeight = FontWeight.Medium,
                 color = themePalette.popupBubbleForeground
             )
         }
@@ -68,30 +66,62 @@ fun FlorisKeyPreviewBubble(
 }
 
 /**
- * Upstream FlorisBoard extended `PopupSet` menu for selecting accented characters or
- * secondary punctuation options on long-press.
+ * Compact horizontal popup strip for selecting accented characters or secondary punctuation
+ * on long-press (Gboard / One UI style).
  */
 @Composable
 fun FlorisExtendedPopupMenu(
     expanded: Boolean,
     options: List<String>,
     onDismiss: () -> Unit,
-    onOptionSelected: (String) -> Unit
+    onOptionSelected: (String) -> Unit,
+    themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover
 ) {
     if (!expanded || options.isEmpty()) return
 
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismiss
+    val density = LocalDensity.current
+    val yOffsetPx = with(density) { (-46).dp.roundToPx() }
+
+    Popup(
+        alignment = Alignment.TopCenter,
+        offset = IntOffset(0, yOffsetPx),
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(
+            focusable = true,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            clippingEnabled = true
+        )
     ) {
-        options.forEach { option ->
-            DropdownMenuItem(
-                text = { Text(option) },
-                onClick = {
-                    onDismiss()
-                    onOptionSelected(option)
+        Row(
+            modifier = Modifier
+                .shadow(elevation = 10.dp, shape = RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(12.dp))
+                .background(themePalette.popupBubbleBackground)
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            options.forEach { option ->
+                Box(
+                    modifier = Modifier
+                        .defaultMinSize(minWidth = 32.dp, minHeight = 36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            onDismiss()
+                            onOptionSelected(option)
+                        }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = option,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = themePalette.popupBubbleForeground
+                    )
                 }
-            )
+            }
         }
     }
 }

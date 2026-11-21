@@ -38,7 +38,7 @@ internal fun rememberContactSuggestionRevision(enabled: Boolean): Int {
             PackageManager.PERMISSION_GRANTED
         // Permission can be revoked while this overlay remains mounted.
         while (true) {
-            delay(500)
+            delay(5_000)
             val isGranted = context.checkSelfPermission(Manifest.permission.READ_CONTACTS) ==
                 PackageManager.PERMISSION_GRANTED
             if (isGranted != wasGranted) {

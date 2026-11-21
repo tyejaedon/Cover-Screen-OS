@@ -1,9 +1,11 @@
 package com.tyejaedon.coverscreenos.ui.widgets
 
+import android.app.Activity
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import android.view.View
 
@@ -93,6 +95,60 @@ class CoverAppWidgetHostManager(
 
     fun getAppWidgetInfo(appWidgetId: Int): AppWidgetProviderInfo? {
         return appWidgetManager?.getAppWidgetInfo(appWidgetId)
+    }
+
+    fun getInstalledProviders(): List<AppWidgetProviderInfo> {
+        return try {
+            appWidgetManager?.installedProviders.orEmpty()
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to query installed widget providers", t)
+            emptyList()
+        }
+    }
+
+    fun bindAppWidgetIdIfAllowed(appWidgetId: Int, info: AppWidgetProviderInfo): Boolean {
+        val manager = appWidgetManager ?: return false
+        return try {
+            val profile = runCatching { info.profile }.getOrNull()
+            if (profile != null) {
+                manager.bindAppWidgetIdIfAllowed(appWidgetId, profile, info.provider, null)
+            } else {
+                manager.bindAppWidgetIdIfAllowed(appWidgetId, info.provider)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to bind appWidgetId=$appWidgetId to ${info.provider}", t)
+            false
+        }
+    }
+
+    fun createBindIntent(appWidgetId: Int, info: AppWidgetProviderInfo): Intent {
+        return Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+            runCatching { info.profile }.getOrNull()?.let { profile ->
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, profile)
+            }
+        }
+    }
+
+    fun startConfigureActivityForResult(
+        activity: Activity,
+        appWidgetId: Int,
+        requestCode: Int
+    ): Boolean {
+        return try {
+            appWidgetHost.startAppWidgetConfigureActivityForResult(
+                activity,
+                appWidgetId,
+                0,
+                requestCode,
+                null
+            )
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to start configure activity for appWidgetId=$appWidgetId", t)
+            false
+        }
     }
 
     fun isHostListening(): Boolean = isListening

@@ -22,14 +22,9 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,9 +38,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.SpaceBar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -58,22 +51,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -91,8 +78,6 @@ import com.tyejaedon.coverscreenos.keyboard.floris.CoverOverlayInputCallbacks
 import com.tyejaedon.coverscreenos.keyboard.floris.FlorisKeyboardCustomization
 import com.tyejaedon.coverscreenos.keyboard.floris.FlorisThemePalette
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
-import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9PredictionToggle
-import com.tyejaedon.coverscreenos.ui.keyboard.CoverT9SuggestionStrip
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardHistory
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardActionIcons
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardHistoryRow
@@ -2128,32 +2113,23 @@ fun CoverKeyboardOverlayRoot(
                 CoverKeyboardMode.T9_MULTITAP -> {
                     val suggestionsEnabled = !sessionState.metadata.isPassword &&
                         !sessionState.metadata.isNumeric && !sessionState.metadata.isPhoneNumber
-                    if (suggestionsEnabled) {
-                        CoverT9PredictionToggle(
-                            isPredictive = sessionState.isT9Predictive,
-                            onModeChanged = { enabled ->
-                                CoverInputSessionManager.setT9Predictive(enabled)
-                                if (CoverInputSessionManager.sessionState.value.isT9Predictive == enabled) {
-                                    t9DigitTrace = ""
-                                    t9CandidateCommitCount++
-                                }
-                            }
-                        )
+                    val predictiveDigits = if (sessionState.isT9Predictive) {
+                        sessionState.t9PredictiveDigits.takeIf { it.isNotEmpty() }
+                    } else {
+                        t9DigitTrace.takeIf { '-' in it }
                     }
-                    CoverT9SuggestionStrip(
-                        textBeforeCursor = beforeCursor,
-                        onCandidateCommitted = { candidate ->
-                            CoverInputSessionManager.commitCandidate(candidate)
-                            t9DigitTrace = ""
-                            t9CandidateCommitCount++
-                        },
-                        enabled = suggestionsEnabled,
-                        predictiveDigits = if (sessionState.isT9Predictive) {
-                            sessionState.t9PredictiveDigits.takeIf { it.isNotEmpty() }
-                        } else {
-                            t9DigitTrace.takeIf { '-' in it }
+                    val t9Word = beforeCursor.takeLastWhile { it.isLetter() }
+                    val t9Candidates = remember(beforeCursor, predictiveDigits, suggestionsEnabled, t9CandidateCommitCount) {
+                        if (!suggestionsEnabled) {
+                            emptyList()
+                        } else when {
+                            !predictiveDigits.isNullOrEmpty() -> CoverKeyboardNlpManager.getT9Suggestions(predictiveDigits)
+                            t9Word.isNotEmpty() -> CoverKeyboardNlpManager.getQwertySuggestions(t9Word)
+                            else -> CoverKeyboardNlpManager.getNextWordSuggestions(
+                                beforeCursor.trimEnd().takeLastWhile { it.isLetter() }
+                            )
                         }
-                    )
+                    }
                     key(
                         sessionState.metadata.packageName,
                         sessionState.metadata.viewIdResourceName,
@@ -2163,6 +2139,13 @@ fun CoverKeyboardOverlayRoot(
                         CoverFlorisKeyboardSurface(
                             bridge = bridge,
                             initialMode = CoverLayoutMode.T9_PREDICTIVE,
+                            candidates = t9Candidates,
+                            selectedCandidateIndex = if (t9Word.isNotEmpty() || !predictiveDigits.isNullOrEmpty()) 0 else -1,
+                            onCandidateSelected = { candidate ->
+                                CoverInputSessionManager.commitCandidate(candidate)
+                                t9DigitTrace = ""
+                                t9CandidateCommitCount++
+                            },
                             onDismissRequest = {
                                 t9DigitTrace = ""
                                 CoverInputSessionManager.commitAndFinish()
@@ -2199,7 +2182,7 @@ fun CoverKeyboardOverlayRoot(
                                     }
                                     coroutineScope.launch { settingsStore.setKeyboardOneHandedAnchor(next) }
                                 },
-                                suggestionStripVisible = false,
+                                suggestionStripVisible = settings.suggestionStripVisible,
                                 suggestionsEnabled = suggestionsEnabled,
                                 autocorrectEnabled = false,
                                 popupKeyPreviewEnabled = settings.popupKeyPreviewEnabled && !sessionState.metadata.isPassword,

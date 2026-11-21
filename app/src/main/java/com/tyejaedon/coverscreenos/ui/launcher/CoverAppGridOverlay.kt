@@ -3,25 +3,14 @@
 package com.tyejaedon.coverscreenos.ui.launcher
 
 import android.Manifest
-import android.content.Context
-import android.content.BroadcastReceiver
-import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.graphics.Canvas
-import android.graphics.drawable.Drawable
-import android.os.BatteryManager
 import android.os.SystemClock
 import android.util.Log
-import android.util.LruCache
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -30,43 +19,24 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
-import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -83,26 +53,16 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.Velocity
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_KEYBOARD_STRATEGY
@@ -110,46 +70,27 @@ import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.InputTelemetryStore
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
-import com.tyejaedon.coverscreenos.datastore.MAX_WALLPAPER_DIM_AMOUNT
-import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.AppGridPageTile
-import com.tyejaedon.coverscreenos.ui.CompactNowPlayingCard
-import com.tyejaedon.coverscreenos.ui.OneUiDockRow
 import com.tyejaedon.coverscreenos.ui.CoverSearchUiTestTags
 import com.tyejaedon.coverscreenos.ui.CoverWallpaperLayer
-import com.tyejaedon.coverscreenos.ui.ExpandedNowPlayingPanel
 import com.tyejaedon.coverscreenos.ui.GridPageLetterTooltip
 import com.tyejaedon.coverscreenos.ui.NotificationsPanelTile
-import com.tyejaedon.coverscreenos.ui.OverlayIconThumbnailDiskCache
 import com.tyejaedon.coverscreenos.ui.PageIndicator
 import com.tyejaedon.coverscreenos.ui.filterAppsForSearchQuery
 import com.tyejaedon.coverscreenos.ui.gridPageStartLetterForPagerPage
-import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
-import java.time.LocalDate
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
-import androidx.core.graphics.createBitmap
 import com.tyejaedon.coverscreenos.ui.launcher.WidgetGridPageTile
 import com.tyejaedon.coverscreenos.ui.launcher.rememberVoiceInputHandle
-import com.tyejaedon.coverscreenos.ui.openMediaApplicationFromOverlay
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSTextStyles
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSBatteryChargingColor
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSCallActiveColor
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSDestructiveColor
-import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
-import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiChip
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 
@@ -202,6 +143,7 @@ fun CoverAppGridOverlay(
     keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
     onKeyboardStrategyChanged: (KeyboardStrategy) -> Unit = {},
     widgetIds: List<Int> = emptyList(),
+    widgetHostManager: com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager? = null,
     onRemoveWidget: (Int) -> Unit = {},
     onAddWidgetRequest: () -> Unit = {},
     onRequestUnlock: () -> Unit = {},
@@ -213,8 +155,8 @@ fun CoverAppGridOverlay(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val packageManager = remember(context) { context.packageManager }
-    val widgetHostManager = remember(context) {
-        com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(context)
+    val resolvedWidgetHostManager = remember(context, widgetHostManager) {
+        widgetHostManager ?: com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(context)
     }
     val overlayComposeStartMs = remember { SystemClock.uptimeMillis() }
 
@@ -376,7 +318,7 @@ fun CoverAppGridOverlay(
                         keyboardStrategy = keyboardStrategy,
                         onKeyboardStrategyChanged = onKeyboardStrategyChanged,
                         widgetIds = widgetIds,
-                        widgetHostManager = widgetHostManager,
+                        widgetHostManager = resolvedWidgetHostManager,
                         onRemoveWidget = onRemoveWidget,
                         onAddWidgetRequest = onAddWidgetRequest,
                         onRequestUnlock = onRequestUnlock,
@@ -694,7 +636,6 @@ private fun InteractiveSection(
                     state = pagerState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .hazeSource(state = hazeState)
                         .testTag(CoverSearchUiTestTags.OVERLAY_PAGER),
                     userScrollEnabled = !isWidgetTileVisible && !isQuickSettingsVisible,
                     pageSpacing = 10.dp,
