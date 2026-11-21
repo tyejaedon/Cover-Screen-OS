@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,6 +43,7 @@ fun DashboardScreen(
 ) {
     var previewVisible by remember { mutableStateOf(false) }
     var startBlocked by remember { mutableStateOf(false) }
+    var noticeDismissed by rememberSaveable { mutableStateOf(false) }
 
     OneUIScaffold(
         title = "Cover Screen OS",
@@ -72,12 +74,15 @@ fun DashboardScreen(
                 }
             }
 
-            if (state.permissions.missing.isNotEmpty()) {
+            if (state.permissions.missing.isNotEmpty() && !noticeDismissed) {
                 item {
+                    val missingList = state.permissions.missing
+                    val verb = if (missingList.size == 1) "is" else "are"
                     FeatureDegradedNotice(
-                        "Cover launcher unavailable until ${state.permissions.missing.joinToString()} are enabled. " +
+                        message = "Cover launcher unavailable until ${missingList.joinToString()} $verb enabled. " +
                             "You can still use the other tabs.",
-                        onPermissions
+                        onPermissions = onPermissions,
+                        onDismiss = { noticeDismissed = true }
                     )
                 }
             }

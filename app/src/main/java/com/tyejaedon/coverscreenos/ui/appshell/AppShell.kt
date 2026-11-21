@@ -8,8 +8,13 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.Info
@@ -134,6 +139,7 @@ fun AppShell(
 
     BoxWithConstraints(modifier = modifier) {
         val expanded = maxWidth >= 600.dp
+        val isCompactHeight = maxHeight <= 480.dp
         val navItems = homeTabs.map {
             OneUINavItem(
                 route = it.route,
@@ -149,7 +155,13 @@ fun AppShell(
                         items = navItems,
                         selectedRoute = selectedTab.route,
                         onItemSelected = { navController.navigateToTab(it) },
-                        modifier = Modifier.padding(bottom = 12.dp)
+                        modifier = Modifier
+                            .windowInsetsPadding(
+                                WindowInsets.safeDrawing.only(
+                                    WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal
+                                )
+                            )
+                            .padding(bottom = if (isCompactHeight) 6.dp else 12.dp)
                     )
                 }
             },

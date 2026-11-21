@@ -1,7 +1,6 @@
 package com.tyejaedon.coverscreenos.ui.theme.oneui.components
 
 import android.content.res.Configuration
-import android.os.Build
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
@@ -35,10 +34,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -69,23 +69,21 @@ fun OneUIFloatingNavBar(
 ) {
     val selectedIndex = items.indexOfFirst { it.route == selectedRoute }.coerceAtLeast(0)
     val itemCount = items.size.coerceAtLeast(1)
-
-    val blurModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        Modifier.blur(40.dp)
-    } else {
-        Modifier
-    }
+    val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
+    val barHeight = if (isCompactHeight) 52.dp else OneUITheme.dimensions.floatingNavHeight
+    val outerHorizontalPadding = if (isCompactHeight) 12.dp else 24.dp
+    val iconSize = if (isCompactHeight) 20.dp else 22.dp
+    val labelSize = if (isCompactHeight) 10.sp else 11.sp
 
     Surface(
         shape = CircleShape,
-        color = OneUITheme.colors.cardSurface.copy(alpha = 0.82f),
-        border = BorderStroke(1.dp, if (OneUITheme.colors.isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f)),
-        shadowElevation = 0.dp,
+        color = OneUITheme.colors.cardSurface.copy(alpha = 0.94f),
+        border = BorderStroke(1.dp, if (OneUITheme.colors.isDark) Color.White.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.08f)),
+        shadowElevation = 4.dp,
         modifier = modifier
-            .height(OneUITheme.dimensions.floatingNavHeight)
-            .padding(horizontal = 24.dp)
+            .height(barHeight)
+            .padding(horizontal = outerHorizontalPadding)
             .fillMaxWidth()
-            .then(blurModifier)
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 6.dp)) {
             val itemWidth = maxWidth / itemCount
@@ -136,14 +134,15 @@ fun OneUIFloatingNavBar(
                             imageVector = item.icon,
                             contentDescription = item.title,
                             tint = if (isSelected) OneUITheme.colors.accent else OneUITheme.colors.textSecondary,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(iconSize)
                         )
                         Text(
                             text = item.title,
-                            fontSize = 11.sp,
+                            fontSize = labelSize,
                             fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Normal,
                             color = if (isSelected) OneUITheme.colors.accent else OneUITheme.colors.textSecondary,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

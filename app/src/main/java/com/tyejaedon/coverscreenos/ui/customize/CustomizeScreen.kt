@@ -8,10 +8,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,11 +34,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.PrimaryScrollableTabRow
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
@@ -49,9 +56,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.getSystemService
 import com.tyejaedon.coverscreenos.BuildConfig
@@ -103,7 +113,9 @@ internal fun CustomizeScreen(
     val scope = actionScope
     var menuExpanded by remember { mutableStateOf(false) }
     var confirmReset by rememberSaveable { mutableStateOf(false) }
+    var noticeDismissed by rememberSaveable { mutableStateOf(false) }
     var keyboardRefreshNonce by rememberSaveable { mutableIntStateOf(0) }
+    val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
     val scroll = rememberScrollState(initial = initialScrollPosition)
     DisposableEffect(category, scroll) {
         onDispose { onScrollPositionChanged(category, scroll.value) }
@@ -162,15 +174,25 @@ internal fun CustomizeScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(category.title) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
+            if (isCompactHeight) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                },
-                actions = {
-                    IconButton(onClick = { menuExpanded = true }) {
+                    Text(
+                        text = category.title,
+                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                    )
+                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(40.dp)) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Customize options")
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
@@ -207,22 +229,108 @@ internal fun CustomizeScreen(
                         }
                     }
                 }
-            )
+            } else {
+                TopAppBar(
+                    title = { Text(category.title) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Customize options")
+                        }
+                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Reset to defaults") },
+                                leadingIcon = { Icon(Icons.Filled.RestartAlt, contentDescription = null) },
+                                onClick = { menuExpanded = false; confirmReset = true }
+                            )
+                            if (BuildConfig.DEBUG) {
+                                DropdownMenuItem(
+                                    text = { Text("Export settings") },
+                                    leadingIcon = { Icon(Icons.Filled.Upload, contentDescription = null) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        runCatching { exportLauncher.launch("coverscreenos-settings.json") }
+                                            .onFailure { error ->
+                                                Log.w(LOG_TAG, "Unable to open export document", error)
+                                                scope.launch { snackbar.showSnackbar("Unable to open file picker") }
+                                            }
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Import settings") },
+                                    leadingIcon = { Icon(Icons.Filled.Download, contentDescription = null) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        runCatching { importLauncher.launch(arrayOf("application/json", "text/plain")) }
+                                            .onFailure { error ->
+                                                Log.w(LOG_TAG, "Unable to open import document", error)
+                                                scope.launch { snackbar.showSnackbar("Unable to open file picker") }
+                                            }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                )
+            }
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (!expanded) {
-                PrimaryScrollableTabRow(
-                    selectedTabIndex = category.ordinal,
-                    edgePadding = 12.dp
-                ) {
-                    CustomizeCategory.entries.forEach { tab ->
-                        Tab(
-                            selected = category == tab,
-                            onClick = { onCategorySelected(tab) },
-                            text = { Text(tab.title) },
-                            icon = { Icon(tab.icon, contentDescription = null) }
-                        )
+                if (isCompactHeight) {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(CustomizeCategory.entries) { tab ->
+                            val selected = category == tab
+                            FilterChip(
+                                selected = selected,
+                                onClick = { onCategorySelected(tab) },
+                                modifier = Modifier.height(34.dp),
+                                label = { Text(tab.title, maxLines = 1) },
+                                leadingIcon = {
+                                    Icon(
+                                        tab.icon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme.colors.accent.copy(alpha = 0.2f),
+                                    selectedLabelColor = com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme.colors.accent,
+                                    selectedLeadingIconColor = com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme.colors.accent,
+                                    containerColor = com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme.colors.cardSurface,
+                                    labelColor = com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme.colors.textSecondary,
+                                    iconColor = com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme.colors.textSecondary
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = selected,
+                                    borderColor = com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme.colors.hairlineBorder,
+                                    selectedBorderColor = com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme.colors.accent.copy(alpha = 0.5f)
+                                )
+                            )
+                        }
+                    }
+                } else {
+                    PrimaryScrollableTabRow(
+                        selectedTabIndex = category.ordinal,
+                        edgePadding = 12.dp
+                    ) {
+                        CustomizeCategory.entries.forEach { tab ->
+                            Tab(
+                                selected = category == tab,
+                                onClick = { onCategorySelected(tab) },
+                                text = { Text(tab.title) },
+                                icon = { Icon(tab.icon, contentDescription = null) }
+                            )
+                        }
                     }
                 }
             }
@@ -244,20 +352,28 @@ internal fun CustomizeScreen(
                     VerticalDivider()
                 }
                 Column(
-                    modifier = Modifier.weight(1f).fillMaxSize().verticalScroll(scroll).padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .verticalScroll(scroll)
+                        .padding(if (isCompactHeight) 12.dp else 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 10.dp else 12.dp)
                 ) {
-                    if (permissions.missing.isNotEmpty()) {
+                    if (permissions.missing.isNotEmpty() && !noticeDismissed) {
+                        val missingList = permissions.missing
+                        val verb = if (missingList.size == 1) "is" else "are"
                         FeatureDegradedNotice(
-                            "Changes can be saved, but the cover launcher cannot show them until " +
-                                "${permissions.missing.joinToString()} are enabled.",
-                            onPermissions
+                            message = "Changes can be saved, but the cover launcher cannot show them until " +
+                                "${missingList.joinToString()} $verb enabled.",
+                            onPermissions = onPermissions,
+                            onDismiss = { noticeDismissed = true }
                         )
                     }
-                    if (category == CustomizeCategory.INPUT && !permissions.inputAccessibility) {
+                    if (category == CustomizeCategory.INPUT && !permissions.inputAccessibility && !noticeDismissed) {
                         FeatureDegradedNotice(
-                            "Cover keyboard fallback and text injection need the separate input accessibility service.",
-                            onPermissions
+                            message = "Cover keyboard fallback and text injection need the separate input accessibility service.",
+                            onPermissions = onPermissions,
+                            onDismiss = { noticeDismissed = true }
                         )
                     }
                     when (category) {
