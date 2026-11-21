@@ -1,8 +1,10 @@
 package com.tyejaedon.coverscreenos.ui.controllers
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Looper
 import io.mockk.Runs
 import io.mockk.just
 import io.mockk.every
@@ -11,6 +13,7 @@ import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
 import io.mockk.verify
+import java.time.Duration
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -18,8 +21,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -196,5 +203,52 @@ class UnlockBridgeActivityTest {
             displayId = REQUEST_DISPLAY_ID
         )
         assertTrue(retryStarted)
+    }
+
+    @Test
+    fun `startUnlockRequest resets stale in-progress guard after timeout`() {
+        UnlockBridgeActivity.startUnlockRequest(context = context, packageName = PACKAGE_NAME, displayId = REQUEST_DISPLAY_ID)
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(16))
+
+        val restarted = UnlockBridgeActivity.startUnlockRequest(
+            context = context,
+            packageName = PACKAGE_NAME,
+            displayId = REQUEST_DISPLAY_ID
+        )
+
+        assertTrue(restarted)
+        verify(exactly = 2) {
+            CoverAppLauncher.dispatchActivityStartBalExempt(any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `already unlocked keyguard finishes bridge immediately without biometric prompt`() {
+        val appContext = RuntimeEnvironment.getApplication()
+        val keyguardManager = appContext.getSystemService(KeyguardManager::class.java)
+        shadowOf(keyguardManager).setKeyguardLocked(false)
+
+        val launchIntent = Intent(appContext, UnlockBridgeActivity::class.java)
+        val controller = Robolectric.buildActivity(UnlockBridgeActivity::class.java, launchIntent).create()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue(controller.get().isFinishing)
+    }
+
+    @Test
+    fun `biometric unavailable falls back to requestDismissKeyguard instead of aborting`() {
+        val appContext = RuntimeEnvironment.getApplication()
+        val keyguardManager = appContext.getSystemService(KeyguardManager::class.java)
+        shadowOf(keyguardManager).setKeyguardLocked(true)
+
+        val launchIntent = Intent(appContext, UnlockBridgeActivity::class.java)
+        val controller = Robolectric.buildActivity(UnlockBridgeActivity::class.java, launchIntent).create()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // Should stay open awaiting KeyguardManager.requestDismissKeyguard callback rather than
+        // aborting immediately on biometric unavailability.
+        assertFalse(controller.get().isFinishing)
+
+        controller.destroy()
     }
 }

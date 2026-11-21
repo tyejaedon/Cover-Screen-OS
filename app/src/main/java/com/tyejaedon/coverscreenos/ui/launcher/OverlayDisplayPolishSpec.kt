@@ -39,7 +39,7 @@ internal fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
         when {
             containerHeightDp <= 680.dp -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 28.dp,
-                dockBottomPadding = 8.dp + cutoutBottom,
+                dockBottomPadding = 2.dp,
                 cutoutTopPadding = cutoutTop,
                 cutoutBottomPadding = cutoutBottom,
                 cutoutStartPadding = cutoutStart,
@@ -47,7 +47,7 @@ internal fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
             )
             containerHeightDp <= 760.dp -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 30.dp,
-                dockBottomPadding = 10.dp + cutoutBottom,
+                dockBottomPadding = 4.dp,
                 cutoutTopPadding = cutoutTop,
                 cutoutBottomPadding = cutoutBottom,
                 cutoutStartPadding = cutoutStart,
@@ -55,7 +55,7 @@ internal fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
             )
             else -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 32.dp,
-                dockBottomPadding = 12.dp + cutoutBottom,
+                dockBottomPadding = 4.dp,
                 cutoutTopPadding = cutoutTop,
                 cutoutBottomPadding = cutoutBottom,
                 cutoutStartPadding = cutoutStart,

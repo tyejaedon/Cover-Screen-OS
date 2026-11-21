@@ -166,8 +166,9 @@
             android:name=".ui.controllers.UnlockBridgeActivity"
             android:excludeFromRecents="true"
             android:exported="false"
-            android:noHistory="true"
+            android:launchMode="singleTop"
             android:showWhenLocked="true"
+            android:taskAffinity=""
             android:theme="@style/Theme.CoverScreenOS.UnlockBridge"
             android:turnScreenOn="true" />
 

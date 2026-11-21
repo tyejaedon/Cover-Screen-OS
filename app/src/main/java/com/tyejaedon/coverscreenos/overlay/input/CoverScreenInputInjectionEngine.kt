@@ -103,6 +103,7 @@ import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
 import com.tyejaedon.coverscreenos.overlay.surface.CoverComposeSurface
 import com.tyejaedon.coverscreenos.overlay.surface.CoverSurfaceWindowConfig
 import com.tyejaedon.coverscreenos.notifications.CallPackageMatchers
+import com.tyejaedon.coverscreenos.overlay.CoverHomeSurfaceMatcher
 import com.tyejaedon.coverscreenos.overlay.ForegroundService
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.TextBuffer
@@ -1043,6 +1044,9 @@ class CoverInputAccessibilityService : AccessibilityService() {
         private var latestForegroundPackage: String? = null
 
         @Volatile
+        private var latestForegroundClassName: String? = null
+
+        @Volatile
         private var latestForegroundEventElapsedMs: Long = 0L
 
         /**
@@ -1058,6 +1062,8 @@ class CoverInputAccessibilityService : AccessibilityService() {
         private var connectedService: CoverInputAccessibilityService? = null
 
         fun currentForegroundPackage(): String? = latestForegroundPackage
+
+        fun currentForegroundClassName(): String? = latestForegroundClassName
 
         fun currentForegroundPackageEventAgeMs(nowElapsedMs: Long = SystemClock.elapsedRealtime()): Long {
             val eventElapsedMs = latestForegroundEventElapsedMs
@@ -1842,16 +1848,23 @@ class CoverInputAccessibilityService : AccessibilityService() {
         // symptom the moment the keyboard appeared.
         if (foregroundPackage == this.packageName) return
 
+        val foregroundClassName = event.className
+            ?.toString()
+            ?.trim()
+            ?.takeUnless { it.isEmpty() }
+
         val nowElapsedMs = SystemClock.elapsedRealtime()
-        val isSameForegroundPackage = latestForegroundPackage == foregroundPackage
+        val isSameForegroundPackage = latestForegroundPackage == foregroundPackage &&
+            (foregroundClassName == null || latestForegroundClassName == foregroundClassName)
         val shouldRefreshForegroundTimestamp = !isSameForegroundPackage ||
             (nowElapsedMs - latestForegroundEventElapsedMs) >= FOREGROUND_EVENT_REFRESH_MIN_INTERVAL_MS
         if (shouldRefreshForegroundTimestamp) {
             latestForegroundPackage = foregroundPackage
+            latestForegroundClassName = foregroundClassName
             latestForegroundEventElapsedMs = nowElapsedMs
         }
 
-        if (shouldTrackAsUserForegroundApp(foregroundPackage)) {
+        if (shouldTrackAsUserForegroundApp(foregroundPackage, foregroundClassName)) {
             lastKnownUserAppPackage = foregroundPackage
             lastKnownUserAppElapsedMs = nowElapsedMs
         }
@@ -1869,7 +1882,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
             return
         }
 
-        if (!shouldRequestOverlayReclaim(foregroundPackage)) {
+        if (!shouldRequestOverlayReclaim(foregroundPackage, foregroundClassName)) {
             resetReclaimCandidate()
             return
         }
@@ -1917,11 +1930,15 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return throttled
     }
 
-    private fun shouldRequestOverlayReclaim(packageName: String): Boolean {
-        return OVERLAY_RECLAIM_PACKAGE_PREFIXES.any { prefix -> packageName.startsWith(prefix) }
+    private fun shouldRequestOverlayReclaim(packageName: String, className: String? = null): Boolean {
+        return CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className) ||
+            OVERLAY_RECLAIM_PACKAGE_PREFIXES.any { prefix -> packageName.startsWith(prefix) }
     }
 
-    private fun shouldTrackAsUserForegroundApp(packageName: String): Boolean {
+    private fun shouldTrackAsUserForegroundApp(packageName: String, className: String? = null): Boolean {
+        if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
+            return false
+        }
         return NON_USER_APP_PREFIXES.none { prefix -> packageName.startsWith(prefix) }
     }
 

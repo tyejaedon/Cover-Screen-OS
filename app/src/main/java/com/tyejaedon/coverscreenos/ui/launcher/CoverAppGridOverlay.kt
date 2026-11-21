@@ -171,6 +171,16 @@ private const val SEARCH_QUERY_MAX_LENGTH = 64
 
 private val WIDGET_TILE_VERTICAL_SWIPE_THRESHOLD = 72.dp
 private val QUICK_SETTINGS_VERTICAL_SWIPE_THRESHOLD = 44.dp
+private val LOCKED_SWIPE_UNLOCK_THRESHOLD = 36.dp
+
+internal fun resolveAccessiblePageCount(isDeviceLocked: Boolean, totalPageCount: Int): Int {
+    val safeTotal = totalPageCount.coerceAtLeast(1)
+    return if (isDeviceLocked) {
+        (LOCK_PAGER_PAGE_INDEX + 1).coerceAtMost(safeTotal)
+    } else {
+        safeTotal
+    }
+}
 
 @Composable
 fun CoverAppGridOverlay(
@@ -276,9 +286,13 @@ fun CoverAppGridOverlay(
         if (filteredApps.isEmpty()) listOf(emptyList()) else filteredApps.chunked(APPS_PER_GRID_PAGE)
     }
     val totalPageCount = FIRST_APP_GRID_PAGE_INDEX + appPages.size
+    val accessiblePageCount = resolveAccessiblePageCount(
+        isDeviceLocked = isDeviceLocked,
+        totalPageCount = totalPageCount
+    )
     val pagerState = rememberPagerState(
         initialPage = LOCK_PAGER_PAGE_INDEX,
-        pageCount = { totalPageCount }
+        pageCount = { accessiblePageCount }
     )
 
 
@@ -349,7 +363,7 @@ fun CoverAppGridOverlay(
                         dockSlotFourAllApps = dockSlotFourAllApps,
                         timeLabel = timeLabel,
                         dateLabel = dateLabel,
-                        totalPageCount = totalPageCount,
+                        totalPageCount = accessiblePageCount,
                         batteryStatus = batteryStatus,
                         searchQuery = searchQuery,
                         onSearchQueryChanged = { updatedQuery ->
@@ -422,6 +436,10 @@ private fun InteractiveSection(
     val keyboardController = LocalSoftwareKeyboardController.current
     val widgetSwipeThresholdPx = with(density) { WIDGET_TILE_VERTICAL_SWIPE_THRESHOLD.toPx() }
     val quickSettingsSwipeThresholdPx = with(density) { QUICK_SETTINGS_VERTICAL_SWIPE_THRESHOLD.toPx() }
+    val lockedSwipeThresholdPx = with(density) { LOCKED_SWIPE_UNLOCK_THRESHOLD.toPx() }
+    val latestIsDeviceLocked by androidx.compose.runtime.rememberUpdatedState(isDeviceLocked)
+    val latestOnRequestUnlock by androidx.compose.runtime.rememberUpdatedState(onRequestUnlock)
+    val latestOnRequestSystemShade by androidx.compose.runtime.rememberUpdatedState(onRequestSystemShade)
     val searchFieldFocusRequester = remember { FocusRequester() }
     var showPageLetterTooltip by remember { mutableStateOf(false) }
     var isIndicatorScrubbing by remember { mutableStateOf(false) }
@@ -479,6 +497,11 @@ private fun InteractiveSection(
 
     fun openWidgetTileFromLockscreen() {
         if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX || isWidgetTileVisible || isQuickSettingsVisible) return
+        if (latestIsDeviceLocked) {
+            dismissSearchInput()
+            latestOnRequestUnlock()
+            return
+        }
         isWidgetTileVisible = true
     }
 
@@ -498,6 +521,17 @@ private fun InteractiveSection(
             if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX) {
                 pagerState.scrollToPage(LOCK_PAGER_PAGE_INDEX)
             }
+        }
+    }
+
+    LaunchedEffect(isDeviceLocked) {
+        if (!isDeviceLocked) return@LaunchedEffect
+        if (isWidgetTileVisible) {
+            dismissSearchInput()
+            isWidgetTileVisible = false
+        }
+        if (pagerState.currentPage > LOCK_PAGER_PAGE_INDEX) {
+            pagerState.scrollToPage(LOCK_PAGER_PAGE_INDEX)
         }
     }
 
@@ -555,10 +589,42 @@ private fun InteractiveSection(
         "No apps match \"$searchQuery\""
     }
 
-    val systemShadeNestedScrollConnection = remember(quickSettingsSwipeThresholdPx) {
+    val systemShadeNestedScrollConnection = remember(quickSettingsSwipeThresholdPx, lockedSwipeThresholdPx) {
         object : NestedScrollConnection {
             private var unconsumedDownwardDrag = 0f
             private var triggered = false
+            private var lockedForwardDrag = 0f
+            private var pendingUnlockOnRelease = false
+
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source != NestedScrollSource.UserInput || isWidgetTileVisible || isQuickSettingsVisible) {
+                    return Offset.Zero
+                }
+                if (!latestIsDeviceLocked) {
+                    lockedForwardDrag = 0f
+                    pendingUnlockOnRelease = false
+                    return Offset.Zero
+                }
+                val onLockEdge = pagerState.currentPage == LOCK_PAGER_PAGE_INDEX &&
+                    pagerState.currentPageOffsetFraction >= -0.01f
+                if (!onLockEdge) {
+                    lockedForwardDrag = 0f
+                    pendingUnlockOnRelease = false
+                    return Offset.Zero
+                }
+                if (available.x < 0f) {
+                    lockedForwardDrag += -available.x
+                    if (lockedForwardDrag >= lockedSwipeThresholdPx) {
+                        pendingUnlockOnRelease = true
+                    }
+                    // Consume forward swipe on Lock page while locked so Widgets/Apps never peek.
+                    return Offset(available.x, 0f)
+                } else if (available.x > 0f) {
+                    lockedForwardDrag = 0f
+                    pendingUnlockOnRelease = false
+                }
+                return Offset.Zero
+            }
 
             override fun onPostScroll(
                 consumed: Offset,
@@ -572,7 +638,7 @@ private fun InteractiveSection(
                     unconsumedDownwardDrag += available.y
                     if (!triggered && unconsumedDownwardDrag >= quickSettingsSwipeThresholdPx) {
                         triggered = true
-                        onRequestSystemShade()
+                        latestOnRequestSystemShade()
                     }
                 } else if (available.y < 0f) {
                     unconsumedDownwardDrag = 0f
@@ -581,14 +647,29 @@ private fun InteractiveSection(
             }
 
             override suspend fun onPreFling(available: Velocity): Velocity {
+                if (pendingUnlockOnRelease &&
+                    latestIsDeviceLocked &&
+                    !isWidgetTileVisible &&
+                    !isQuickSettingsVisible &&
+                    pagerState.currentPage == LOCK_PAGER_PAGE_INDEX
+                ) {
+                    pendingUnlockOnRelease = false
+                    lockedForwardDrag = 0f
+                    dismissSearchInput()
+                    latestOnRequestUnlock()
+                }
                 unconsumedDownwardDrag = 0f
                 triggered = false
+                lockedForwardDrag = 0f
+                pendingUnlockOnRelease = false
                 return Velocity.Zero
             }
 
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
                 unconsumedDownwardDrag = 0f
                 triggered = false
+                lockedForwardDrag = 0f
+                pendingUnlockOnRelease = false
                 return Velocity.Zero
             }
         }
@@ -688,8 +769,13 @@ private fun InteractiveSection(
                                         dockSlots = dockApps,
                                         dockSlotFourAllApps = dockSlotFourAllApps,
                                         onOpenAllApps = {
-                                            uiScope.launch {
-                                                pagerState.animateScrollToPage(FIRST_APP_GRID_PAGE_INDEX)
+                                            if (latestIsDeviceLocked) {
+                                                dismissSearchInput()
+                                                latestOnRequestUnlock()
+                                            } else {
+                                                uiScope.launch {
+                                                    pagerState.animateScrollToPage(FIRST_APP_GRID_PAGE_INDEX)
+                                                }
                                             }
                                         },
                                         onNotificationOpen = { model ->
@@ -836,7 +922,7 @@ private fun InteractiveSection(
                 PageIndicator(
                     pagerState = pagerState,
                     pageCount = totalPageCount,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp),
                     onScrubActiveChanged = { active -> isIndicatorScrubbing = active }
                 )
             }
