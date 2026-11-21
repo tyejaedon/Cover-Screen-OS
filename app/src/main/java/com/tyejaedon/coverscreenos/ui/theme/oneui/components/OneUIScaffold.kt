@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,7 +35,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
@@ -73,8 +78,8 @@ class OneUICollapsingHeaderState(
 
 @Composable
 fun rememberOneUICollapsingHeaderState(
-    expandedHeight: Dp = 180.dp,
-    collapsedHeight: Dp = 56.dp
+    expandedHeight: Dp = if (LocalConfiguration.current.screenHeightDp <= 480) 52.dp else 180.dp,
+    collapsedHeight: Dp = if (LocalConfiguration.current.screenHeightDp <= 480) 48.dp else 56.dp
 ): OneUICollapsingHeaderState {
     val density = LocalDensity.current
     val expandedPx = with(density) { expandedHeight.toPx() }
@@ -90,10 +95,9 @@ fun rememberOneUICollapsingHeaderState(
 /**
  * Signature Samsung One UI 8 Screen Scaffold.
  *
- * Implements the 40/60 Viewing-to-Interaction split:
- * - Top 35%–40% Viewing Area: displays an expanded 34.sp title, subtitle/status, and generous negative space.
- * - Bottom 60%–65% Interaction Area: actionable thumb-friendly controls constrained to max 680dp width.
- * - Scroll-linked collapsing header: smoothly interpolates expanded 34.sp title into compact 56.dp pinned top bar.
+ * Implements the 40/60 Viewing-to-Interaction split on standard displays, and automatically
+ * switches to a compact 52dp header on compact cover displays (<= 480dp height) so content
+ * remains immediately accessible.
  */
 @Composable
 fun OneUIScaffold(
@@ -108,7 +112,12 @@ fun OneUIScaffold(
     content: @Composable (PaddingValues) -> Unit
 ) {
     val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
+    val cutoutPadding = WindowInsets.displayCutout.asPaddingValues()
+    val topInset = maxOf(statusBarPadding.calculateTopPadding(), cutoutPadding.calculateTopPadding())
+    val cutoutStart = cutoutPadding.calculateStartPadding(layoutDirection)
+    val cutoutEnd = cutoutPadding.calculateEndPadding(layoutDirection)
     val currentHeightDp = with(density) { headerState.currentHeightPx.toDp() }
     val fraction = headerState.collapseFraction
 
@@ -119,24 +128,35 @@ fun OneUIScaffold(
             .nestedScroll(headerState.nestedScrollConnection)
     ) {
         val isWide = maxWidth >= 600.dp
-        val horizontalPadding = if (isWide) OneUITheme.dimensions.screenPaddingExpanded else OneUITheme.dimensions.screenPaddingCompact
+        val isCompactHeight = maxHeight <= 480.dp
+        val showFloatingNowPill = nowPill != null && !isCompactHeight
+        val baseHorizontalPadding = if (isWide) OneUITheme.dimensions.screenPaddingExpanded else if (isCompactHeight) 12.dp else OneUITheme.dimensions.screenPaddingCompact
+        val startPadding = maxOf(baseHorizontalPadding, cutoutStart)
+        val endPadding = maxOf(baseHorizontalPadding, cutoutEnd)
+        val effectiveTopBarHeight = if (isCompactHeight) 52.dp else currentHeightDp
 
         // Content / Interaction Area
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = currentHeightDp + statusBarPadding.calculateTopPadding()),
+                .padding(top = effectiveTopBarHeight + topInset),
             contentAlignment = Alignment.TopCenter
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .widthIn(max = OneUITheme.dimensions.maxCardWidth)
-                    .padding(horizontal = horizontalPadding)
+                    .padding(start = startPadding, end = endPadding)
             ) {
+                val bottomContentPadding = when {
+                    floatingNavBar != null && showFloatingNowPill -> OneUITheme.dimensions.floatingNavHeight + OneUITheme.dimensions.nowPillHeight + 48.dp
+                    floatingNavBar != null -> OneUITheme.dimensions.floatingNavHeight + 32.dp
+                    showFloatingNowPill -> OneUITheme.dimensions.nowPillHeight + 32.dp
+                    else -> 12.dp
+                }
                 content(
                     PaddingValues(
-                        bottom = if (floatingNavBar != null) OneUITheme.dimensions.floatingNavHeight + 32.dp else 16.dp
+                        bottom = bottomContentPadding
                     )
                 )
             }
@@ -146,11 +166,11 @@ fun OneUIScaffold(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(currentHeightDp + statusBarPadding.calculateTopPadding())
+                .height(effectiveTopBarHeight + topInset)
                 .background(
-                    if (fraction > 0.85f) OneUITheme.colors.cardSurface else OneUITheme.colors.canvasBackground
+                    if (isCompactHeight || fraction > 0.85f) OneUITheme.colors.cardSurface else OneUITheme.colors.canvasBackground
                 )
-                .padding(top = statusBarPadding.calculateTopPadding()),
+                .padding(top = topInset),
             contentAlignment = Alignment.TopCenter
         ) {
             Box(
@@ -158,17 +178,17 @@ fun OneUIScaffold(
                     .fillMaxSize()
                     .widthIn(max = OneUITheme.dimensions.maxCardWidth)
             ) {
-                // Collapsed Compact Top Bar (56dp, 20sp SemiBold)
+                // Collapsed Compact Top Bar (52dp on compact cover, 56dp on standard)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(horizontal = 16.dp),
+                        .height(if (isCompactHeight) 52.dp else 56.dp)
+                        .padding(start = startPadding, end = endPadding),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (navigationIcon != null) {
                         navigationIcon()
-                        Spacer(modifier = Modifier.height(1.dp).padding(end = 12.dp))
+                        Spacer(modifier = Modifier.height(1.dp).padding(end = 8.dp))
                     }
                     Text(
                         text = title,
@@ -178,17 +198,17 @@ fun OneUIScaffold(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
                             .weight(1f)
-                            .alpha(fraction)
+                            .alpha(if (isCompactHeight) 1f else fraction)
                     )
                     actions()
                 }
 
-                // Expanded Viewing Area (34sp Light, Subtitle, Negative Space)
-                if (fraction < 0.95f) {
+                // Expanded Viewing Area (34sp Light, Subtitle, Negative Space) - hidden on compact cover height
+                if (!isCompactHeight && fraction < 0.95f) {
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .padding(start = horizontalPadding, bottom = 20.dp, end = horizontalPadding)
+                            .padding(start = startPadding, bottom = 20.dp, end = endPadding)
                             .alpha(1f - fraction)
                     ) {
                         Text(
@@ -211,14 +231,14 @@ fun OneUIScaffold(
             }
         }
 
-        // Bottom Anchored Now Pill (e.g. background service status, fold posture, live task)
-        if (nowPill != null) {
+        // Bottom Anchored Now Pill (hidden on compact cover screens to avoid overlapping cards)
+        if (showFloatingNowPill) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = if (floatingNavBar != null) OneUITheme.dimensions.floatingNavHeight + 36.dp else 24.dp)
             ) {
-                nowPill()
+                nowPill?.invoke()
             }
         }
 

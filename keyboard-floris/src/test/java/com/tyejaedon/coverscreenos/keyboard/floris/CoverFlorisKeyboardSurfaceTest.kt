@@ -1,7 +1,6 @@
 package com.tyejaedon.coverscreenos.keyboard.floris
 
 import com.tyejaedon.coverscreenos.keyboard.core.contracts.InputAction
-import com.tyejaedon.coverscreenos.keyboard.core.contracts.KeyModel
 import com.tyejaedon.coverscreenos.keyboard.core.contracts.LayoutMode
 import com.tyejaedon.coverscreenos.keyboard.nlp.CompactTrieDictionary
 import com.tyejaedon.coverscreenos.keyboard.nlp.DTWGlideDecoder
@@ -229,7 +228,7 @@ class CoverFlorisKeyboardSurfaceTest {
 
         val palette = FlorisThemePalette.AmoledCover
         assertEquals(FlorisThemeMode.AMOLED_COVER, palette.mode)
-        assertEquals(0xFF141416L, palette.keyboardSurface.value.shr(32).toLong() and 0xFFFFFFFFL)
+        assertEquals(0xFF111215L, palette.keyboardSurface.value.shr(32).toLong() and 0xFFFFFFFFL)
 
         val numericRows = CoverLayoutFactory.createNumericRows(includeClearKey = true)
         assertEquals(4, numericRows.size)

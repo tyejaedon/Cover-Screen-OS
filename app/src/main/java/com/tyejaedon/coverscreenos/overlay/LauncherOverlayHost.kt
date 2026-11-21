@@ -48,14 +48,13 @@ class LauncherOverlayHost internal constructor(
     val appRepository: PackageManagerAppScannerRepository,
     val launcherSettingsStore: LauncherSettingsStore,
     internal val launchCoordinator: CoverLaunchCoordinator,
-    val widgetHostManager: CoverAppWidgetHostManager,
     val deviceLockState: StateFlow<Boolean>,
     val onAppSelected: (AppModel) -> Boolean,
     val persistKeyboardStrategy: suspend (KeyboardStrategy) -> Unit,
     val onRequestUnlock: () -> Unit = {},
     val onOpenCustomize: () -> Boolean = { false },
-    val onAddWidgetRequest: () -> Boolean = { false },
-    val onConfigureWidgetRequest: (Int) -> Boolean = { false }
+    val widgetHostManager: CoverAppWidgetHostManager? = null,
+    val onAddWidgetRequest: () -> Boolean = { false }
 ) {
     /** Convenience alias for `launcherSettingsStore.settings`. */
     val settings: Flow<LauncherSettings> get() = launcherSettingsStore.settings

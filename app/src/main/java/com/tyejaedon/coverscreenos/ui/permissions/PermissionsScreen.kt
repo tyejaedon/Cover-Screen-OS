@@ -25,17 +25,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -45,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -256,6 +261,28 @@ fun PermissionsScreen(
     OneUIScaffold(
         title = "Permissions",
         subtitle = "Hardware & Accessibility Setup",
+        actions = {
+            IconButton(onClick = ::refresh) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = "Refresh permissions",
+                    tint = OneUITheme.colors.textSecondary
+                )
+            }
+            TextButton(onClick = onContinue) {
+                Text(
+                    if (grants.requiredMissing) "Skip" else "Done",
+                    color = OneUITheme.colors.accent
+                )
+            }
+            IconButton(onClick = onContinue) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Dismiss permissions",
+                    tint = OneUITheme.colors.textSecondary
+                )
+            }
+        },
         modifier = modifier
     ) { paddingValues ->
         PermissionsContent(
@@ -278,75 +305,69 @@ internal fun PermissionsContent(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(OneUITheme.dimensions.cardSpacing)
-        ) {
-            item {
-                OneUICardGroup(header = "Overview") {
-                    PermissionHealthRing(grants.healthPercent)
-                }
+    val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 10.dp else OneUITheme.dimensions.cardSpacing)
+    ) {
+        item {
+            OneUICardGroup(header = "Overview") {
+                PermissionHealthRing(grants.healthPercent, compact = isCompactHeight)
             }
+        }
 
-            PermissionGroup.entries.forEach { group ->
-                val groupRows = rows.filter { it.id.group == group }
-                if (groupRows.isNotEmpty()) {
-                    item(key = group.name) {
-                        OneUICardGroup(
-                            header = when (group) {
-                                PermissionGroup.REQUIRED -> "Required Access"
-                                PermissionGroup.RECOMMENDED -> "Recommended Access"
-                                PermissionGroup.OPTIONAL -> "Optional Access"
-                            }
-                        ) {
-                            groupRows.forEachIndexed { index, row ->
-                                if (index > 0) {
-                                    OneUIInternalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                }
-                                PermissionRow(row)
-                            }
+        PermissionGroup.entries.forEach { group ->
+            val groupRows = rows.filter { it.id.group == group }
+            if (groupRows.isNotEmpty()) {
+                item(key = group.name) {
+                    OneUICardGroup(
+                        header = when (group) {
+                            PermissionGroup.REQUIRED -> "Required Access"
+                            PermissionGroup.RECOMMENDED -> "Recommended Access"
+                            PermissionGroup.OPTIONAL -> "Optional Access"
                         }
-                    }
-
-                    if (group == PermissionGroup.REQUIRED && !grants.launcherAccessibility) {
-                        item(key = "restricted-accessibility-help") {
-                            OneUICardGroup(header = "Setup Guidance") {
-                                RestrictedAccessibilityHelp(onOpenAppSettings)
+                    ) {
+                        groupRows.forEachIndexed { index, row ->
+                            if (index > 0) {
+                                OneUIInternalDivider(modifier = Modifier.padding(vertical = 4.dp))
                             }
+                            PermissionRow(row)
                         }
                     }
                 }
-            }
 
-            item {
-                OneUICardGroup(header = "Support & Diagnostics") {
-                    PermissionSupportActions(
-                        onOpenAppSettings = onOpenAppSettings,
-                        onRefresh = onRefresh
-                    )
+                if (group == PermissionGroup.REQUIRED && !grants.launcherAccessibility) {
+                    item(key = "restricted-accessibility-help") {
+                        OneUICardGroup(header = "Setup Guidance") {
+                            RestrictedAccessibilityHelp(onOpenAppSettings)
+                        }
+                    }
                 }
             }
         }
 
-        Surface(
-            shape = CircleShape,
-            color = OneUITheme.colors.cardSurface,
-            border = BorderStroke(1.dp, OneUITheme.colors.hairlineBorder),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            Button(
-                onClick = onContinue,
-                shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(containerColor = OneUITheme.colors.accent),
-                modifier = Modifier.fillMaxWidth().coverMinimumTouchTarget()
-            ) {
-                Text(
-                    text = if (grants.requiredMissing) "Continue with limited features" else "Continue",
-                    color = androidx.compose.ui.graphics.Color.White
+        item {
+            OneUICardGroup(header = "Support & Diagnostics") {
+                PermissionSupportActions(
+                    onOpenAppSettings = onOpenAppSettings,
+                    onRefresh = onRefresh
                 )
+            }
+        }
+
+        if (grants.requiredMissing) {
+            item(key = "continue-limited") {
+                Button(
+                    onClick = onContinue,
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(containerColor = OneUITheme.colors.accent),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .coverMinimumTouchTarget()
+                ) {
+                    Text("Continue with limited features", color = androidx.compose.ui.graphics.Color.White)
+                }
             }
         }
     }
@@ -378,14 +399,15 @@ private fun RestrictedAccessibilityHelp(onOpenAppSettings: () -> Unit) {
 }
 
 @Composable
-private fun PermissionHealthRing(percentage: Int) {
+private fun PermissionHealthRing(percentage: Int, compact: Boolean = false) {
+    val ringSize = if (compact) 54.dp else 80.dp
     Row(
-        modifier = Modifier.fillMaxWidth().padding(4.dp),
+        modifier = Modifier.fillMaxWidth().padding(if (compact) 2.dp else 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(20.dp)
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 14.dp else 20.dp)
     ) {
         Box(
-            modifier = Modifier.size(80.dp).semantics {
+            modifier = Modifier.size(ringSize).semantics {
                 contentDescription = "Permission health"
                 stateDescription = "$percentage percent"
             },
@@ -396,24 +418,26 @@ private fun PermissionHealthRing(percentage: Int) {
                 color = OneUITheme.colors.accent,
                 trackColor = OneUITheme.colors.cardSurfaceVariant,
                 modifier = Modifier.fillMaxSize(),
-                strokeWidth = 6.dp
+                strokeWidth = if (compact) 5.dp else 6.dp
             )
             Text(
                 "$percentage%",
-                style = OneUITheme.typography.titleLarge,
+                style = if (compact) OneUITheme.typography.labelMedium else OneUITheme.typography.titleLarge,
                 color = OneUITheme.colors.textPrimary
             )
         }
         Column {
             Text(
                 "Permission health",
-                style = OneUITheme.typography.titleLarge,
+                style = if (compact) OneUITheme.typography.bodyLarge else OneUITheme.typography.titleLarge,
                 color = OneUITheme.colors.textPrimary
             )
             Text(
-                "Required and recommended setup for smooth cover screen operation.",
+                "Required and recommended setup for cover screen operation.",
                 style = OneUITheme.typography.bodyMedium,
-                color = OneUITheme.colors.textSecondary
+                color = OneUITheme.colors.textSecondary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -469,7 +493,7 @@ private fun PermissionRow(row: PermissionRowModel) {
                 row.rationale,
                 style = OneUITheme.typography.bodyMedium,
                 color = OneUITheme.colors.textSecondary,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }

@@ -2,6 +2,37 @@ package com.tyejaedon.coverscreenos.overlay
 
 import android.os.SystemClock
 
+/**
+ * Classifies cover-display home destinations across Android / Samsung One UI versions.
+ *
+ * On One UI 9.0 (Android 17) foldable cover displays, exiting a cover app returns
+ * to `com.android.systemui/.subscreen.SubHomeActivity` rather than `com.sec.android.app.launcher`.
+ */
+object CoverHomeSurfaceMatcher {
+    private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+    private val LAUNCHER_HOME_PREFIXES = arrayOf(
+        "com.sec.android.app.launcher",
+        "com.android.launcher",
+        "com.google.android.apps.nexuslauncher"
+    )
+
+    fun isCoverHomeDestination(packageName: String, className: String? = null): Boolean {
+        if (LAUNCHER_HOME_PREFIXES.any { packageName.startsWith(it) }) {
+            return true
+        }
+        if (packageName == SYSTEM_UI_PACKAGE && !className.isNullOrBlank()) {
+            return isSubscreenHomeClassName(className)
+        }
+        return false
+    }
+
+    fun isSubscreenHomeClassName(className: String): Boolean {
+        val trimmed = className.trim()
+        return trimmed == "com.android.systemui.subscreen.SubHomeActivity" ||
+            trimmed.endsWith(".SubHomeActivity")
+    }
+}
+
 internal class OverlayTransientSignalPolicy(
     private val transientSystemUiPrefixes: Array<String>,
     private val transientSystemUiResumeSafePrefixes: Array<String>,
@@ -16,19 +47,33 @@ internal class OverlayTransientSignalPolicy(
     private var transientSystemUiSeenElapsedMs: Long = 0L
     private var transientAodSeenElapsedMs: Long = 0L
 
-    fun isTransientSystemUiPackage(packageName: String): Boolean {
+    fun isTransientSystemUiPackage(packageName: String, className: String? = null): Boolean {
+        if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
+            return false
+        }
         return transientSystemUiPrefixes.any { packageName.startsWith(it) }
     }
 
-    fun isTransientForegroundSafeForResume(packageName: String): Boolean {
+    fun isTransientForegroundSafeForResume(packageName: String, className: String? = null): Boolean {
+        if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
+            return true
+        }
         return transientSystemUiResumeSafePrefixes.any { packageName.startsWith(it) }
     }
 
-    fun isLauncherPackageForResume(packageName: String): Boolean {
+    fun isLauncherPackageForResume(packageName: String, className: String? = null): Boolean {
+        if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
+            return true
+        }
         return launcherPackagePrefixes.any { packageName.startsWith(it) }
     }
 
-    fun shouldResumeOverlayForPackage(packageName: String, launchedPackage: String?, appPackageName: String): Boolean {
+    fun shouldResumeOverlayForPackage(
+        packageName: String,
+        className: String? = null,
+        launchedPackage: String?,
+        appPackageName: String
+    ): Boolean {
         if (launchedPackage != null && packageName == launchedPackage) return false
         // Do NOT treat our own package as a "user is back on our launcher" signal.
         // Our launcher/keyboard/media panels are accessibility overlay windows
@@ -38,6 +83,7 @@ internal class OverlayTransientSignalPolicy(
         // A genuine "user returned to us" signal is instead expressed by the launcher
         // package coming back to the foreground below, which we do still honour.
         if (packageName == appPackageName) return false
+        if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) return true
         if (launcherPackagePrefixes.any { packageName.startsWith(it) }) return true
         return overlayResumePackagePrefixes.any { packageName.startsWith(it) }
     }

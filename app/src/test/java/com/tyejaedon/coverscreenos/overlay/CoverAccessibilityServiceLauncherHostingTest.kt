@@ -367,7 +367,6 @@ class CoverAccessibilityServiceLauncherHostingTest {
             appRepository = mockk<PackageManagerAppScannerRepository>(relaxed = true),
             launcherSettingsStore = settingsStore,
             launchCoordinator = mockk<CoverLaunchCoordinator>(relaxed = true),
-            widgetHostManager = mockk(relaxed = true),
             deviceLockState = MutableStateFlow(false),
             onAppSelected = { _: AppModel -> true },
             persistKeyboardStrategy = { _: KeyboardStrategy -> /* no-op */ }

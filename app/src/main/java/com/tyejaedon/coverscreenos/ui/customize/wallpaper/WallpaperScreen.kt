@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
@@ -48,12 +49,14 @@ internal fun WallpaperScreen(
     var cropY by remember(settings.wallpaperCropY) { mutableFloatStateOf(settings.wallpaperCropY) }
     var zoom by remember(settings.wallpaperZoom) { mutableFloatStateOf(settings.wallpaperZoom) }
     var rotation by remember(settings.wallpaperRotation) { mutableIntStateOf(settings.wallpaperRotation) }
+    var showCropDialog by rememberSaveable { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && !importing) {
             importing = true
             onAction("Wallpaper updated") {
                 try {
                     store.importWallpaperFromUri(uri)
+                    showCropDialog = true
                 } finally {
                     importing = false
                 }
@@ -71,6 +74,21 @@ internal fun WallpaperScreen(
         dimAmount = dim,
         blurRadiusDp = blur,
         isWallpaperImportInProgress = importing,
+        showCropDialog = showCropDialog,
+        onOpenCropDialog = { showCropDialog = true },
+        onDismissCropDialog = { showCropDialog = false },
+        onApplyCrop = { nextScale, nextCropX, nextCropY, nextZoom, nextRotation ->
+            showCropDialog = false
+            scale = nextScale
+            cropX = nextCropX
+            cropY = nextCropY
+            zoom = nextZoom
+            rotation = nextRotation
+            onAction("Wallpaper crop saved") {
+                store.setWallpaperScaleMode(nextScale)
+                store.setWallpaperCrop(nextCropX, nextCropY, nextZoom, nextRotation)
+            }
+        },
         onChooseWallpaper = {
             runCatching { picker.launch(arrayOf("image/*", "video/*")) }
                 .onFailure { error ->

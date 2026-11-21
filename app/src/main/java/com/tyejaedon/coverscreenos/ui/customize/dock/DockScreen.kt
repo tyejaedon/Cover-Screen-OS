@@ -72,10 +72,15 @@ internal fun DockScreen(
     if (settings.dockSlotFourAllApps) {
         Text("Slot 4 opens the app grid. Your pinned app is saved and returns when this is turned off.")
     }
+    val dockContext = androidx.compose.ui.platform.LocalContext.current
     DockCustomizationCard(
         dockPackages = preview,
         resolveLabel = { name -> name?.let { appsByPackage[it]?.name ?: it } ?: "Empty" },
-        resolveIcon = { appsByPackage[it]?.iconDrawable },
+        resolveIcon = { pkg ->
+            appsByPackage[pkg]?.iconDrawable ?: runCatching {
+                dockContext.packageManager.getApplicationIcon(pkg)
+            }.getOrNull()
+        },
         longPressToClear = true,
         onPreviewReorder = { preview = it },
         onReorderCommitted = { reordered -> onAction(null) { store.setDockPackages(reordered) } },

@@ -25,10 +25,10 @@ enum class ClamshellDockAnchor {
  * text field or search widgets on secondary hardware displays.
  */
 data class ClamshellLayoutSpec(
-    val maxHeightRatio: Float = 0.52f,
-    val keyHeightFloorDp: Dp = 36.dp,
-    val keyHeightCeilingDp: Dp = 58.dp,
-    val rowSpacingDp: Dp = 2.dp,
+    val maxHeightRatio: Float = 0.44f,
+    val keyHeightFloorDp: Dp = 34.dp,
+    val keyHeightCeilingDp: Dp = 52.dp,
+    val rowSpacingDp: Dp = 5.dp,
     val dockAnchor: ClamshellDockAnchor = ClamshellDockAnchor.CENTER,
     val isOneHandedEnabled: Boolean = false,
     val extraHeightDp: Float = 0f

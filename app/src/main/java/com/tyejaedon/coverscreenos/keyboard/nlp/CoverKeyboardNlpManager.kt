@@ -310,9 +310,7 @@ object CoverKeyboardNlpManager {
         if (normalized.isEmpty() || !normalized.all { it in 'a'..'z' }) return input
         val learned = synchronized(learnedWords) { learnedWords.toSet() }
         if (!isWordAvailable(normalized)) return input
-        if ((normalized in learned || binaryTrie?.contains(normalized) == true || trieDictionary.contains(normalized)) &&
-            isWordAvailable(normalized)
-        ) {
+        if ((normalized in learned || trieDictionary.contains(normalized)) && isWordAvailable(normalized)) {
             return input
         }
         val topSuggestion = symSpellAutocorrect.suggest(normalized, limit = 5)
@@ -385,22 +383,6 @@ object CoverKeyboardNlpManager {
             CoverLayoutMode.SYMBOLS_SECONDARY,
             CoverLayoutMode.NUMERIC -> emptyList()
         }
-    }
-
-    /**
-     * Releases heavy in-heap NLP structures (SymSpell deletion map, full CompactTrie, bigrams)
-     * when the system is under memory pressure, resetting to [defaultCorpus].
-     */
-    fun trimMemory() {
-        val fallbackTrie = CompactTrieDictionary(defaultCorpus)
-        trieDictionary = fallbackTrie
-        symSpellAutocorrect = SymSpellAutocorrect(defaultCorpus)
-        t9Engine = T9PredictiveEngine(fallbackTrie)
-        glideDecoder = DTWGlideDecoder(fallbackTrie)
-        bigramFollowers = emptyMap()
-        baseCorpusWords.clear()
-        isInitialized = false
-        Log.d(TAG, "Trimmed in-heap NLP structures to fallback corpus")
     }
 
     /**

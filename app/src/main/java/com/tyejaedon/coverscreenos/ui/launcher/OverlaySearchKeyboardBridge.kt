@@ -9,13 +9,16 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.datastore.KeyboardAnchor
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.keyboard.floris.ClamshellDockAnchor
+import com.tyejaedon.coverscreenos.keyboard.floris.ClamshellLayoutSpec
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverEditorBridge
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
@@ -23,7 +26,9 @@ import com.tyejaedon.coverscreenos.keyboard.floris.CoverOverlayInputCallbacks
 import com.tyejaedon.coverscreenos.keyboard.floris.FlorisKeyboardCustomization
 import com.tyejaedon.coverscreenos.keyboard.floris.FlorisThemePalette
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 internal fun SearchFlorisKeyboardHost(
@@ -37,77 +42,94 @@ internal fun SearchFlorisKeyboardHost(
     val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
     val coroutineScope = rememberCoroutineScope()
 
-    var cursorPosition by remember(query) { mutableIntStateOf(query.length) }
+    val latestQuery by rememberUpdatedState(query)
+    val latestOnQueryChanged by rememberUpdatedState(onQueryChanged)
+    val latestOnDonePressed by rememberUpdatedState(onDonePressed)
+    var cursorPosition by remember { mutableIntStateOf(query.length) }
+    LaunchedEffect(query.length) {
+        if (cursorPosition > query.length) {
+            cursorPosition = query.length
+        }
+    }
 
-    val bridge = remember(query, onQueryChanged, onDonePressed) {
+    val bridge = remember {
         CoverEditorBridge(
             overlayCallbacks = object : CoverOverlayInputCallbacks {
                 override fun onAppend(text: String) {
-                    val safeCursor = cursorPosition.coerceIn(0, query.length)
-                    val newQuery = StringBuilder(query).insert(safeCursor, text).toString()
+                    val current = latestQuery
+                    val safeCursor = cursorPosition.coerceIn(0, current.length)
+                    val newQuery = StringBuilder(current).insert(safeCursor, text).toString()
                     cursorPosition = safeCursor + text.length
-                    onQueryChanged(newQuery)
+                    latestOnQueryChanged(newQuery)
                 }
 
                 override fun onDeleteBackward() {
-                    val safeCursor = cursorPosition.coerceIn(0, query.length)
+                    val current = latestQuery
+                    val safeCursor = cursorPosition.coerceIn(0, current.length)
                     if (safeCursor > 0) {
-                        val newQuery = query.removeRange(safeCursor - 1, safeCursor)
+                        val newQuery = current.removeRange(safeCursor - 1, safeCursor)
                         cursorPosition = safeCursor - 1
-                        onQueryChanged(newQuery)
+                        latestOnQueryChanged(newQuery)
                     }
                 }
 
                 override fun onDeletePreviousWord() {
-                    val safeCursor = cursorPosition.coerceIn(0, query.length)
-                    val beforeCursor = query.take(safeCursor)
+                    val current = latestQuery
+                    val safeCursor = cursorPosition.coerceIn(0, current.length)
+                    val beforeCursor = current.take(safeCursor)
                     val lastSpaceIndex = beforeCursor.trimEnd().lastIndexOf(' ')
                     val deleteStart = if (lastSpaceIndex == -1) 0 else lastSpaceIndex + 1
-                    val newQuery = query.removeRange(deleteStart, safeCursor)
+                    val newQuery = current.removeRange(deleteStart, safeCursor)
                     cursorPosition = deleteStart
-                    onQueryChanged(newQuery)
+                    latestOnQueryChanged(newQuery)
                 }
 
                 override fun onMoveCursor(delta: Int) {
-                    cursorPosition = (cursorPosition + delta).coerceIn(0, query.length)
+                    cursorPosition = (cursorPosition + delta).coerceIn(0, latestQuery.length)
                 }
 
                 override fun onCommitCandidate(candidate: String) {
-                    val safeCursor = cursorPosition.coerceIn(0, query.length)
-                    val before = query.take(safeCursor)
+                    val current = latestQuery
+                    val safeCursor = cursorPosition.coerceIn(0, current.length)
+                    val before = current.take(safeCursor)
                     val wordLength = before.takeLastWhile { it.isLetterOrDigit() }.length
                     val replaceStart = (safeCursor - wordLength).coerceAtLeast(0)
                     val formatted = if (candidate.endsWith(" ")) candidate else "$candidate "
-                    val newQuery = query.replaceRange(replaceStart, safeCursor, formatted)
+                    val newQuery = current.replaceRange(replaceStart, safeCursor, formatted)
                     cursorPosition = replaceStart + formatted.length
-                    onQueryChanged(newQuery)
+                    latestOnQueryChanged(newQuery)
                 }
 
                 override fun onClear() {
                     cursorPosition = 0
-                    onQueryChanged("")
+                    latestOnQueryChanged("")
                 }
 
-                override fun onDone() = onDonePressed()
-                override fun getTextBeforeCursor(maxChars: Int) =
-                    query.take(cursorPosition.coerceIn(0, query.length)).takeLast(maxChars)
+                override fun onDone() = latestOnDonePressed()
+                override fun getTextBeforeCursor(maxChars: Int): String {
+                    val current = latestQuery
+                    return current.take(cursorPosition.coerceIn(0, current.length)).takeLast(maxChars)
+                }
 
-                override fun getTextAfterCursor(maxChars: Int) =
-                    query.drop(cursorPosition.coerceIn(0, query.length)).take(maxChars)
+                override fun getTextAfterCursor(maxChars: Int): String {
+                    val current = latestQuery
+                    return current.drop(cursorPosition.coerceIn(0, current.length)).take(maxChars)
+                }
 
-                override fun getFullText() = query
-                override fun getCursorPosition() = cursorPosition.coerceIn(0, query.length)
+                override fun getFullText() = latestQuery
+                override fun getCursorPosition() = cursorPosition.coerceIn(0, latestQuery.length)
                 override fun setCursorPosition(newPos: Int) {
-                    cursorPosition = newPos.coerceIn(0, query.length)
+                    cursorPosition = newPos.coerceIn(0, latestQuery.length)
                 }
 
                 override fun replaceText(range: IntRange, text: String, newCursor: Int) {
-                    val safeStart = range.first.coerceIn(0, query.length)
-                    val safeEnd = (range.last + 1).coerceIn(0, query.length)
+                    val current = latestQuery
+                    val safeStart = range.first.coerceIn(0, current.length)
+                    val safeEnd = (range.last + 1).coerceIn(0, current.length)
                     if (safeStart <= safeEnd) {
-                        val newQuery = query.replaceRange(safeStart, safeEnd, text)
+                        val newQuery = current.replaceRange(safeStart, safeEnd, text)
                         cursorPosition = newCursor.coerceIn(0, newQuery.length)
-                        onQueryChanged(newQuery)
+                        latestOnQueryChanged(newQuery)
                     }
                 }
             }
@@ -122,15 +144,17 @@ internal fun SearchFlorisKeyboardHost(
     val currentWord = beforeCursor.takeLastWhile { it.isLetterOrDigit() }
 
     LaunchedEffect(query, cursorPosition, activeLayoutMode, nlpRevision) {
-        candidates = when {
-            currentWord.isNotBlank() -> CoverKeyboardNlpManager.getCandidates(activeLayoutMode, currentWord)
-            beforeCursor.isNotBlank() -> {
-                val prev = beforeCursor.trimEnd().takeLastWhile { it.isLetter() }
-                if (prev.isNotEmpty()) {
-                    CoverKeyboardNlpManager.getNextWordSuggestions(prev)
-                } else emptyList()
+        candidates = withContext(Dispatchers.Default) {
+            when {
+                currentWord.isNotBlank() -> CoverKeyboardNlpManager.getCandidates(activeLayoutMode, currentWord)
+                beforeCursor.isNotBlank() -> {
+                    val prev = beforeCursor.trimEnd().takeLastWhile { it.isLetter() }
+                    if (prev.isNotEmpty()) {
+                        CoverKeyboardNlpManager.getNextWordSuggestions(prev)
+                    } else emptyList()
+                }
+                else -> emptyList()
             }
-            else -> emptyList()
         }
     }
 
@@ -150,6 +174,12 @@ internal fun SearchFlorisKeyboardHost(
         },
         onDismissRequest = onDonePressed,
         onModeChanged = { activeLayoutMode = it },
+        layoutSpec = ClamshellLayoutSpec(
+            maxHeightRatio = 0.37f,
+            keyHeightFloorDp = 30.dp,
+            keyHeightCeilingDp = 42.dp,
+            rowSpacingDp = 3.dp
+        ),
         customization = FlorisKeyboardCustomization(
             extraHeightDp = settings.keyboardExtraHeightDp,
             onExtraHeightChanged = { newDp ->
@@ -176,7 +206,7 @@ internal fun SearchFlorisKeyboardHost(
             popupKeyPreviewEnabled = settings.popupKeyPreviewEnabled,
             imeOptions = EditorInfo.IME_ACTION_SEARCH,
             compactSymbolsLayout = true,
-            includeClearKey = true,
+            includeClearKey = false,
             themePalette = FlorisThemePalette.AmoledCover
         ),
         textBeforeCursor = beforeCursor,

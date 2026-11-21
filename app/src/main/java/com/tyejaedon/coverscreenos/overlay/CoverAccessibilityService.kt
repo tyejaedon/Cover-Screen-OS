@@ -5,13 +5,17 @@ import android.accessibilityservice.AccessibilityGestureEvent
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Display
 import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -65,9 +69,86 @@ class CoverAccessibilityService : AccessibilityService() {
         private var latestForegroundPackage: String? = null
 
         @Volatile
+        private var latestForegroundClassName: String? = null
+
+        @Volatile
         private var latestForegroundEventElapsedMs: Long = 0L
 
         fun currentForegroundPackage(): String? = latestForegroundPackage
+
+        fun currentForegroundClassName(): String? = latestForegroundClassName
+
+        internal data class CoverWindowSnapshot(
+            val hasLaunchedAppWindow: Boolean,
+            val coverHomePackage: String?,
+            val coverHomeClassName: String?
+        )
+
+        /**
+         * Inspects live interactive windows on [displayId] (API 30+) to detect whether [launchedPackage]
+         * is still on screen or whether the native cover home (`SubHomeActivity` / launcher) is on top.
+         */
+        internal fun inspectDisplayWindowState(
+            displayId: Int,
+            launchedPackage: String?
+        ): CoverWindowSnapshot? {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+            val service = activeServiceRef?.get() ?: return null
+            val windows = runCatching { service.windowsOnAllDisplays.get(displayId) }.getOrNull()
+                ?: return null
+
+            val selfPackage = service.packageName
+            var hasLaunchedAppWindow = false
+            var coverHomePackage: String? = null
+            var coverHomeClassName: String? = null
+            var highestHomeLayer = Int.MIN_VALUE
+
+            for (window in windows) {
+                if (window.displayId != displayId) continue
+                val windowPkg = runCatching { window.root?.packageName?.toString()?.trim() }
+                    .getOrNull()
+                    ?.takeUnless { it.isEmpty() }
+                    ?: continue
+                if (windowPkg == selfPackage) continue
+
+                if (launchedPackage != null &&
+                    windowPkg == launchedPackage &&
+                    window.type == AccessibilityWindowInfo.TYPE_APPLICATION
+                ) {
+                    hasLaunchedAppWindow = true
+                }
+
+                if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                    window.layer > highestHomeLayer
+                ) {
+                    val windowTitle = runCatching { window.title?.toString()?.trim() }.getOrNull()
+                    val isSubscreenSystemUiActivity = windowPkg == "com.android.systemui" &&
+                        (windowTitle.isNullOrEmpty() ||
+                            windowTitle.equals("System UI", ignoreCase = true) ||
+                            CoverHomeSurfaceMatcher.isSubscreenHomeClassName(windowTitle))
+                    val isCoverHome = isSubscreenSystemUiActivity ||
+                        CoverHomeSurfaceMatcher.isCoverHomeDestination(
+                            packageName = windowPkg,
+                            className = windowTitle
+                        )
+                    if (isCoverHome) {
+                        highestHomeLayer = window.layer
+                        coverHomePackage = windowPkg
+                        coverHomeClassName = if (isSubscreenSystemUiActivity) {
+                            "com.android.systemui.subscreen.SubHomeActivity"
+                        } else {
+                            windowTitle
+                        }
+                    }
+                }
+            }
+
+            return CoverWindowSnapshot(
+                hasLaunchedAppWindow = hasLaunchedAppWindow,
+                coverHomePackage = coverHomePackage,
+                coverHomeClassName = coverHomeClassName
+            )
+        }
 
         fun currentForegroundPackageEventAgeMs(nowElapsedMs: Long = SystemClock.elapsedRealtime()): Long {
             val eventElapsedMs = latestForegroundEventElapsedMs
@@ -184,6 +265,8 @@ class CoverAccessibilityService : AccessibilityService() {
     private var reclaimCandidateSinceElapsedMs: Long = 0L
     private var lastKnownUserAppPackage: String? = null
     private var lastKnownUserAppElapsedMs: Long = 0L
+    private val reclaimHandler = Handler(Looper.getMainLooper())
+    private var pendingReclaimCheck: Runnable? = null
 
     /**
      * Currently-installed launcher host, or `null` if no
@@ -221,6 +304,7 @@ class CoverAccessibilityService : AccessibilityService() {
         // to be toggled off then back on in system settings without
         // forcing a ForegroundService restart.
         releaseLauncherHost()
+        resetReclaimCandidate()
         if (activeServiceRef?.get() === this) {
             activeServiceRef?.clear()
             activeServiceRef = null
@@ -231,6 +315,7 @@ class CoverAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         releaseLauncherHost()
+        resetReclaimCandidate()
         if (activeServiceRef?.get() === this) {
             activeServiceRef?.clear()
             activeServiceRef = null
@@ -340,7 +425,7 @@ class CoverAccessibilityService : AccessibilityService() {
                     widgetIds = launcherSettings.widgetIds,
                     widgetHostManager = host.widgetHostManager,
                     onRemoveWidget = { id ->
-                        host.widgetHostManager.deleteAppWidgetId(id)
+                        host.widgetHostManager?.deleteAppWidgetId(id)
                         overlayScope.launch {
                             runCatching {
                                 host.launcherSettingsStore.removeWidgetId(id)
@@ -348,16 +433,9 @@ class CoverAccessibilityService : AccessibilityService() {
                         }
                     },
                     onAddWidgetRequest = { host.onAddWidgetRequest() },
-                    onConfigureWidget = { id -> host.onConfigureWidgetRequest(id) },
-                    onReorderWidgets = { reorderedIds ->
-                        overlayScope.launch {
-                            runCatching {
-                                host.launcherSettingsStore.setWidgetIds(reorderedIds)
-                            }
-                        }
-                    },
                     onRequestUnlock = { host.onRequestUnlock() },
                     onRequestScreenOff = { requestScreenOff() },
+                    onRequestSystemShade = { requestSystemShade() },
                     onOpenCustomize = { host.onOpenCustomize() },
                     onKeyboardStrategyChanged = { nextStrategy ->
                         overlayScope.launch {
@@ -409,6 +487,13 @@ class CoverAccessibilityService : AccessibilityService() {
         logDebug { "Double tap screen off result=$result" }
     }
 
+    /** Opens the native OS notification/quick-settings shade. */
+    private fun requestSystemShade() {
+        if (shouldThrottleGlobalAction()) return
+        val result = performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+        logDebug { "System shade swipe down result=$result" }
+    }
+
     fun isLauncherAttached(): Boolean = launcherSurface?.isAttached() == true
 
     private fun detachLauncherSurface(reason: String) {
@@ -437,6 +522,10 @@ class CoverAccessibilityService : AccessibilityService() {
             ?.trim()
             .takeUnless { it.isNullOrEmpty() }
             ?: return
+        val foregroundClassName = event.className
+            ?.toString()
+            ?.trim()
+            ?.takeUnless { it.isEmpty() }
 
         // Never let window events emitted by our own overlay surfaces refresh the
         // shared foreground-package state read by ForegroundService's resume
@@ -446,16 +535,18 @@ class CoverAccessibilityService : AccessibilityService() {
         if (foregroundPackage == this.packageName) return
 
         val nowElapsedMs = SystemClock.elapsedRealtime()
-        val isSameForegroundPackage = latestForegroundPackage == foregroundPackage
+        val isSameForegroundPackage = latestForegroundPackage == foregroundPackage &&
+            (foregroundClassName == null || latestForegroundClassName == foregroundClassName)
         val shouldRefreshForegroundTimestamp = !isSameForegroundPackage ||
             (nowElapsedMs - latestForegroundEventElapsedMs) >= FOREGROUND_EVENT_REFRESH_MIN_INTERVAL_MS
         if (shouldRefreshForegroundTimestamp) {
             latestForegroundPackage = foregroundPackage
+            latestForegroundClassName = foregroundClassName
             latestForegroundEventElapsedMs = nowElapsedMs
         }
 
         val eventTypeName = eventTypeToName(event.eventType)
-        if (shouldTrackAsUserForegroundApp(foregroundPackage)) {
+        if (shouldTrackAsUserForegroundApp(foregroundPackage, foregroundClassName)) {
             lastKnownUserAppPackage = foregroundPackage
             lastKnownUserAppElapsedMs = nowElapsedMs
         }
@@ -471,7 +562,7 @@ class CoverAccessibilityService : AccessibilityService() {
 
         if (foregroundPackage != lastWindowPackage) {
             lastWindowPackage = foregroundPackage
-            logDebug { "Window changed: $foregroundPackage" }
+            logDebug { "Window changed: $foregroundPackage/$foregroundClassName" }
         }
 
         if (shouldAllowIncomingCallSurface(foregroundPackage)) {
@@ -480,9 +571,9 @@ class CoverAccessibilityService : AccessibilityService() {
             return
         }
 
-        if (!shouldRequestOverlayReclaim(foregroundPackage)) {
-            if (isTransientSystemUiPackage(foregroundPackage)) {
-                logReclaimDecision(eventTypeName, foregroundPackage, "skip_transient_system_ui")
+        if (!shouldRequestOverlayReclaim(foregroundPackage, foregroundClassName)) {
+            if (isTransientSystemUiPackage(foregroundPackage, foregroundClassName)) {
+                logReclaimDecision(eventTypeName, foregroundPackage, "skip_transient_system_ui", "class=$foregroundClassName")
             }
             resetReclaimCandidate()
             return
@@ -492,6 +583,7 @@ class CoverAccessibilityService : AccessibilityService() {
             reclaimCandidatePackage = foregroundPackage
             reclaimCandidateSinceElapsedMs = nowElapsedMs
             logReclaimDecision(eventTypeName, foregroundPackage, "candidate_started")
+            scheduleDelayedReclaimCheck(foregroundPackage, foregroundClassName)
             return
         }
 
@@ -602,25 +694,65 @@ class CoverAccessibilityService : AccessibilityService() {
         return throttled
     }
 
-    private fun shouldRequestOverlayReclaim(packageName: String): Boolean {
-        return OVERLAY_RECLAIM_PACKAGE_PREFIXES.any { prefix ->
-            packageName.startsWith(prefix)
-        }
+    private fun shouldRequestOverlayReclaim(packageName: String, className: String? = null): Boolean {
+        return CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className) ||
+            OVERLAY_RECLAIM_PACKAGE_PREFIXES.any { prefix ->
+                packageName.startsWith(prefix)
+            }
     }
 
-    private fun shouldTrackAsUserForegroundApp(packageName: String): Boolean {
+    private fun shouldTrackAsUserForegroundApp(packageName: String, className: String? = null): Boolean {
+        if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
+            return false
+        }
         return NON_USER_APP_PREFIXES.none { prefix ->
             packageName.startsWith(prefix)
         }
     }
 
-    private fun isTransientSystemUiPackage(packageName: String): Boolean {
+    private fun isTransientSystemUiPackage(packageName: String, className: String? = null): Boolean {
+        if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
+            return false
+        }
         return TRANSIENT_SYSTEM_UI_PREFIXES.any { prefix ->
             packageName.startsWith(prefix)
         }
     }
 
+    private fun scheduleDelayedReclaimCheck(candidatePackage: String, candidateClassName: String?) {
+        pendingReclaimCheck?.let { reclaimHandler.removeCallbacks(it) }
+        val targetDisplayId = launcherActiveDisplayId() ?: Display.DEFAULT_DISPLAY
+        val runnable = Runnable {
+            pendingReclaimCheck = null
+            if (reclaimCandidatePackage != candidatePackage) return@Runnable
+            val snapshot = inspectDisplayWindowState(
+                displayId = targetDisplayId,
+                launchedPackage = lastKnownUserAppPackage
+            )
+            if (snapshot?.hasLaunchedAppWindow == true) {
+                logReclaimDecision(
+                    eventTypeName = "DELAYED_RECLAIM_CHECK",
+                    packageName = candidatePackage,
+                    decision = "aborted_user_app_still_visible"
+                )
+                resetReclaimCandidate()
+                return@Runnable
+            }
+            if (!shouldRequestOverlayReclaim(candidatePackage, candidateClassName)) return@Runnable
+            logReclaimDecision(
+                eventTypeName = "DELAYED_RECLAIM_CHECK",
+                packageName = candidatePackage,
+                decision = "trigger_reclaim"
+            )
+            ForegroundService.requestOverlayReclaim(reason = candidatePackage)
+        }
+        pendingReclaimCheck = runnable
+        reclaimHandler.postDelayed(runnable, RECLAIM_STABILITY_DEBOUNCE_MS)
+    }
+
     private fun resetReclaimCandidate() {
+        pendingReclaimCheck?.let { reclaimHandler.removeCallbacks(it) }
+        pendingReclaimCheck = null
         reclaimCandidatePackage = null
         reclaimCandidateSinceElapsedMs = 0L
     }

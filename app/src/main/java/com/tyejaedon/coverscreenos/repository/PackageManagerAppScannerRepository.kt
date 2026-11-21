@@ -25,12 +25,14 @@ class PackageManagerAppScannerRepository(
         private var cachedAtElapsedMs: Long = 0L
     }
 
-    suspend fun scanInstalledApplications(): List<AppModel> = withContext(ioDispatcher) {
+    suspend fun scanInstalledApplications(includeIcons: Boolean = false): List<AppModel> = withContext(ioDispatcher) {
         val now = elapsedRealtimeProvider()
-        synchronized(cacheLock) {
-            val apps = cachedApps
-            if (apps != null && (now - cachedAtElapsedMs) <= APP_SCAN_CACHE_TTL_MS) {
-                return@withContext apps
+        if (!includeIcons) {
+            synchronized(cacheLock) {
+                val apps = cachedApps
+                if (apps != null && (now - cachedAtElapsedMs) <= APP_SCAN_CACHE_TTL_MS) {
+                    return@withContext apps
+                }
             }
         }
 
@@ -43,16 +45,20 @@ class PackageManagerAppScannerRepository(
             PackageManager.ResolveInfoFlags.of(0)
         )
 
-        val defaultIcon = packageManager.defaultActivityIcon
+        val defaultIcon = if (includeIcons) packageManager.defaultActivityIcon else null
 
         val scannedApps = launcherActivities
             .asSequence()
             .mapNotNull { resolveInfo ->
                 val appInfo = resolveInfo.activityInfo?.applicationInfo ?: return@mapNotNull null
                 val packageName = appInfo.packageName
-                val resolvedIcon = runCatching {
-                    packageManager.getApplicationIcon(packageName)
-                }.getOrDefault(defaultIcon)
+                val resolvedIcon = if (includeIcons) {
+                    runCatching {
+                        packageManager.getApplicationIcon(packageName)
+                    }.getOrDefault(defaultIcon)
+                } else {
+                    null
+                }
 
                 AppModel(
                     name = packageManager.getApplicationLabel(appInfo).toString(),
@@ -67,9 +73,11 @@ class PackageManagerAppScannerRepository(
             )
             .toList()
 
-        synchronized(cacheLock) {
-            cachedApps = scannedApps
-            cachedAtElapsedMs = elapsedRealtimeProvider()
+        if (!includeIcons) {
+            synchronized(cacheLock) {
+                cachedApps = scannedApps
+                cachedAtElapsedMs = elapsedRealtimeProvider()
+            }
         }
 
         scannedApps

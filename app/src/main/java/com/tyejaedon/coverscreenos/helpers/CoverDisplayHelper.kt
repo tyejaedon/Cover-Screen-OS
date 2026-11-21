@@ -130,6 +130,12 @@ class CoverDisplayHelper(private val context: Context) {
         return isDeviceLocked.value
     }
 
+    fun refreshLockStatus(): Boolean {
+        val current = LockStatusReceiver.currentLockStatus(context)
+        _isDeviceLocked.value = current
+        return current
+    }
+
     private fun Display.isUsableCoverDisplay(): Boolean {
         // A cover display remains usable across the transient power states a foldable
         // reports while the main panel is changing (STATE_DOZE, STATE_ON_SUSPEND,

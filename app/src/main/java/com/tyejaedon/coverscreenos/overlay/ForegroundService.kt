@@ -119,8 +119,7 @@ class ForegroundService : Service() {
 
         private val TRANSIENT_SYSTEM_UI_RESUME_SAFE_PREFIXES = arrayOf(
             "com.samsung.systemui",
-            "com.samsung.android.app.aodservice",
-            "com.samsung.android.smartsuggestions"
+            "com.samsung.android.app.aodservice"
         )
 
         private val OVERLAY_RESUME_PACKAGE_PREFIXES = arrayOf(
@@ -129,17 +128,13 @@ class ForegroundService : Service() {
             "com.samsung.android.app.aodservice",
             "com.sec.android.app.launcher",
             "com.samsung.android.app.cocktailbarservice",
-            "com.samsung.android.app.clockface",
-            "com.samsung.android.smartsuggestions",
-            "com.samsung.android.multistar"
+            "com.samsung.android.app.clockface"
         )
 
         private val LAUNCHER_PACKAGE_PREFIXES = arrayOf(
             "com.sec.android.app.launcher",
             "com.android.launcher",
-            "com.google.android.apps.nexuslauncher",
-            "com.samsung.android.smartsuggestions",
-            "com.samsung.android.multistar"
+            "com.google.android.apps.nexuslauncher"
         )
 
         @Volatile
@@ -399,16 +394,21 @@ class ForegroundService : Service() {
             appRepository = appRepository,
             launcherSettingsStore = launcherSettingsStore,
             launchCoordinator = launchCoordinator,
-            widgetHostManager = widgetHostManager,
             deviceLockState = coverDisplayHelper.isDeviceLocked,
             onAppSelected = { appModel ->
                 val packageName = appModel.packageName
+                val coverDisplayId = overlayWindowController.getActiveDisplayId()
+                    ?: coverDisplayHelper.getCoverDisplayId()
                 val ready = launchCoordinator.beginLaunch(packageName)
                 if (!ready) {
                     Log.w(LOG_TAG, "LauncherOverlayHost.onAppSelected rejected package=$packageName")
                     false
                 } else {
-                    val launched = CoverAppLauncher.launchAppOnCoverScreen(appContext, appModel)
+                    val launched = CoverAppLauncher.launchPackageOnDisplay(
+                        context = appContext,
+                        packageName = packageName,
+                        displayId = coverDisplayId
+                    )
                     launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
                     launched
                 }
@@ -447,62 +447,29 @@ class ForegroundService : Service() {
                     launched
                 }
             },
+            widgetHostManager = widgetHostManager,
             onAddWidgetRequest = {
-                val coverDisplayId = overlayWindowController.getActiveDisplayId()
-                    ?: coverDisplayHelper.getCoverDisplayId()
-                if (coverDisplayHelper.isDeviceLocked.value) {
-                    UnlockBridgeActivity.startUnlockRequest(
-                        context = appContext,
-                        packageName = null,
-                        displayId = coverDisplayId
-                    )
+                val packageName = appContext.packageName
+                val ready = launchCoordinator.beginLaunch(packageName)
+                if (!ready) {
+                    Log.w(LOG_TAG, "LauncherOverlayHost.onAddWidgetRequest rejected")
                     false
                 } else {
-                    val packageName = appContext.packageName
-                    val ready = launchCoordinator.beginLaunch(packageName)
-                    if (!ready) {
-                        Log.w(LOG_TAG, "LauncherOverlayHost.onAddWidgetRequest rejected")
-                        false
-                    } else {
-                        val pickIntent = com.tyejaedon.coverscreenos.ui.widgets.WidgetPickerBridgeActivity
-                            .createPickIntent(appContext)
-                        val launched = CoverAppLauncher.launchIntentOnDisplay(
-                            context = appContext,
-                            intent = pickIntent,
-                            displayId = coverDisplayId
-                        )
-                        launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
-                        launched
+                    val coverDisplayId = overlayWindowController.getActiveDisplayId()
+                        ?: coverDisplayHelper.getCoverDisplayId()
+                    val pickerIntent = Intent(
+                        appContext,
+                        com.tyejaedon.coverscreenos.ui.widgets.CoverWidgetPickerActivity::class.java
+                    ).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     }
-                }
-            },
-            onConfigureWidgetRequest = { widgetId ->
-                val coverDisplayId = overlayWindowController.getActiveDisplayId()
-                    ?: coverDisplayHelper.getCoverDisplayId()
-                if (coverDisplayHelper.isDeviceLocked.value) {
-                    UnlockBridgeActivity.startUnlockRequest(
+                    val launched = CoverAppLauncher.launchIntentOnDisplay(
                         context = appContext,
-                        packageName = null,
+                        intent = pickerIntent,
                         displayId = coverDisplayId
                     )
-                    false
-                } else {
-                    val packageName = appContext.packageName
-                    val ready = launchCoordinator.beginLaunch(packageName)
-                    if (!ready) {
-                        Log.w(LOG_TAG, "LauncherOverlayHost.onConfigureWidgetRequest rejected")
-                        false
-                    } else {
-                        val configIntent = com.tyejaedon.coverscreenos.ui.widgets.WidgetPickerBridgeActivity
-                            .createReconfigureIntent(appContext, widgetId)
-                        val launched = CoverAppLauncher.launchIntentOnDisplay(
-                            context = appContext,
-                            intent = configIntent,
-                            displayId = coverDisplayId
-                        )
-                        launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
-                        launched
-                    }
+                    launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
+                    launched
                 }
             }
         )
@@ -680,6 +647,9 @@ class ForegroundService : Service() {
             isOverlayActive = false
             publishRuntime("Overlay hidden: unlock prompt open")
             return
+        }
+        if (!active) {
+            coverDisplayHelper.refreshLockStatus()
         }
         publishRuntime("Unlock prompt closed")
         if (overlayRequested && !isOverlaySuppressedForAppLaunch) {
@@ -1020,13 +990,13 @@ class ForegroundService : Service() {
             return
         }
 
-        val foregroundPackage = resolveForegroundPackageForResume()
-        if (foregroundPackage == null) {
-            logResumeDecision(reason = reason, decision = "wait_no_eligible_foreground")
-            return
-        }
+        val (foregroundPackage, foregroundClassName) = resolveForegroundPackageForResume()
+            ?: run {
+                logResumeDecision(reason = reason, decision = "wait_no_eligible_foreground")
+                return
+            }
         var hasTransientResumeSignal = false
-        if (reason == "poll" && isTransientSystemUiPackage(foregroundPackage)) {
+        if (reason == "poll" && isTransientSystemUiPackage(foregroundPackage, foregroundClassName)) {
             trackTransientExitPattern(foregroundPackage)
 
             if (shouldResumeFromTransientExitPattern(suppressedForMs)) {
@@ -1037,11 +1007,11 @@ class ForegroundService : Service() {
                 )
                 hasTransientResumeSignal = true
             } else {
-            if (!isTransientForegroundSafeForResume(foregroundPackage)) {
+            if (!isTransientForegroundSafeForResume(foregroundPackage, foregroundClassName)) {
                 logResumeDecision(
                     reason = reason,
                     decision = "block_transient_resume_package",
-                    detail = "foreground=$foregroundPackage"
+                    detail = "foreground=$foregroundPackage class=$foregroundClassName"
                 )
                 return
             }
@@ -1074,7 +1044,7 @@ class ForegroundService : Service() {
 
         if (!reason.startsWith("reclaim:") &&
             suppressionReason == OverlaySuppressionReason.APP_LAUNCH &&
-            isLauncherPackageForResume(foregroundPackage) &&
+            isLauncherPackageForResume(foregroundPackage, foregroundClassName) &&
             suppressedForMs < APP_LAUNCH_RESUME_MIN_LAUNCHER_MS
         ) {
             logResumeDecision(
@@ -1110,78 +1080,115 @@ class ForegroundService : Service() {
         scheduleRetarget(reason = reason)
     }
 
-    private fun resolveForegroundPackageForResume(): String? {
-        val topCoverWindowPkg = CoverInputAccessibilityService.getTopCoverDisplayPackage()
-        if (topCoverWindowPkg != null && shouldResumeOverlayForPackage(topCoverWindowPkg)) {
-            return topCoverWindowPkg
+    private fun resolveForegroundPackageForResume(): Pair<String, String?>? {
+        val coverDisplayId = overlayWindowController.getActiveDisplayId()
+            ?: coverDisplayHelper.getCoverDisplayId()
+        val launchedPackage = launchSuppressedPackageName?.trim()?.takeUnless { it.isEmpty() }
+        val suppressedForMs = if (launchSuppressedStartedElapsedMs > 0L) {
+            (SystemClock.elapsedRealtime() - launchSuppressedStartedElapsedMs).coerceAtLeast(0L)
+        } else {
+            0L
+        }
+        if (coverDisplayId != null &&
+            launchedPackage != null &&
+            suppressionReason == OverlaySuppressionReason.APP_LAUNCH &&
+            suppressedForMs >= TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS
+        ) {
+            val snapshot = CoverAccessibilityService.inspectDisplayWindowState(
+                displayId = coverDisplayId,
+                launchedPackage = launchedPackage
+            )
+            if (snapshot != null && !snapshot.hasLaunchedAppWindow && snapshot.coverHomePackage != null) {
+                logResumeDecision(
+                    reason = "resolve_windows",
+                    decision = "cover_home_window_top",
+                    detail = "display=$coverDisplayId pkg=${snapshot.coverHomePackage} title=${snapshot.coverHomeClassName}"
+                )
+                return snapshot.coverHomePackage to snapshot.coverHomeClassName
+            }
         }
 
-        val (foregroundPackage, eventAgeMs) = latestForegroundSignal()
+        val (foregroundPackage, foregroundClassName, eventAgeMs) = latestForegroundSignal()
             ?: run {
                 logResumeDecision(reason = "resolve", decision = "no_foreground_package")
                 return null
             }
         if (eventAgeMs > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) {
-            if (isTransientSystemUiPackage(foregroundPackage) && isTransientForegroundSafeForResume(foregroundPackage)) {
+            if (isTransientSystemUiPackage(foregroundPackage, foregroundClassName) &&
+                isTransientForegroundSafeForResume(foregroundPackage, foregroundClassName)
+            ) {
                 logResumeDecision(
                     reason = "resolve",
                     decision = "stale_transient_allowed",
-                    detail = "foreground=$foregroundPackage eventAgeMs=$eventAgeMs"
+                    detail = "foreground=$foregroundPackage class=$foregroundClassName eventAgeMs=$eventAgeMs"
                 )
-                return foregroundPackage
+                return foregroundPackage to foregroundClassName
             }
             logResumeDecision(
                 reason = "resolve",
                 decision = "stale_foreground_event",
-                detail = "foreground=$foregroundPackage eventAgeMs=$eventAgeMs maxAgeMs=$APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS"
+                detail = "foreground=$foregroundPackage class=$foregroundClassName eventAgeMs=$eventAgeMs maxAgeMs=$APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS"
             )
             return null
         }
-        if (!shouldResumeOverlayForPackage(foregroundPackage)) {
+        if (!shouldResumeOverlayForPackage(foregroundPackage, foregroundClassName)) {
             logResumeDecision(
                 reason = "resolve",
                 decision = "foreground_not_eligible",
-                detail = "foreground=$foregroundPackage launchedPackage=$launchSuppressedPackageName"
+                detail = "foreground=$foregroundPackage class=$foregroundClassName launchedPackage=$launchSuppressedPackageName"
             )
             return null
         }
-        return foregroundPackage
+        return foregroundPackage to foregroundClassName
     }
 
-    private fun latestForegroundSignal(): Pair<String, Long>? = listOfNotNull(
+    private fun latestForegroundSignal(): Triple<String, String?, Long>? = listOfNotNull(
         CoverAccessibilityService.currentForegroundPackage()?.trim()
             ?.takeUnless(String::isEmpty)
-            ?.let { it to CoverAccessibilityService.currentForegroundPackageEventAgeMs() },
+            ?.let {
+                Triple(
+                    it,
+                    CoverAccessibilityService.currentForegroundClassName(),
+                    CoverAccessibilityService.currentForegroundPackageEventAgeMs()
+                )
+            },
         CoverInputAccessibilityService.currentForegroundPackage()?.trim()
             ?.takeUnless(String::isEmpty)
-            ?.let { it to CoverInputAccessibilityService.currentForegroundPackageEventAgeMs() }
-    ).minByOrNull { (_, ageMs) -> ageMs }
+            ?.let {
+                Triple(
+                    it,
+                    CoverInputAccessibilityService.currentForegroundClassName(),
+                    CoverInputAccessibilityService.currentForegroundPackageEventAgeMs()
+                )
+            }
+    ).minByOrNull { (_, _, ageMs) -> ageMs }
 
-    private fun shouldResumeOverlayForPackage(packageName: String): Boolean {
+    private fun shouldResumeOverlayForPackage(packageName: String, className: String? = null): Boolean {
         val launchedPackage = launchSuppressedPackageName?.trim()?.takeUnless { it.isEmpty() }
         return transientSignalPolicy.shouldResumeOverlayForPackage(
             packageName = packageName,
+            className = className,
             launchedPackage = launchedPackage,
             appPackageName = this.packageName
         )
     }
 
-    private fun isTransientSystemUiPackage(packageName: String): Boolean {
-        return transientSignalPolicy.isTransientSystemUiPackage(packageName)
+    private fun isTransientSystemUiPackage(packageName: String, className: String? = null): Boolean {
+        return transientSignalPolicy.isTransientSystemUiPackage(packageName, className)
     }
 
-    private fun isTransientForegroundSafeForResume(packageName: String): Boolean {
-        return transientSignalPolicy.isTransientForegroundSafeForResume(packageName)
+    private fun isTransientForegroundSafeForResume(packageName: String, className: String? = null): Boolean {
+        return transientSignalPolicy.isTransientForegroundSafeForResume(packageName, className)
     }
 
-    private fun isLauncherPackageForResume(packageName: String): Boolean {
-        return transientSignalPolicy.isLauncherPackageForResume(packageName)
+    private fun isLauncherPackageForResume(packageName: String, className: String? = null): Boolean {
+        return transientSignalPolicy.isLauncherPackageForResume(packageName, className)
     }
 
     private fun isIncomingCallPackage(packageName: String): Boolean = CallPackageMatchers.isIncomingCallPackage(packageName)
 
     private fun resolveRawForegroundPackageForCallGuard(): String? {
-        val (foregroundPackage, eventAgeMs) = latestForegroundSignal() ?: return null
+        val (foregroundPackage, _, eventAgeMs) = latestForegroundSignal() ?: return null
         if (eventAgeMs > APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS) return null
         return foregroundPackage
     }

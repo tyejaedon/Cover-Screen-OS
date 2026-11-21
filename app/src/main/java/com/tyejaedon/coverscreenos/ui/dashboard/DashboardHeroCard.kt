@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -27,13 +28,17 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun DashboardHeroCard(state: DashboardState, modifier: Modifier = Modifier) {
     var expanded by remember { mutableStateOf(false) }
+    val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
     Card(
         onClick = { expanded = !expanded },
         modifier = modifier.fillMaxWidth().semantics {
             stateDescription = "${state.title}, ${if (expanded) "expanded" else "collapsed"}"
         }
     ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.padding(if (isCompactHeight) 14.dp else 20.dp),
+            verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 8.dp else 12.dp)
+        ) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(
                     imageVector = when (state.status) {

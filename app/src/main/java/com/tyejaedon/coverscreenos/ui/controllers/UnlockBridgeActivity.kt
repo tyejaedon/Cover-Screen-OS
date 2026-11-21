@@ -36,6 +36,8 @@ class UnlockBridgeActivity : FragmentActivity() {
         private const val EXTRA_REQUEST_ELAPSED_MS = "com.tyejaedon.coverscreenos.extra.UNLOCK_REQUEST_ELAPSED_MS"
 
         private const val REQUEST_STALE_TIMEOUT_MS = 15_000L
+        private const val EARLY_BIOMETRIC_CANCEL_RETRY_WINDOW_MS = 600L
+        private const val BIOMETRIC_RETRY_DELAY_MS = 180L
         private const val UNLOCK_PROMPT_TITLE = "Unlock to continue"
         private const val UNLOCK_PROMPT_SUBTITLE = "Authenticate with your device security to open the app"
         private const val UNLOCK_ONLY_PROMPT_TITLE = "Unlock your phone"
@@ -44,18 +46,28 @@ class UnlockBridgeActivity : FragmentActivity() {
         @Volatile
         private var requestInProgress: Boolean = false
 
+        @Volatile
+        private var requestStartedAtElapsedMs: Long = 0L
+
         @Synchronized
         /**
          * Shows the system unlock prompt. When [packageName] is set, that app is opened after a
          * successful unlock. When it is null, the device is only unlocked.
          */
         fun startUnlockRequest(context: Context, packageName: String?, displayId: Int?): Boolean {
+            val nowElapsedMs = SystemClock.elapsedRealtime()
             if (requestInProgress) {
-                Log.d(LOG_TAG, "Unlock request already in progress; skipping duplicate package=$packageName")
-                return true
+                val elapsedSinceStartMs = (nowElapsedMs - requestStartedAtElapsedMs).coerceAtLeast(0L)
+                if (elapsedSinceStartMs < REQUEST_STALE_TIMEOUT_MS) {
+                    Log.d(LOG_TAG, "Unlock request already in progress; skipping duplicate package=$packageName")
+                    return true
+                }
+                Log.w(LOG_TAG, "Resetting stale in-progress unlock request after ${elapsedSinceStartMs}ms")
+                requestInProgress = false
             }
 
             requestInProgress = true
+            requestStartedAtElapsedMs = nowElapsedMs
             // Resolve onto the same display the launch was requested for (the cover display,
             // not necessarily the context's own display) so the biometric prompt surfaces where
             // the user actually tapped.
@@ -95,7 +107,7 @@ class UnlockBridgeActivity : FragmentActivity() {
             }
 
             if (!started) {
-                requestInProgress = false
+                clearRequestInProgress()
             }
 
             return started
@@ -104,18 +116,24 @@ class UnlockBridgeActivity : FragmentActivity() {
         @Synchronized
         private fun clearRequestInProgress() {
             requestInProgress = false
+            requestStartedAtElapsedMs = 0L
         }
 
         /** Test-only hook to reset the in-progress dedup guard between test cases. */
         @VisibleForTesting
         internal fun resetForTesting() {
-            requestInProgress = false
+            clearRequestInProgress()
         }
     }
 
     private val completionGuard = AtomicBoolean(false)
+    private val promptReleasedGuard = AtomicBoolean(false)
+    private val authStartedGuard = AtomicBoolean(false)
     private var unlockRequest: UnlockLaunchRequest? = null
     private var authenticationCancellationSignal: CancellationSignal? = null
+    private var biometricAuthStartedElapsedMs: Long = 0L
+    private var hasRetriedEarlyCancel: Boolean = false
+    private var pendingRetryRunnable: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -143,15 +161,51 @@ class UnlockBridgeActivity : FragmentActivity() {
             return
         }
 
+        val keyguardManager = getSystemService(KeyguardManager::class.java)
+        if (keyguardManager != null && !keyguardManager.isKeyguardLocked) {
+            Log.d(LOG_TAG, "Device already unlocked on bridge start requestId=${request.requestId}")
+            completeAndFinish(reason = "already_unlocked_on_create") {
+                dispatchLaunchAfterUnlock(request)
+            }
+            return
+        }
+
+        // Wait for the bridge window to gain focus (after keyguard occlusion settles) before
+        // starting BiometricPrompt so Samsung Keyguard's occlusion transition does not preempt
+        // and cancel the prompt with ERROR_CANCELED.
+        if (hasWindowFocus()) {
+            startAuthenticationIfPending()
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            startAuthenticationIfPending()
+        }
+    }
+
+    private fun startAuthenticationIfPending() {
+        val request = unlockRequest ?: return
+        if (completionGuard.get()) return
+        if (!authStartedGuard.compareAndSet(false, true)) return
         startBiometricAuthentication(request)
     }
 
     override fun onDestroy() {
+        pendingRetryRunnable?.let { window.decorView.removeCallbacks(it) }
+        pendingRetryRunnable = null
         authenticationCancellationSignal?.cancel()
         authenticationCancellationSignal = null
         clearRequestInProgress()
-        if (unlockRequest != null) ForegroundService.setUnlockPromptActive(false)
+        releaseUnlockPromptIfNeeded()
         super.onDestroy()
+    }
+
+    private fun releaseUnlockPromptIfNeeded() {
+        if (unlockRequest != null && promptReleasedGuard.compareAndSet(false, true)) {
+            ForegroundService.setUnlockPromptActive(false)
+        }
     }
 
     private fun startBiometricAuthentication(request: UnlockLaunchRequest) {
@@ -161,7 +215,10 @@ class UnlockBridgeActivity : FragmentActivity() {
         val biometricStatus = biometricManager?.canAuthenticate(authenticators)
             ?: BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE
         if (biometricStatus != BiometricManager.BIOMETRIC_SUCCESS) {
-            Log.d(LOG_TAG, "BiometricPrompt unavailable status=$biometricStatus; falling back to system keyguard requestId=${request.requestId}")
+            Log.i(
+                LOG_TAG,
+                "BiometricPrompt unavailable status=$biometricStatus; falling back to KeyguardManager requestDismissKeyguard requestId=${request.requestId}"
+            )
             dismissKeyguardAndLaunch(request)
             return
         }
@@ -176,17 +233,30 @@ class UnlockBridgeActivity : FragmentActivity() {
 
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                val reason = "auth_error code=$errorCode message=${errString.toString()}"
-                if (errorCode != BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED &&
-                    errorCode != BiometricPrompt.BIOMETRIC_ERROR_CANCELED &&
-                    errorCode != 13 // BIOMETRIC_ERROR_NEGATIVE_BUTTON
+                val elapsedSinceStartMs = (SystemClock.elapsedRealtime() - biometricAuthStartedElapsedMs).coerceAtLeast(0L)
+                if (errorCode == BiometricPrompt.BIOMETRIC_ERROR_CANCELED &&
+                    !hasRetriedEarlyCancel &&
+                    elapsedSinceStartMs <= EARLY_BIOMETRIC_CANCEL_RETRY_WINDOW_MS &&
+                    !completionGuard.get()
                 ) {
-                    Log.d(LOG_TAG, "Biometric errored ($reason); falling back to system keyguard requestId=${request.requestId}")
-                    dismissKeyguardAndLaunch(request)
-                } else {
-                    Log.d(LOG_TAG, "Unlock canceled requestId=${request.requestId} reason=$reason")
-                    completeAndFinish(reason = reason)
+                    hasRetriedEarlyCancel = true
+                    Log.i(
+                        LOG_TAG,
+                        "BiometricPrompt preempted after ${elapsedSinceStartMs}ms; retrying requestId=${request.requestId}"
+                    )
+                    val retryRunnable = Runnable {
+                        pendingRetryRunnable = null
+                        if (!completionGuard.get() && !isFinishing && !isDestroyed) {
+                            startBiometricAuthentication(request)
+                        }
+                    }
+                    pendingRetryRunnable = retryRunnable
+                    window.decorView.postDelayed(retryRunnable, BIOMETRIC_RETRY_DELAY_MS)
+                    return
                 }
+                val reason = "auth_error code=$errorCode message=${errString.toString()}"
+                Log.d(LOG_TAG, "Unlock canceled requestId=${request.requestId} reason=$reason")
+                completeAndFinish(reason = reason)
             }
 
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
@@ -207,12 +277,13 @@ class UnlockBridgeActivity : FragmentActivity() {
         val cancellationSignal = CancellationSignal().also {
             authenticationCancellationSignal = it
         }
+        biometricAuthStartedElapsedMs = SystemClock.elapsedRealtime()
 
         runCatching {
             prompt.authenticate(cancellationSignal, mainExecutor, callback)
         }.onFailure { error ->
-            Log.w(LOG_TAG, "Failed to start biometric prompt; falling back to keyguard requestId=${request.requestId}: ${error.message}")
-            dismissKeyguardAndLaunch(request)
+            Log.w(LOG_TAG, "Failed to start biometric prompt requestId=${request.requestId}: ${error.message}")
+            completeAndFinish(reason = "prompt_start_failed")
         }
     }
 
@@ -259,12 +330,7 @@ class UnlockBridgeActivity : FragmentActivity() {
 
         val dismissCallback = object : KeyguardManager.KeyguardDismissCallback() {
             override fun onDismissSucceeded() {
-                if (keyguardManager.isDeviceLocked) {
-                    Log.w(LOG_TAG, "Keyguard dismiss reported success but device is still locked requestId=${request.requestId}")
-                    completeAndFinish(reason = "keyguard_still_locked")
-                    return
-                }
-                Log.d(LOG_TAG, "Keyguard dismissed after unlock requestId=${request.requestId}")
+                Log.d(LOG_TAG, "Keyguard dismissed after biometric success requestId=${request.requestId}")
                 completeAndFinish(reason = "auth_succeeded_keyguard_dismissed") {
                     dispatchLaunchAfterUnlock(request)
                 }
@@ -285,12 +351,9 @@ class UnlockBridgeActivity : FragmentActivity() {
             keyguardManager.requestDismissKeyguard(this, dismissCallback)
         }.onFailure { error ->
             Log.w(LOG_TAG, "requestDismissKeyguard threw requestId=${request.requestId}: ${error.message}")
-            if (!keyguardManager.isDeviceLocked) {
-                completeAndFinish(reason = "keyguard_dismiss_threw_unlocked") {
-                    dispatchLaunchAfterUnlock(request)
-                }
-            } else {
-                completeAndFinish(reason = "keyguard_dismiss_threw_locked")
+            completeAndFinish(reason = "keyguard_dismiss_threw") {
+                // Best-effort: still try the launch — worst case it no-ops and the user retries.
+                dispatchLaunchAfterUnlock(request)
             }
         }
     }
@@ -330,6 +393,13 @@ class UnlockBridgeActivity : FragmentActivity() {
 
         action()
         Log.d(LOG_TAG, "Unlock flow completed reason=$reason requestId=${unlockRequest?.requestId}")
+
+        // For unlock-only flows, release the overlay suppression before tearing down the bridge
+        // task so the cover launcher overlay reclaims Display 1 immediately rather than exposing
+        // any stale activity underneath.
+        if (unlockRequest?.packageName == null) {
+            releaseUnlockPromptIfNeeded()
+        }
 
         runCatching { finishAndRemoveTask() }
             .onFailure { finish() }

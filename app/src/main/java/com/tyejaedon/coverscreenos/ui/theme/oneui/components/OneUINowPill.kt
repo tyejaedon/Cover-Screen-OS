@@ -1,12 +1,6 @@
 package com.tyejaedon.coverscreenos.ui.theme.oneui.components
 
 import android.content.res.Configuration
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -54,24 +48,16 @@ fun OneUINowPill(
     iconTint: Color = OneUITheme.colors.accent,
     onClick: (() -> Unit)? = null
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "nowPillBorderTransition")
-    val borderOffset by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1000f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "gradientBorderOffset"
-    )
-
-    val animatedBrush = Brush.linearGradient(
-        colors = listOf(
-            OneUITheme.colors.accent.copy(alpha = 0.8f),
-            OneUITheme.colors.accent.copy(alpha = 0.2f),
-            OneUITheme.colors.accent.copy(alpha = 0.9f)
+    val accent = OneUITheme.colors.accent
+    val borderBrush = remember(accent) {
+        Brush.linearGradient(
+            colors = listOf(
+                accent.copy(alpha = 0.8f),
+                accent.copy(alpha = 0.25f),
+                accent.copy(alpha = 0.9f)
+            )
         )
-    )
+    }
 
     val interactionSource = remember { MutableInteractionSource() }
 
@@ -82,7 +68,7 @@ fun OneUINowPill(
         modifier = modifier
             .height(OneUITheme.dimensions.nowPillHeight)
             .clip(CircleShape)
-            .border(1.5.dp, animatedBrush, CircleShape)
+            .border(1.5.dp, borderBrush, CircleShape)
             .then(
                 if (onClick != null) {
                     Modifier

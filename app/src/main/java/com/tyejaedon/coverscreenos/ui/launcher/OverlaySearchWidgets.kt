@@ -16,23 +16,14 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Dialpad
-import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Mic
@@ -48,16 +39,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
@@ -66,7 +53,6 @@ import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ComposingTextPreview
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenContentPadding
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
-import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
 import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUITokens
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiChip
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiPanel
@@ -103,18 +89,9 @@ internal fun WidgetGridPageTile(
     hazeState: HazeState,
     modifier: Modifier = Modifier
 ) {
-    // Only the system-IME strategy consumes IME insets; the shared cover keyboard is
-    // drawn inline and must never be pushed by a (possibly mis-reported) soft-keyboard
-    // inset.
-    val insetsModifier = if (keyboardStrategy == KeyboardStrategy.SYSTEM_IME) {
-        Modifier
-            .imePadding()
-            .testTag(CoverSearchUiTestTags.SEARCH_CONTENT_CONTAINER_WITH_IME_PADDING)
-    } else {
-        Modifier
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
-            .testTag(CoverSearchUiTestTags.SEARCH_CONTENT_CONTAINER_NO_IME_PADDING)
-    }
+    val insetsModifier = Modifier
+        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+        .testTag(CoverSearchUiTestTags.SEARCH_CONTENT_CONTAINER_NO_IME_PADDING)
 
     Box(
         modifier = modifier
@@ -144,9 +121,8 @@ internal fun WidgetGridPageTile(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 4.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp)
                 .then(insetsModifier)
-                .padding(SEARCH_GRID_CONTENT_PADDING)
         ) {
             SearchWidgetTile(
                 searchQuery = searchQuery,
@@ -193,13 +169,7 @@ private fun SearchWidgetTile(
 
     Surface(
         modifier = modifier
-            .oneUiPanel(shape = tileShape, hazeState = hazeState, blurRadius = 24.dp)
-            // Click handling inside clipped bounds
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismissInputTap
-            ),
+            .oneUiPanel(shape = tileShape, hazeState = hazeState, blurRadius = 24.dp),
         color = Color.Transparent, // Let oneUiPanel's hazeEffect handle the background wash
         shape = tileShape
     ) {
@@ -208,46 +178,32 @@ private fun SearchWidgetTile(
                 .fillMaxWidth()
                 // Scrollable so the keyboard keys are never clipped when the tile is short.
                 .verticalScroll(rememberScrollState())
-                .coverScreenPadding(horizontal = 8.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+                .coverScreenPadding(horizontal = 6.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             CoverSearchInputRow(
                 query = searchQuery,
-                onQueryChanged = onQueryChanged,
                 onSearchFieldTapped = onSearchFieldTapped,
                 onVoiceInputTap = onVoiceInputTap,
                 isVoiceListening = isVoiceListening,
                 voiceHintMessage = voiceHintMessage,
                 focusRequester = focusRequester,
                 onDismissTileTap = onDismissTileTap,
-                keyboardStrategy = keyboardStrategy,
-                onKeyboardStrategyToggle = onKeyboardStrategyToggle,
-                onOpenImePicker = onOpenImePicker,
                 modifier = Modifier.fillMaxWidth()
             )
 
-            if (keyboardStrategy == KeyboardStrategy.T9 && isCoverKeyboardVisible) {
-                val keyboardShape = RoundedCornerShape(CoverOneUITokens.radiusPanel)
-                Surface(
+            if (isCoverKeyboardVisible) {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag(CoverSearchUiTestTags.SEARCH_T9_KEYPAD_ROOT)
-                        .oneUiPanel(shape = keyboardShape),
-                    shape = keyboardShape,
-                    color = Color.Transparent
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .coverScreenPadding(horizontal = 6.dp, vertical = 6.dp)
-                    ) {
-                        SearchFlorisKeyboardHost(
-                            query = searchQuery,
-                            onQueryChanged = onQueryChanged,
-                            onDonePressed = onDonePressed,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                    SearchFlorisKeyboardHost(
+                        query = searchQuery,
+                        onQueryChanged = onQueryChanged,
+                        onDonePressed = onDonePressed,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
 
@@ -266,16 +222,12 @@ private fun SearchWidgetTile(
 @Composable
 private fun CoverSearchInputRow(
     query: String,
-    onQueryChanged: (String) -> Unit,
     onSearchFieldTapped: () -> Unit,
     onVoiceInputTap: () -> Unit,
     isVoiceListening: Boolean,
     voiceHintMessage: String?,
     focusRequester: FocusRequester,
     onDismissTileTap: () -> Unit,
-    keyboardStrategy: KeyboardStrategy,
-    onKeyboardStrategyToggle: () -> Unit,
-    onOpenImePicker: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val inputFieldShape = RoundedCornerShape(LocalCoverPanelCornerRadius.current)
@@ -289,79 +241,41 @@ private fun CoverSearchInputRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            when (keyboardStrategy) {
-                KeyboardStrategy.T9 -> {
-                    Box(
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .oneUiPanel(shape = inputFieldShape)
+                    .clickable(onClick = onSearchFieldTapped)
+                    .focusRequester(focusRequester)
+                    .coverMinimumTouchTarget()
+                    .padding(horizontal = 2.dp, vertical = 1.dp)
+                    .testTag(CoverSearchUiTestTags.SEARCH_T9_FIELD)
+            ) {
+                if (query.isBlank()) {
+                    Text(
+                        text = "Search apps",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
-                            .weight(1f)
-                            .oneUiPanel(shape = inputFieldShape)
-                            .clickable(onClick = onSearchFieldTapped)
-                            .focusRequester(focusRequester)
-                            .coverMinimumTouchTarget()
-                            .padding(horizontal = 2.dp, vertical = 1.dp)
-                            .testTag(CoverSearchUiTestTags.SEARCH_T9_FIELD)
-                    ) {
-                        if (query.isBlank()) {
-                            Text(
-                                text = "Tap to search apps",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .coverScreenPadding(horizontal = 12.dp, vertical = 10.dp),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        } else {
-                            // Scrolled to the end by default so the most recently typed
-                            // characters of a long query stay visible, with a tap-to-expand
-                            // affordance instead of silently ellipsizing the query's start.
-                            ComposingTextPreview(
-                                text = query,
-                                maxCollapsedLines = 1,
-                                textStyle = MaterialTheme.typography.bodyLarge,
-                                textColor = MaterialTheme.colorScheme.onSurface,
-                                counterColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                showCharCount = false,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .coverScreenPadding(horizontal = 12.dp, vertical = 10.dp)
-                            )
-                        }
-                    }
-                }
-
-                KeyboardStrategy.SYSTEM_IME -> {
-                    BasicTextField(
-                        value = query,
-                        onValueChange = onQueryChanged,
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyLarge.copy(
-                            color = MaterialTheme.colorScheme.onSurface
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        decorationBox = { innerTextField ->
-                            Box(
-                                modifier = Modifier.coverScreenPadding(horizontal = 12.dp, vertical = 10.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                if (query.isEmpty()) {
-                                    Text(
-                                        text = "Search apps",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                innerTextField()
-                            }
-                        },
+                            .fillMaxWidth()
+                            .coverScreenPadding(horizontal = 12.dp, vertical = 10.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else {
+                    // Scrolled to the end by default so the most recently typed
+                    // characters of a long query stay visible, with a tap-to-expand
+                    // affordance instead of silently ellipsizing the query's start.
+                    ComposingTextPreview(
+                        text = query,
+                        maxCollapsedLines = 1,
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        textColor = MaterialTheme.colorScheme.onSurface,
+                        counterColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        showCharCount = false,
                         modifier = Modifier
-                            .weight(1f)
-                            .oneUiPanel(shape = inputFieldShape)
-                            .focusRequester(focusRequester)
-                            .coverMinimumTouchTarget()
-                            .testTag(CoverSearchUiTestTags.SEARCH_SYSTEM_IME_FIELD)
+                            .fillMaxWidth()
+                            .coverScreenPadding(horizontal = 12.dp, vertical = 10.dp)
                     )
                 }
             }
@@ -389,73 +303,6 @@ private fun CoverSearchInputRow(
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Dismiss keypad"
-                )
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .semantics(mergeDescendants = true) { }
-                    .testTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_LABEL),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Input:",
-                    style = CoverOneUIType.chipLabel,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = when (keyboardStrategy) {
-                        KeyboardStrategy.T9 -> "T9"
-                        KeyboardStrategy.SYSTEM_IME -> "system keyboard"
-                    },
-                    style = CoverOneUIType.chipLabel,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .coverMinimumTouchTarget()
-                    .oneUiChip(selected = keyboardStrategy == KeyboardStrategy.T9)
-                    .clickable(onClick = onKeyboardStrategyToggle)
-                    .testTag(CoverSearchUiTestTags.SEARCH_INPUT_MODE_TOGGLE_BUTTON),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = when (keyboardStrategy) {
-                        KeyboardStrategy.T9 -> Icons.Filled.Keyboard
-                        KeyboardStrategy.SYSTEM_IME -> Icons.Filled.Dialpad
-                    },
-                    contentDescription = when (keyboardStrategy) {
-                        KeyboardStrategy.T9 -> "Switch to system keyboard"
-                        KeyboardStrategy.SYSTEM_IME -> "Switch to cover keyboard"
-                    },
-                    tint = Color.White
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .coverMinimumTouchTarget()
-                    .oneUiChip()
-                    .clickable(onClick = onOpenImePicker)
-                    .testTag(CoverSearchUiTestTags.SEARCH_IME_PICKER_BUTTON),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.SwapHoriz,
-                    contentDescription = "Choose input method",
-                    tint = Color.White
                 )
             }
         }

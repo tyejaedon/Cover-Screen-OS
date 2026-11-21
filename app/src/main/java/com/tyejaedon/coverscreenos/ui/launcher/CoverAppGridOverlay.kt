@@ -3,25 +3,14 @@
 package com.tyejaedon.coverscreenos.ui.launcher
 
 import android.Manifest
-import android.content.Context
-import android.content.BroadcastReceiver
-import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.graphics.Canvas
-import android.graphics.drawable.Drawable
-import android.os.BatteryManager
 import android.os.SystemClock
 import android.util.Log
-import android.util.LruCache
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -30,43 +19,24 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
-import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -78,26 +48,21 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_KEYBOARD_STRATEGY
@@ -105,46 +70,27 @@ import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_BLUR_RADIUS_DP
 import com.tyejaedon.coverscreenos.datastore.DEFAULT_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.InputTelemetryStore
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
-import com.tyejaedon.coverscreenos.datastore.MAX_WALLPAPER_DIM_AMOUNT
-import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.AppGridPageTile
-import com.tyejaedon.coverscreenos.ui.CompactNowPlayingCard
-import com.tyejaedon.coverscreenos.ui.OneUiDockRow
 import com.tyejaedon.coverscreenos.ui.CoverSearchUiTestTags
 import com.tyejaedon.coverscreenos.ui.CoverWallpaperLayer
-import com.tyejaedon.coverscreenos.ui.ExpandedNowPlayingPanel
 import com.tyejaedon.coverscreenos.ui.GridPageLetterTooltip
 import com.tyejaedon.coverscreenos.ui.NotificationsPanelTile
-import com.tyejaedon.coverscreenos.ui.OverlayIconThumbnailDiskCache
 import com.tyejaedon.coverscreenos.ui.PageIndicator
 import com.tyejaedon.coverscreenos.ui.filterAppsForSearchQuery
 import com.tyejaedon.coverscreenos.ui.gridPageStartLetterForPagerPage
-import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
-import java.time.LocalDate
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
-import androidx.core.graphics.createBitmap
 import com.tyejaedon.coverscreenos.ui.launcher.WidgetGridPageTile
 import com.tyejaedon.coverscreenos.ui.launcher.rememberVoiceInputHandle
-import com.tyejaedon.coverscreenos.ui.openMediaApplicationFromOverlay
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSTextStyles
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSBatteryChargingColor
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSCallActiveColor
-import com.tyejaedon.coverscreenos.ui.theme.CoverOSDestructiveColor
-import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
-import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiChip
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 
@@ -155,9 +101,6 @@ private const val DOCK_SLOT_COUNT = 4
 private const val PAGER_HAPTIC_INTERVAL_MS = 150L
 private const val OVERLAY_PERF_LOG_TAG = "CoverOverlayPerf"
 private const val APP_SCAN_DEFER_AFTER_FIRST_FRAME_MS = 120L
-private const val ICON_CACHE_MAX_BYTES = 12L * 1024L * 1024L
-private const val ICON_CACHE_SIZE_UNIT_BYTES = 1024
-private const val ICON_BITMAP_EDGE_PX = 128
 private const val ICON_PREWARM_COUNT = APPS_PER_GRID_PAGE * 2
 private const val ICON_PREWARM_BATCH_SIZE = 6
 private const val ICON_PREWARM_BATCH_DELAY_MS = 32L
@@ -168,220 +111,16 @@ private const val FIRST_APP_GRID_PAGE_INDEX = 3
 private const val SEARCH_QUERY_MAX_LENGTH = 64
 
 private val WIDGET_TILE_VERTICAL_SWIPE_THRESHOLD = 72.dp
+private val QUICK_SETTINGS_VERTICAL_SWIPE_THRESHOLD = 44.dp
+private val LOCKED_SWIPE_UNLOCK_THRESHOLD = 36.dp
 
-internal data class CoverDisplayPolishSpec(
-    val statusChipMinHeight: Dp,
-    val dockBottomPadding: Dp,
-    val cutoutTopPadding: Dp = 0.dp,
-    val cutoutBottomPadding: Dp = 0.dp,
-    val cutoutStartPadding: Dp = 0.dp,
-    val cutoutEndPadding: Dp = 0.dp
-)
-
-private data class BatteryStatusSnapshot(
-    val levelPercent: Int,
-    val isCharging: Boolean
-)
-
-@Composable
-internal fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
-    val density = LocalDensity.current
-    val layoutDirection = LocalLayoutDirection.current
-    val containerHeightPx = LocalWindowInfo.current.containerSize.height
-    val containerHeightDp = with(density) { containerHeightPx.toDp() }
-
-    val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
-    val cutoutTop = cutoutInsets.calculateTopPadding()
-    val cutoutBottom = cutoutInsets.calculateBottomPadding()
-    val cutoutStart = cutoutInsets.calculateStartPadding(layoutDirection)
-    val cutoutEnd = cutoutInsets.calculateEndPadding(layoutDirection)
-
-    return remember(containerHeightPx, cutoutTop, cutoutBottom, cutoutStart, cutoutEnd) {
-        when {
-            containerHeightDp <= 680.dp -> CoverDisplayPolishSpec(
-                statusChipMinHeight = 28.dp,
-                dockBottomPadding = 8.dp + cutoutBottom,
-                cutoutTopPadding = cutoutTop,
-                cutoutBottomPadding = cutoutBottom,
-                cutoutStartPadding = cutoutStart,
-                cutoutEndPadding = cutoutEnd
-            )
-            containerHeightDp <= 760.dp -> CoverDisplayPolishSpec(
-                statusChipMinHeight = 30.dp,
-                dockBottomPadding = 10.dp + cutoutBottom,
-                cutoutTopPadding = cutoutTop,
-                cutoutBottomPadding = cutoutBottom,
-                cutoutStartPadding = cutoutStart,
-                cutoutEndPadding = cutoutEnd
-            )
-            else -> CoverDisplayPolishSpec(
-                statusChipMinHeight = 32.dp,
-                dockBottomPadding = 12.dp + cutoutBottom,
-                cutoutTopPadding = cutoutTop,
-                cutoutBottomPadding = cutoutBottom,
-                cutoutStartPadding = cutoutStart,
-                cutoutEndPadding = cutoutEnd
-            )
-        }
+internal fun resolveAccessiblePageCount(isDeviceLocked: Boolean, totalPageCount: Int): Int {
+    val safeTotal = totalPageCount.coerceAtLeast(1)
+    return if (isDeviceLocked) {
+        (LOCK_PAGER_PAGE_INDEX + 1).coerceAtMost(safeTotal)
+    } else {
+        safeTotal
     }
-}
-
-@Composable
-private fun rememberBatteryStatus(): BatteryStatusSnapshot? {
-    val context = LocalContext.current
-    var status by remember(context) { mutableStateOf(readBatteryStatus(context)) }
-
-    DisposableEffect(context) {
-        val receiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                status = resolveBatteryStatusSnapshot(intent)
-            }
-        }
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        val stickyIntent = context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        if (stickyIntent != null) {
-            status = resolveBatteryStatusSnapshot(stickyIntent)
-        }
-
-        onDispose {
-            runCatching { context.unregisterReceiver(receiver) }
-        }
-    }
-    return status
-}
-
-private fun readBatteryStatus(context: Context): BatteryStatusSnapshot? {
-    val stickyIntent = context.registerReceiver(
-        null,
-        IntentFilter(Intent.ACTION_BATTERY_CHANGED),
-        Context.RECEIVER_NOT_EXPORTED
-    )
-    return resolveBatteryStatusSnapshot(stickyIntent)
-}
-
-private fun resolveBatteryStatusSnapshot(intent: Intent?): BatteryStatusSnapshot? {
-    intent ?: return null
-    val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-    val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-    if (level < 0 || scale <= 0) return null
-
-    val levelPercent = ((level.toFloat() / scale.toFloat()) * 100f).roundToInt().coerceIn(0, 100)
-    val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
-    val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
-
-    return BatteryStatusSnapshot(levelPercent = levelPercent, isCharging = isCharging)
-}
-
-// Global LRU Bitmap Cache for hardware-accelerated Compose Image rendering
-internal object OverlayBitmapIconCache {
-    private val cache = object : LruCache<String, ImageBitmap>(
-        (ICON_CACHE_MAX_BYTES / ICON_CACHE_SIZE_UNIT_BYTES).toInt()
-    ) {
-        override fun sizeOf(key: String, bitmap: ImageBitmap): Int =
-            (bitmap.width.toLong() * bitmap.height * 4 / ICON_CACHE_SIZE_UNIT_BYTES)
-                .toInt()
-                .coerceAtLeast(1)
-    }
-
-    fun get(packageName: String): ImageBitmap? {
-        return synchronized(cache) { cache.get(packageName) }
-    }
-
-    fun put(packageName: String, bitmap: ImageBitmap) {
-        synchronized(cache) { cache.put(packageName, bitmap) }
-    }
-}
-
-
-private fun drawableToImageBitmap(drawable: Drawable, sizePx: Int = ICON_BITMAP_EDGE_PX): ImageBitmap {
-    val bitmap = createBitmap(sizePx, sizePx)
-    val canvas = Canvas(bitmap)
-    val sourceWidth = drawable.intrinsicWidth.coerceAtLeast(1)
-    val sourceHeight = drawable.intrinsicHeight.coerceAtLeast(1)
-    val scale = minOf(sizePx.toFloat() / sourceWidth, sizePx.toFloat() / sourceHeight)
-    val drawWidth = (sourceWidth * scale).toInt().coerceAtLeast(1)
-    val drawHeight = (sourceHeight * scale).toInt().coerceAtLeast(1)
-    val left = (sizePx - drawWidth) / 2
-    val top = (sizePx - drawHeight) / 2
-    val previousBounds = android.graphics.Rect(drawable.bounds)
-    try {
-        drawable.setBounds(left, top, left + drawWidth, top + drawHeight)
-        drawable.draw(canvas)
-    } finally {
-        drawable.bounds = previousBounds
-    }
-    return bitmap.asImageBitmap()
-}
-
-internal suspend fun resolvePackageIconBitmap(
-    context: Context,
-    packageManager: PackageManager,
-    packageName: String
-): ImageBitmap? {
-    OverlayBitmapIconCache.get(packageName)?.let { return it }
-
-    val resolved = withContext(Dispatchers.IO) {
-        val versionToken = resolvePackageIconVersionToken(packageManager, packageName)
-        OverlayIconThumbnailDiskCache.get(
-            context = context,
-            packageName = packageName,
-            versionToken = versionToken
-        )?.let { diskCachedDrawable ->
-            return@withContext drawableToImageBitmap(diskCachedDrawable)
-        }
-
-        runCatching {
-            val drawable = packageManager.getApplicationIcon(packageName)
-            OverlayIconThumbnailDiskCache.put(
-                context = context,
-                packageName = packageName,
-                versionToken = versionToken,
-                drawable = drawable
-            )
-            drawableToImageBitmap(drawable)
-        }.getOrNull()
-    } ?: return null
-
-    OverlayBitmapIconCache.put(packageName, resolved)
-    return resolved
-}
-
-@Composable
-internal fun rememberPackageIconBitmap(packageName: String): ImageBitmap? {
-    val context = LocalContext.current
-    val packageManager = remember(context) { context.packageManager }
-
-    val iconState = produceState<ImageBitmap?>(
-        initialValue = OverlayBitmapIconCache.get(packageName),
-        key1 = packageName
-    ) {
-        if (value == null) {
-            val resolved = resolvePackageIconBitmap(context, packageManager, packageName)
-            if (resolved != null) value = resolved
-        }
-    }
-    return iconState.value
-}
-
-@Composable
-internal fun rememberPackageLabel(packageName: String): String {
-    val context = LocalContext.current
-    val packageManager = remember(context) { context.packageManager }
-
-    val labelState = produceState(
-        initialValue = packageName.substringAfterLast('.'),
-        key1 = packageName
-    ) {
-        val resolvedLabel = withContext(Dispatchers.IO) {
-            runCatching {
-                packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
-            }.getOrNull()
-        }
-        if (!resolvedLabel.isNullOrBlank()) {
-            value = resolvedLabel
-        }
-    }
-    return labelState.value
 }
 
 @Composable
@@ -407,18 +146,17 @@ fun CoverAppGridOverlay(
     widgetHostManager: com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager? = null,
     onRemoveWidget: (Int) -> Unit = {},
     onAddWidgetRequest: () -> Unit = {},
-    onConfigureWidget: (Int) -> Unit = {},
-    onReorderWidgets: (List<Int>) -> Unit = {},
     onRequestUnlock: () -> Unit = {},
     onRequestScreenOff: () -> Unit = {},
+    onRequestSystemShade: () -> Unit = {},
     onOpenCustomize: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val packageManager = remember(context) { context.packageManager }
-    val resolvedWidgetHostManager = widgetHostManager ?: remember(context) {
-        com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(context)
+    val resolvedWidgetHostManager = remember(context, widgetHostManager) {
+        widgetHostManager ?: com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(context)
     }
     val overlayComposeStartMs = remember { SystemClock.uptimeMillis() }
 
@@ -490,9 +228,13 @@ fun CoverAppGridOverlay(
         if (filteredApps.isEmpty()) listOf(emptyList()) else filteredApps.chunked(APPS_PER_GRID_PAGE)
     }
     val totalPageCount = FIRST_APP_GRID_PAGE_INDEX + appPages.size
+    val accessiblePageCount = resolveAccessiblePageCount(
+        isDeviceLocked = isDeviceLocked,
+        totalPageCount = totalPageCount
+    )
     val pagerState = rememberPagerState(
         initialPage = LOCK_PAGER_PAGE_INDEX,
-        pageCount = { totalPageCount }
+        pageCount = { accessiblePageCount }
     )
 
 
@@ -563,7 +305,7 @@ fun CoverAppGridOverlay(
                         dockSlotFourAllApps = dockSlotFourAllApps,
                         timeLabel = timeLabel,
                         dateLabel = dateLabel,
-                        totalPageCount = totalPageCount,
+                        totalPageCount = accessiblePageCount,
                         batteryStatus = batteryStatus,
                         searchQuery = searchQuery,
                         onSearchQueryChanged = { updatedQuery ->
@@ -579,10 +321,9 @@ fun CoverAppGridOverlay(
                         widgetHostManager = resolvedWidgetHostManager,
                         onRemoveWidget = onRemoveWidget,
                         onAddWidgetRequest = onAddWidgetRequest,
-                        onConfigureWidget = onConfigureWidget,
-                        onReorderWidgets = onReorderWidgets,
                         onRequestUnlock = onRequestUnlock,
                         onRequestScreenOff = onRequestScreenOff,
+                        onRequestSystemShade = onRequestSystemShade,
                         onOpenCustomize = onOpenCustomize,
                         pagerState = pagerState,
                         hazeState = hazeState,
@@ -622,10 +363,9 @@ private fun InteractiveSection(
     widgetHostManager: com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager,
     onRemoveWidget: (Int) -> Unit,
     onAddWidgetRequest: () -> Unit,
-    onConfigureWidget: (Int) -> Unit,
-    onReorderWidgets: (List<Int>) -> Unit,
     onRequestUnlock: () -> Unit,
     onRequestScreenOff: () -> Unit,
+    onRequestSystemShade: () -> Unit,
     onOpenCustomize: () -> Unit,
     pagerState: PagerState,
     hazeState: HazeState,
@@ -637,6 +377,11 @@ private fun InteractiveSection(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val widgetSwipeThresholdPx = with(density) { WIDGET_TILE_VERTICAL_SWIPE_THRESHOLD.toPx() }
+    val quickSettingsSwipeThresholdPx = with(density) { QUICK_SETTINGS_VERTICAL_SWIPE_THRESHOLD.toPx() }
+    val lockedSwipeThresholdPx = with(density) { LOCKED_SWIPE_UNLOCK_THRESHOLD.toPx() }
+    val latestIsDeviceLocked by androidx.compose.runtime.rememberUpdatedState(isDeviceLocked)
+    val latestOnRequestUnlock by androidx.compose.runtime.rememberUpdatedState(onRequestUnlock)
+    val latestOnRequestSystemShade by androidx.compose.runtime.rememberUpdatedState(onRequestSystemShade)
     val searchFieldFocusRequester = remember { FocusRequester() }
     var showPageLetterTooltip by remember { mutableStateOf(false) }
     var isIndicatorScrubbing by remember { mutableStateOf(false) }
@@ -694,6 +439,11 @@ private fun InteractiveSection(
 
     fun openWidgetTileFromLockscreen() {
         if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX || isWidgetTileVisible || isQuickSettingsVisible) return
+        if (latestIsDeviceLocked) {
+            dismissSearchInput()
+            latestOnRequestUnlock()
+            return
+        }
         isWidgetTileVisible = true
     }
 
@@ -713,6 +463,17 @@ private fun InteractiveSection(
             if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX) {
                 pagerState.scrollToPage(LOCK_PAGER_PAGE_INDEX)
             }
+        }
+    }
+
+    LaunchedEffect(isDeviceLocked) {
+        if (!isDeviceLocked) return@LaunchedEffect
+        if (isWidgetTileVisible) {
+            dismissSearchInput()
+            isWidgetTileVisible = false
+        }
+        if (pagerState.currentPage > LOCK_PAGER_PAGE_INDEX) {
+            pagerState.scrollToPage(LOCK_PAGER_PAGE_INDEX)
         }
     }
 
@@ -770,6 +531,92 @@ private fun InteractiveSection(
         "No apps match \"$searchQuery\""
     }
 
+    val systemShadeNestedScrollConnection = remember(quickSettingsSwipeThresholdPx, lockedSwipeThresholdPx) {
+        object : NestedScrollConnection {
+            private var unconsumedDownwardDrag = 0f
+            private var triggered = false
+            private var lockedForwardDrag = 0f
+            private var pendingUnlockOnRelease = false
+
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source != NestedScrollSource.UserInput || isWidgetTileVisible || isQuickSettingsVisible) {
+                    return Offset.Zero
+                }
+                if (!latestIsDeviceLocked) {
+                    lockedForwardDrag = 0f
+                    pendingUnlockOnRelease = false
+                    return Offset.Zero
+                }
+                val onLockEdge = pagerState.currentPage == LOCK_PAGER_PAGE_INDEX &&
+                    pagerState.currentPageOffsetFraction >= -0.01f
+                if (!onLockEdge) {
+                    lockedForwardDrag = 0f
+                    pendingUnlockOnRelease = false
+                    return Offset.Zero
+                }
+                if (available.x < 0f) {
+                    lockedForwardDrag += -available.x
+                    if (lockedForwardDrag >= lockedSwipeThresholdPx) {
+                        pendingUnlockOnRelease = true
+                    }
+                    // Consume forward swipe on Lock page while locked so Widgets/Apps never peek.
+                    return Offset(available.x, 0f)
+                } else if (available.x > 0f) {
+                    lockedForwardDrag = 0f
+                    pendingUnlockOnRelease = false
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (source != NestedScrollSource.UserInput || isWidgetTileVisible || isQuickSettingsVisible) {
+                    return Offset.Zero
+                }
+                if (available.y > 0f) {
+                    unconsumedDownwardDrag += available.y
+                    if (!triggered && unconsumedDownwardDrag >= quickSettingsSwipeThresholdPx) {
+                        triggered = true
+                        latestOnRequestSystemShade()
+                    }
+                } else if (available.y < 0f) {
+                    unconsumedDownwardDrag = 0f
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (pendingUnlockOnRelease &&
+                    latestIsDeviceLocked &&
+                    !isWidgetTileVisible &&
+                    !isQuickSettingsVisible &&
+                    pagerState.currentPage == LOCK_PAGER_PAGE_INDEX
+                ) {
+                    pendingUnlockOnRelease = false
+                    lockedForwardDrag = 0f
+                    dismissSearchInput()
+                    latestOnRequestUnlock()
+                }
+                unconsumedDownwardDrag = 0f
+                triggered = false
+                lockedForwardDrag = 0f
+                pendingUnlockOnRelease = false
+                return Velocity.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                unconsumedDownwardDrag = 0f
+                triggered = false
+                lockedForwardDrag = 0f
+                pendingUnlockOnRelease = false
+                return Velocity.Zero
+            }
+        }
+    }
+
     Box(modifier = modifier) {
         Column(
             modifier = Modifier
@@ -783,12 +630,12 @@ private fun InteractiveSection(
             Box(
                 modifier = Modifier
                     .weight(1f)
+                    .nestedScroll(systemShadeNestedScrollConnection)
             ) {
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .hazeSource(state = hazeState)
                         .testTag(CoverSearchUiTestTags.OVERLAY_PAGER),
                     userScrollEnabled = !isWidgetTileVisible && !isQuickSettingsVisible,
                     pageSpacing = 10.dp,
@@ -815,15 +662,17 @@ private fun InteractiveSection(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .testTag(CoverSearchUiTestTags.LOCKSCREEN_TILE_PAGE)
-                                        .pointerInput(isQuickSettingsVisible, widgetSwipeThresholdPx) {
+                                        .pointerInput(isQuickSettingsVisible, quickSettingsSwipeThresholdPx) {
                                             var cumulativeDrag = 0f
                                             detectVerticalDragGestures(
                                                 onVerticalDrag = { _, dragAmount ->
                                                     cumulativeDrag += dragAmount
                                                 },
                                                 onDragEnd = {
-                                                    if (cumulativeDrag >= widgetSwipeThresholdPx) {
+                                                    if (cumulativeDrag <= -quickSettingsSwipeThresholdPx) {
                                                         openQuickSettingsFromLockscreen()
+                                                    } else if (cumulativeDrag >= quickSettingsSwipeThresholdPx) {
+                                                        onRequestSystemShade()
                                                     }
                                                     cumulativeDrag = 0f
                                                 },
@@ -861,8 +710,13 @@ private fun InteractiveSection(
                                         dockSlots = dockApps,
                                         dockSlotFourAllApps = dockSlotFourAllApps,
                                         onOpenAllApps = {
-                                            uiScope.launch {
-                                                pagerState.animateScrollToPage(FIRST_APP_GRID_PAGE_INDEX)
+                                            if (latestIsDeviceLocked) {
+                                                dismissSearchInput()
+                                                latestOnRequestUnlock()
+                                            } else {
+                                                uiScope.launch {
+                                                    pagerState.animateScrollToPage(FIRST_APP_GRID_PAGE_INDEX)
+                                                }
                                             }
                                         },
                                         onNotificationOpen = { model ->
@@ -888,8 +742,6 @@ private fun InteractiveSection(
                                     widgetHostManager = widgetHostManager,
                                     onRemoveWidget = onRemoveWidget,
                                     onAddWidgetRequest = onAddWidgetRequest,
-                                    onConfigureWidget = onConfigureWidget,
-                                    onReorderWidgets = onReorderWidgets,
                                     hazeState = hazeState,
                                     modifier = Modifier.fillMaxSize()
                                 )
@@ -1011,7 +863,7 @@ private fun InteractiveSection(
                 PageIndicator(
                     pagerState = pagerState,
                     pageCount = totalPageCount,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp),
                     onScrubActiveChanged = { active -> isIndicatorScrubbing = active }
                 )
             }
@@ -1019,293 +871,6 @@ private fun InteractiveSection(
     }
 }
 
-
-@Composable
-private fun LockAndDockTile(
-    notifications: List<CoverNotificationModel>,
-    timeLabel: String,
-    dateLabel: String,
-    batteryStatus: BatteryStatusSnapshot?,
-    displayPolishSpec: CoverDisplayPolishSpec,
-    isDeviceLocked: Boolean,
-    isDockVisible: Boolean,
-    dockSlots: List<AppModel?>,
-    dockSlotFourAllApps: Boolean,
-    onOpenAllApps: () -> Unit,
-    onNotificationOpen: (CoverNotificationModel) -> Unit,
-    onAppSelected: (AppModel) -> Unit,
-    onOpenSearch: () -> Unit,
-    onRequestUnlock: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-    val mediaNotification = remember(notifications) {
-        notifications.filter { it.isMediaNotification }.maxByOrNull { it.postTime }
-    }
-    var showExpandedMedia by remember(mediaNotification?.notificationKey) { mutableStateOf(false) }
-
-    Box(modifier = modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))
-                .padding(
-                    top = displayPolishSpec.cutoutTopPadding,
-                    start = displayPolishSpec.cutoutStartPadding,
-                    end = displayPolishSpec.cutoutEndPadding
-                ),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .coverScreenPadding(horizontal = 14.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    if (isDeviceLocked) {
-                        LockStatusPill(
-                            isDeviceLocked = true,
-                            minHeight = displayPolishSpec.statusChipMinHeight,
-                            onClick = onRequestUnlock
-                        )
-                    }
-                    SearchAffordanceButton(
-                        onClick = onOpenSearch,
-                        minHeight = displayPolishSpec.statusChipMinHeight,
-                        modifier = Modifier.padding(start = 6.dp)
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    if (batteryStatus != null) {
-                        BatteryStatusPill(status = batteryStatus)
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Column(
-                        modifier = Modifier.weight(0.95f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        LockTopNotificationHighlights(
-                            notifications = notifications,
-                            onNotificationOpen = onNotificationOpen,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Text(
-                            text = timeLabel,
-                            style = CoverOSTextStyles.ClockText.copy(fontSize = 28.sp),
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Clip
-                        )
-                        Text(
-                            text = dateLabel,
-                            style = CoverOSTextStyles.DateText,
-                            color = Color.White.copy(alpha = 0.85f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                    .padding(horizontal = 8.dp)
-                    .padding(bottom = displayPolishSpec.dockBottomPadding),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                CompactNowPlayingCard(
-                    mediaNotification = mediaNotification,
-                    onOpenExpanded = { showExpandedMedia = true },
-                    onOpenMediaApp = { openMediaApplicationFromOverlay(context, notifications) },
-                    modifier = Modifier.fillMaxWidth(0.9f)
-                )
-                if (isDockVisible) {
-                    OneUiDockRow(
-                        dockSlots = dockSlots,
-                        onAppSelected = onAppSelected,
-                        slotFourAllApps = dockSlotFourAllApps,
-                        onOpenAllApps = onOpenAllApps
-                    )
-                }
-            }
-        }
-
-        ExpandedNowPlayingPanel(
-            mediaNotification = mediaNotification,
-            visible = showExpandedMedia,
-            onDismiss = { showExpandedMedia = false },
-            onLaunchSourceApp = { media ->
-                CoverNotificationListenerService.launchNotificationSourceApp(
-                    context,
-                    media.packageName
-                )
-            },
-            onAction = { media, actionLabel ->
-                CoverNotificationListenerService.performNotificationAction(
-                    media.notificationKey,
-                    actionLabel
-                )
-            },
-            onOpenNotification = { media ->
-                CoverNotificationListenerService.openNotificationFromOverlay(context, media)
-            },
-            modifier = Modifier.fillMaxSize()
-        )
-    }
-}
-
-@Composable
-private fun BatteryStatusPill(status: BatteryStatusSnapshot, modifier: Modifier = Modifier) {
-    val levelFraction = (status.levelPercent / 100f).coerceIn(0f, 1f)
-    val trackColor = Color.White.copy(alpha = 0.18f)
-    val fillColor = when {
-        status.levelPercent <= 15 -> CoverOSDestructiveColor
-        status.isCharging -> CoverOSBatteryChargingColor
-        else -> Color.White
-    }
-
-    Row(
-        modifier = modifier
-            .oneUiChip()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .width(22.dp)
-                .height(10.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(trackColor)
-                .padding(1.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(levelFraction)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(fillColor)
-            )
-        }
-
-        Text(
-            text = if (status.isCharging) "${status.levelPercent}% CHG" else "${status.levelPercent}%",
-            style = CoverOneUIType.chipLabel,
-            color = Color.White,
-            maxLines = 1
-        )
-    }
-}
-
-
-@Composable
-private fun LockStatusPill(isDeviceLocked: Boolean, minHeight: Dp, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .oneUiChip()
-            .heightIn(min = minHeight)
-            .clickable(
-                onClickLabel = if (isDeviceLocked) "Unlock" else null,
-                role = Role.Button,
-                onClick = onClick
-            )
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = if (isDeviceLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
-            contentDescription = if (isDeviceLocked) "Locked" else "Unlocked",
-            tint = Color.White,
-            modifier = Modifier.size(12.dp)
-        )
-    }
-}
-
-/**
- * Small, discrete affordance that opens the search/widget tile via tap. Swiping down on the
- * lock page is reserved for the Quick Settings panel instead.
- */
-@Composable
-private fun SearchAffordanceButton(onClick: () -> Unit, minHeight: Dp, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .testTag(CoverSearchUiTestTags.SEARCH_OPEN_AFFORDANCE_BUTTON)
-            .oneUiChip()
-            .heightIn(min = minHeight)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = Icons.Filled.Search,
-            contentDescription = "Open search",
-            tint = Color.White,
-            modifier = Modifier.size(12.dp)
-        )
-    }
-}
-
-@Composable
-private fun LockTopNotificationHighlights(
-    notifications: List<CoverNotificationModel>,
-    onNotificationOpen: (CoverNotificationModel) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val callNotifications = remember(notifications) {
-        notifications.filter { it.isOngoing && isCallNotification(it) }.sortedByDescending { it.postTime }.take(3)
-    }
-    if (callNotifications.isEmpty()) return
-
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        callNotifications.forEach { notification ->
-            val iconBitmap = rememberPackageIconBitmap(notification.packageName)
-            Surface(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(CircleShape)
-                    .clickable { onNotificationOpen(notification) },
-                color = CoverOSCallActiveColor.copy(alpha = 0.6f),
-                shape = CircleShape
-            ) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    if (iconBitmap != null) {
-                        Image(
-                            bitmap = iconBitmap,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun isCallNotification(notification: CoverNotificationModel): Boolean {
-    val text = "${notification.title} ${notification.previewText} ${notification.packageName}".lowercase(Locale.getDefault())
-    return text.contains("call") || text.contains("dial") || text.contains("phone")
-}
 
 private fun resolveDockSlots(apps: List<AppModel>, dockPackageSlots: List<String?>): List<AppModel?> {
     val appByPackageName = apps.associateBy { it.packageName }
@@ -1319,16 +884,3 @@ private fun resolveDockSlots(apps: List<AppModel>, dockPackageSlots: List<String
         dockPackageSlots.getOrNull(index)?.trim()?.takeUnless { it.isEmpty() }?.let { appByPackageName[it] }
     }
 }
-
-private fun resolvePackageIconVersionToken(packageManager: PackageManager, packageName: String): String? {
-    val packageInfo = runCatching {
-        packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
-    }.getOrNull() ?: return null
-
-    val versionCode = packageInfo.longVersionCode
-    return "$packageName|$versionCode|${packageInfo.lastUpdateTime}"
-}
-
-private fun currentCoverTime(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
-
-private fun currentCoverDate(): String = LocalDate.now().format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()))

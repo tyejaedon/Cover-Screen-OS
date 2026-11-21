@@ -3,22 +3,32 @@ package com.tyejaedon.coverscreenos.ui.customize.wallpaper
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -74,6 +84,10 @@ internal fun WallpaperCustomizationCard(
     dimAmount: Float,
     blurRadiusDp: Float,
     isWallpaperImportInProgress: Boolean,
+    showCropDialog: Boolean,
+    onOpenCropDialog: () -> Unit,
+    onDismissCropDialog: () -> Unit,
+    onApplyCrop: (WallpaperScaleMode, Float, Float, Float, Int) -> Unit,
     onChooseWallpaper: () -> Unit,
     onClearWallpaper: () -> Unit,
     onScaleModeSelected: (WallpaperScaleMode) -> Unit,
@@ -115,6 +129,10 @@ internal fun WallpaperCustomizationCard(
                 rotation = rotation,
                 dimAmount = dimAmount,
                 blurRadiusDp = blurRadiusDp,
+                showCropDialog = showCropDialog,
+                onOpenCropDialog = onOpenCropDialog,
+                onDismissCropDialog = onDismissCropDialog,
+                onApplyCrop = onApplyCrop,
                 onCropPreviewChanged = onCropPreviewChanged,
                 onCropCommit = onCropCommit,
                 modifier = Modifier.fillMaxWidth()
@@ -136,6 +154,15 @@ internal fun WallpaperCustomizationCard(
                             else -> "Change wallpaper"
                         }
                     )
+                }
+                OutlinedButton(
+                    enabled = wallpaperUri != null && !isWallpaperImportInProgress,
+                    onClick = onOpenCropDialog,
+                    modifier = Modifier.coverMinimumTouchTarget()
+                ) {
+                    Icon(Icons.Filled.Crop, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Zoom & Crop")
                 }
                 OutlinedButton(
                     enabled = wallpaperUri != null && !isWallpaperImportInProgress,
@@ -211,6 +238,10 @@ private fun WallpaperPreviewCard(
     rotation: Int,
     dimAmount: Float,
     blurRadiusDp: Float,
+    showCropDialog: Boolean,
+    onOpenCropDialog: () -> Unit,
+    onDismissCropDialog: () -> Unit,
+    onApplyCrop: (WallpaperScaleMode, Float, Float, Float, Int) -> Unit,
     onCropPreviewChanged: (Float, Float) -> Unit,
     onCropCommit: (Float, Float) -> Unit,
     modifier: Modifier = Modifier
@@ -273,13 +304,14 @@ private fun WallpaperPreviewCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f))
     ) {
         Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Cover preview — long-press and drag to reposition", style = MaterialTheme.typography.labelLarge)
+            Text("Cover preview — tap to zoom & crop, or long-press to pan", style = MaterialTheme.typography.labelLarge)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(coverAspectRatio)
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color.Black)
+                    .clickable(enabled = uri != null && preview.frame != null) { onOpenCropDialog() }
                     .pointerInput(zoom) {
                         detectDragGesturesAfterLongPress(
                             onDragEnd = { latestCropCommit(latestCropX, latestCropY) },
@@ -317,7 +349,36 @@ private fun WallpaperPreviewCard(
                             Text("9:41", style = MaterialTheme.typography.headlineSmall, color = Color.White)
                             Text("Tue, Aug 16", color = Color.White.copy(alpha = 0.9f))
                         }
-                        Text("Cover wallpaper", color = Color.White.copy(alpha = 0.9f))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Cover wallpaper", color = Color.White.copy(alpha = 0.9f))
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.Black.copy(alpha = 0.6f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Crop,
+                                        contentDescription = "Zoom and crop wallpaper",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        "Zoom & Crop",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
                     }
                 } else {
                     Text(
@@ -334,5 +395,21 @@ private fun WallpaperPreviewCard(
             }
             Text("Rotation: $rotation°", style = MaterialTheme.typography.bodySmall)
         }
+    }
+
+    val cropFrame = preview.frame
+    if (showCropDialog && uri != null && cropFrame != null) {
+        WallpaperCropDialog(
+            uri = uri,
+            frame = cropFrame,
+            coverAspectRatio = coverAspectRatio,
+            initialScaleMode = wallpaperScaleMode,
+            initialCropX = cropX,
+            initialCropY = cropY,
+            initialZoom = zoom,
+            initialRotation = rotation,
+            onDismiss = onDismissCropDialog,
+            onApply = onApplyCrop
+        )
     }
 }

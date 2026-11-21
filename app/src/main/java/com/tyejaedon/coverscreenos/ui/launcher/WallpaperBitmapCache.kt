@@ -3,7 +3,7 @@ package com.tyejaedon.coverscreenos.ui
 import android.util.LruCache
 
 object WallpaperBitmapCache {
-    private val cache = object : LruCache<String, WallpaperFrame>(24 * 1024) {
+    private val cache = object : LruCache<String, WallpaperFrame>(10 * 1024) {
         override fun sizeOf(key: String, value: WallpaperFrame): Int = value.bitmap.byteCount / 1024
     }
 

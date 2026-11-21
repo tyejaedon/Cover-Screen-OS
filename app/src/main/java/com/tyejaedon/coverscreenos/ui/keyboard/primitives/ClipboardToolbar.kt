@@ -1,40 +1,39 @@
 package com.tyejaedon.coverscreenos.ui.keyboard.primitives
 
-import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.ContentCut
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material3.LocalContentColor
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.ContentCut
+import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 private const val HISTORY_CHIP_MAX_CHARS = 18
-private val CLIPBOARD_ICON_BUTTON_WIDTH = 32.dp
-private val CLIPBOARD_ICON_BUTTON_HEIGHT = 26.dp
 
 /**
- * Phase H: small copy/cut/paste icons. They sit at the end of the keyboard's top control
- * row (next to the one-handed toggle) so they don't take a full row of key-sized buttons.
- * Copy/cut are always tappable (a no-op when there's no active selection); paste is
- * disabled when [canPaste] is false (nothing on the system clipboard).
+ * Clean, borderless One UI / Gboard-style copy/cut/paste action icons for the keyboard top bar.
  */
 @Composable
 fun ClipboardActionIcons(
@@ -46,13 +45,13 @@ fun ClipboardActionIcons(
 ) {
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ClipboardIconButton(Icons.Filled.ContentCopy, "Copy", onCopy, tag = "clipboard_copy")
-        ClipboardIconButton(Icons.Filled.ContentCut, "Cut", onCut, tag = "clipboard_cut")
+        ClipboardIconButton(Icons.Rounded.ContentCopy, "Copy", onCopy, tag = "clipboard_copy")
+        ClipboardIconButton(Icons.Rounded.ContentCut, "Cut", onCut, tag = "clipboard_cut")
         ClipboardIconButton(
-            Icons.Filled.ContentPaste,
+            Icons.Rounded.ContentPaste,
             "Paste",
             onPaste,
             enabled = canPaste,
@@ -74,7 +73,7 @@ fun ClipboardHistoryRow(
     if (history.isEmpty()) return
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = modifier.fillMaxWidth().testTag("clipboard_history_row")
+        modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp).testTag("clipboard_history_row")
     ) {
         items(items = history, key = { it }) { snippet ->
             ClipboardHistoryChip(
@@ -93,17 +92,27 @@ private fun ClipboardIconButton(
     tag: String,
     enabled: Boolean = true
 ) {
-    KeyboardKey(
-        icon = icon,
-        contentDescription = description,
-        onClick = onClick,
-        enabled = enabled,
-        hapticTier = HapticTier.Light,
-        shape = RoundedCornerShape(6.dp),
+    val performHaptic = rememberHapticPerformer(HapticTier.Light)
+    Box(
         modifier = Modifier
-            .size(width = CLIPBOARD_ICON_BUTTON_WIDTH, height = CLIPBOARD_ICON_BUTTON_HEIGHT)
-            .testTag(tag)
-    )
+            .size(28.dp)
+            .clip(CircleShape)
+            .then(
+                if (enabled) Modifier.clickable(role = Role.Button, onClickLabel = description) {
+                    performHaptic()
+                    onClick()
+                } else Modifier
+            )
+            .testTag(tag),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = description,
+            tint = if (enabled) Color(0xFFC8CDD6) else Color(0xFFC8CDD6).copy(alpha = 0.3f),
+            modifier = Modifier.size(16.dp)
+        )
+    }
 }
 
 @Composable
@@ -115,14 +124,15 @@ private fun ClipboardHistoryChip(snippet: String, onClick: () -> Unit) {
     }
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .border(1.dp, LocalContentColor.current.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF1E2026))
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 4.dp)
     ) {
         Text(
             text = truncated,
             style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFFE5E7EB),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

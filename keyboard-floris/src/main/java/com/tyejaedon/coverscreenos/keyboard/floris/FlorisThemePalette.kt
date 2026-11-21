@@ -42,36 +42,36 @@ data class FlorisThemePalette(
 ) {
     companion object {
         /**
-         * High-contrast AMOLED Cover palette tuned for outdoor legibility and OLED power savings
-         * on small secondary displays (`#141416` surface, `#1F1F24` keys, `#2A2A30` modifiers,
-         * `#10B981` accent action keys).
+         * High-contrast AMOLED Cover palette inspired by Samsung One UI Keyboard & Gboard dark:
+         * deep `#111215` canvas, elevated `#272A30` letter keycaps, recessed `#1B1D22` modifiers,
+         * and crisp `#3E7BFA` cobalt action keys.
          */
         val AmoledCover = FlorisThemePalette(
             mode = FlorisThemeMode.AMOLED_COVER,
-            keyboardSurface = Color(0xFF141416),
-            keyBackground = Color(0xFF1F1F24),
-            keyForeground = Color(0xFFF4F4F6),
-            keySecondaryForeground = Color(0xFF9CA3AF),
-            functionalKeyBackground = Color(0xFF2A2A30),
-            functionalKeyForeground = Color(0xFFE5E7EB),
-            shiftActiveBackground = Color(0xFF3B82F6),
+            keyboardSurface = Color(0xFF111215),
+            keyBackground = Color(0xFF272A30),
+            keyForeground = Color(0xFFF3F4F6),
+            keySecondaryForeground = Color(0xFF8E95A2),
+            functionalKeyBackground = Color(0xFF1B1D22),
+            functionalKeyForeground = Color(0xFFC8CDD6),
+            shiftActiveBackground = Color(0xFF3E7BFA),
             shiftActiveForeground = Color(0xFFFFFFFF),
-            shiftLockedBorder = Color(0xFF10B981),
-            actionKeyBackground = Color(0xFF10B981),
-            actionKeyForeground = Color(0xFF06281E),
-            destructiveKeyForeground = Color(0xFFFF7043),
-            smartbarBackground = Color(0xFF18181C),
-            candidateChipBackground = Color(0xFF232329),
-            candidateChipForeground = Color(0xFFE5E7EB),
-            candidatePrimaryBackground = Color(0xFF10B981),
-            candidatePrimaryForeground = Color(0xFF06281E),
-            popupBubbleBackground = Color(0xFF2A2A32),
+            shiftLockedBorder = Color(0xFF60A5FA),
+            actionKeyBackground = Color(0xFF3E7BFA),
+            actionKeyForeground = Color(0xFFFFFFFF),
+            destructiveKeyForeground = Color(0xFFF87171),
+            smartbarBackground = Color(0xFF111215),
+            candidateChipBackground = Color.Transparent,
+            candidateChipForeground = Color(0xFFD1D5DB),
+            candidatePrimaryBackground = Color(0xFF272A30),
+            candidatePrimaryForeground = Color(0xFFFFFFFF),
+            popupBubbleBackground = Color(0xFF2F333B),
             popupBubbleForeground = Color(0xFFFFFFFF),
-            popupBubbleBorder = Color(0xFF3F3F46),
-            popupSelectedBackground = Color(0xFF10B981),
-            popupSelectedForeground = Color(0xFF06281E),
-            glideTrailPrimary = Color(0xFF10B981),
-            glideTrailGlow = Color(0x6610B981)
+            popupBubbleBorder = Color(0xFF404550),
+            popupSelectedBackground = Color(0xFF3E7BFA),
+            popupSelectedForeground = Color(0xFFFFFFFF),
+            glideTrailPrimary = Color(0xFF3E7BFA),
+            glideTrailGlow = Color(0x553E7BFA)
         )
 
         /**

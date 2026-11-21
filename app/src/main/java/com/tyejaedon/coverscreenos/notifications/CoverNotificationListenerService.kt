@@ -46,6 +46,50 @@ class CoverNotificationListenerService : NotificationListenerService() {
     companion object {
         private const val MEDIA_STYLE_TEMPLATE_CLASS = "android.app.Notification\$MediaStyle"
         private const val NOTIFICATION_LOG_TAG = "CoverNotifListener"
+        private val PLAY_PAUSE_WORD_REGEX = Regex("\\b(play|pause|resume)\\b")
+        private val TRACK_STEP_WORD_REGEX = Regex("\\b(next|previous|prev|skip)\\b")
+        private val NON_MEDIA_CATEGORIES = setOf(
+            Notification.CATEGORY_CALL,
+            Notification.CATEGORY_ALARM,
+            Notification.CATEGORY_PROGRESS,
+            Notification.CATEGORY_NAVIGATION,
+            Notification.CATEGORY_SERVICE,
+            Notification.CATEGORY_STATUS,
+            Notification.CATEGORY_SYSTEM,
+            Notification.CATEGORY_ERROR,
+            "stopwatch"
+        )
+
+        internal fun isMediaNotification(
+            category: String?,
+            templateClassName: String?,
+            hasMediaSessionToken: Boolean,
+            hasProgressBar: Boolean,
+            hasPlaybackSemanticAction: Boolean,
+            actionLabels: List<String>
+        ): Boolean {
+            if (category in NON_MEDIA_CATEGORIES) return false
+
+            val isTransportCategory = category == Notification.CATEGORY_TRANSPORT
+            val hasMediaStyleTemplate = templateClassName == MEDIA_STYLE_TEMPLATE_CLASS
+            if (hasMediaSessionToken || hasMediaStyleTemplate || isTransportCategory) {
+                return true
+            }
+
+            if (hasProgressBar) return false
+
+            val normalizedLabels = actionLabels
+                .asSequence()
+                .map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() }
+                .toList()
+
+            val hasPlayPauseControl = hasPlaybackSemanticAction ||
+                normalizedLabels.any { PLAY_PAUSE_WORD_REGEX.containsMatchIn(it) }
+            val hasTrackStepControl = normalizedLabels.any { TRACK_STEP_WORD_REGEX.containsMatchIn(it) }
+
+            return hasPlayPauseControl && hasTrackStepControl
+        }
 
         @Volatile
         private var listenerConnected: Boolean = false
@@ -376,25 +420,24 @@ class CoverNotificationListenerService : NotificationListenerService() {
         }
 
         val templateClassName = extras.getString(Notification.EXTRA_TEMPLATE).orEmpty()
-        val hasMediaSession = extras.containsKey(Notification.EXTRA_MEDIA_SESSION)
-        val hasMediaStyleTemplate = templateClassName == MEDIA_STYLE_TEMPLATE_CLASS
+        val hasMediaSessionToken = runCatching {
+            extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, MediaSession.Token::class.java) != null
+        }.getOrDefault(false)
+        val hasProgressBar = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0) > 0 ||
+            extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
         val hasPlaybackSemanticAction = actions.any { action ->
             action.semanticAction == Notification.Action.SEMANTIC_ACTION_PLAY ||
                 action.semanticAction == Notification.Action.SEMANTIC_ACTION_PAUSE
         }
-        val hasPlaybackLabeledAction = actions.any { action ->
-            val label = action.title?.toString()?.trim()?.lowercase().orEmpty()
-            label.contains("play") ||
-                label.contains("pause") ||
-                label.contains("next") ||
-                label.contains("previous") ||
-                label.contains("skip")
-        }
-        val isMediaNotification = notification.category == Notification.CATEGORY_TRANSPORT ||
-            hasMediaSession ||
-            hasMediaStyleTemplate ||
-            hasPlaybackSemanticAction ||
-            hasPlaybackLabeledAction
+        val rawActionLabels = actions.mapNotNull { it.title?.toString() }
+        val isMediaNotification = !isLikelyActiveCallNotification() && isMediaNotification(
+            category = notification.category,
+            templateClassName = templateClassName,
+            hasMediaSessionToken = hasMediaSessionToken,
+            hasProgressBar = hasProgressBar,
+            hasPlaybackSemanticAction = hasPlaybackSemanticAction,
+            actionLabels = rawActionLabels
+        )
 
         val mediaArtistExtra = extras.getCharSequence(Notification.EXTRA_TEXT)
             ?.toString()
@@ -553,8 +596,17 @@ class CoverNotificationListenerService : NotificationListenerService() {
     }
 
     private fun toArgb8888Bitmap(bitmap: Bitmap): Bitmap {
-        if (bitmap.config == Bitmap.Config.ARGB_8888) return bitmap
-        return bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: bitmap
+        val maxEdge = maxOf(bitmap.width, bitmap.height)
+        val scaled = if (maxEdge > 512) {
+            val scale = 512f / maxEdge.toFloat()
+            val targetW = (bitmap.width * scale).toInt().coerceAtLeast(1)
+            val targetH = (bitmap.height * scale).toInt().coerceAtLeast(1)
+            runCatching { Bitmap.createScaledBitmap(bitmap, targetW, targetH, true) }.getOrDefault(bitmap)
+        } else {
+            bitmap
+        }
+        if (scaled.config == Bitmap.Config.ARGB_8888) return scaled
+        return scaled.copy(Bitmap.Config.ARGB_8888, false) ?: scaled
     }
 
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
