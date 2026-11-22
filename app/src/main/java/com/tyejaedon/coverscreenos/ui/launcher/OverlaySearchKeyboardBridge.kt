@@ -26,10 +26,23 @@ import com.tyejaedon.coverscreenos.keyboard.floris.CoverOverlayInputCallbacks
 import com.tyejaedon.coverscreenos.keyboard.floris.FlorisKeyboardCustomization
 import com.tyejaedon.coverscreenos.keyboard.floris.FlorisThemePalette
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
+import com.tyejaedon.coverscreenos.keyboard.voice.formatDictatedPhrase
+import com.tyejaedon.coverscreenos.keyboard.voice.rememberVoiceDictationController
+import com.tyejaedon.coverscreenos.ui.keyboard.rememberContactSuggestionRevision
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Hosts the embedded FlorisBoard-derived cover keyboard (`CoverFlorisKeyboardSurface`) inside
+ * the `AccessibilityService` overlay and bridges key events directly to Compose search state.
+ *
+ * Standard Android `InputMethodService` keyboards cannot reliably bind to or appear above
+ * `TYPE_ACCESSIBILITY_OVERLAY` windows on cover displays without window-focus issues. Instead,
+ * this composable acts as an in-process editor bridge (`CoverEditorBridge`) that maintains a
+ * synthetic cursor over the search [query], runs local NLP completions (`CoverKeyboardNlpManager`),
+ * and persists layout/customization preferences via `LauncherSettingsStore`.
+ */
 @Composable
 internal fun SearchFlorisKeyboardHost(
     query: String,
@@ -38,13 +51,18 @@ internal fun SearchFlorisKeyboardHost(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    // DataStore wrapper holding user keyboard preferences (height, one-handed side, autocorrect).
     val settingsStore = remember(context) { LauncherSettingsStore(context.applicationContext) }
+    // Latest collected keyboard preferences; falls back to defaults until DataStore emits.
     val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
     val coroutineScope = rememberCoroutineScope()
 
+    // Keep fresh references via rememberUpdatedState so the long-lived CoverEditorBridge below
+    // always reads the latest query and callbacks without being recreated on every keystroke.
     val latestQuery by rememberUpdatedState(query)
     val latestOnQueryChanged by rememberUpdatedState(onQueryChanged)
     val latestOnDonePressed by rememberUpdatedState(onDonePressed)
+    // Track cursor index locally inside the query string because there is no underlying EditText/InputConnection.
     var cursorPosition by remember { mutableIntStateOf(query.length) }
     LaunchedEffect(query.length) {
         if (cursorPosition > query.length) {
@@ -52,6 +70,8 @@ internal fun SearchFlorisKeyboardHost(
         }
     }
 
+    // Bridge custom keyboard input events (character append, backspace, word delete, candidate
+    // commit, cursor movement, and range replacement) directly onto the Compose search query.
     val bridge = remember {
         CoverEditorBridge(
             overlayCallbacks = object : CoverOverlayInputCallbacks {
@@ -136,14 +156,40 @@ internal fun SearchFlorisKeyboardHost(
         )
     }
 
+    // Active keyboard page (e.g. QWERTY, symbols, T9) used to switch key grids and NLP decoding.
     var activeLayoutMode by remember { mutableStateOf(CoverLayoutMode.QWERTY) }
+    // Word completions and next-word predictions displayed in the suggestion strip above the keys.
     var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Incremented when the user learns/suppresses a word so the NLP suggestion effect re-runs.
     var nlpRevision by remember { mutableIntStateOf(0) }
+    // Invalidates suggestions when contact-name opt-in or READ_CONTACTS permission changes.
+    val contactRevision = rememberContactSuggestionRevision(enabled = settings.suggestionStripVisible)
+    LaunchedEffect(contactRevision) {
+        if (contactRevision > 0) {
+            runCatching { CoverKeyboardNlpManager.refreshContactWords(context) }
+        }
+    }
 
+    // Text slice behind the cursor and the trailing partial word currently being typed.
     val beforeCursor = query.take(cursorPosition.coerceIn(0, query.length))
     val currentWord = beforeCursor.takeLastWhile { it.isLetterOrDigit() }
 
-    LaunchedEffect(query, cursorPosition, activeLayoutMode, nlpRevision) {
+    // Speech-to-text dictation controller appending spoken search terms at the current cursor.
+    val voiceDictation = rememberVoiceDictationController(
+        enabled = true,
+        onPhraseRecognized = { phrase ->
+            val formatted = formatDictatedPhrase(
+                existingBeforeCursor = bridge.getSurroundingText(1, 0).textBefore,
+                rawPhrase = phrase
+            )
+            if (formatted.isNotEmpty()) {
+                bridge.insertText(formatted)
+            }
+        }
+    )
+
+    // Run dictionary/T9/next-word NLP lookups on Dispatchers.Default whenever query, cursor, or user dictionary changes.
+    LaunchedEffect(query, cursorPosition, activeLayoutMode, nlpRevision, contactRevision) {
         candidates = withContext(Dispatchers.Default) {
             when {
                 currentWord.isNotBlank() -> CoverKeyboardNlpManager.getCandidates(activeLayoutMode, currentWord)
@@ -158,12 +204,14 @@ internal fun SearchFlorisKeyboardHost(
         }
     }
 
+    // Maps the persisted left/right preference to Floris's one-handed keyboard dock alignment.
     val dockAnchor = if (settings.keyboardOneHandedAnchor == KeyboardAnchor.Right) {
         ClamshellDockAnchor.RIGHT
     } else {
         ClamshellDockAnchor.LEFT
     }
 
+    // Configure compact clamshell dimensions, AMOLED theme, and search IME action for the cover screen.
     CoverFlorisKeyboardSurface(
         bridge = bridge,
         initialMode = activeLayoutMode,
@@ -207,6 +255,8 @@ internal fun SearchFlorisKeyboardHost(
             imeOptions = EditorInfo.IME_ACTION_SEARCH,
             compactSymbolsLayout = true,
             includeClearKey = false,
+            isVoiceInputActive = voiceDictation.isListening,
+            onVoiceInputToggle = voiceDictation.onToggle,
             themePalette = FlorisThemePalette.AmoledCover
         ),
         textBeforeCursor = beforeCursor,

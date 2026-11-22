@@ -22,9 +22,13 @@ class SymSpellAutocorrect(
     topK: Int = 15
 ) {
 
+    /** SymSpell configuration capping candidate edit distance and pre-filter heap size. */
     private val settings = SpellCheckSettings(maxEditDistance = maxEditDistance, topK = topK)
+    /** Symmetric-delete hash dictionary indexed with Murmur3 for fast O(1) candidate lookup. */
     private val dictionaryHolder = InMemoryDictionaryHolder(settings, Murmur3HashFunction())
+    /** Core SymSpell checker instance using Damerau-Levenshtein candidate matching. */
     private val checker = SymSpell(settings, DamerauLevenshteinDistance(), dictionaryHolder)
+    /** Direct lookup table mapping normalized words to corpus frequency for re-ranking. */
     private val frequencyMap = HashMap<String, Long>(wordsWithFrequency.size)
 
     init {
@@ -60,8 +64,8 @@ class SymSpellAutocorrect(
         val normalized = CompactTrieDictionary.normalizeWord(input)
         if (normalized.isEmpty()) return emptyList()
 
-        val isExactKnown = frequencyMap.containsKey(normalized)
-        val exactFreq = frequencyMap[normalized] ?: 0L
+        val isExactKnown = frequencyMap.containsKey(normalized) // True if input itself is a valid dictionary word
+        val exactFreq = frequencyMap[normalized] ?: 0L // Frequency of the exact typed word, if known
 
         val symSpellResults = try {
             checker.lookup(normalized, Verbosity.All, editDistance = settings.maxEditDistance)
@@ -69,7 +73,7 @@ class SymSpellAutocorrect(
             emptyList()
         }
 
-        val candidateMap = LinkedHashMap<String, ScoredCandidate>()
+        val candidateMap = LinkedHashMap<String, ScoredCandidate>() // Deduplicated candidate pool keyed by word
 
         // Include exact word if known
         if (isExactKnown) {
@@ -106,7 +110,7 @@ class SymSpellAutocorrect(
         val isDefault = when {
             // Exact word typed with no better replacement
             top.word == normalized -> true
-            // Strong candidate: physical distance is small (<= 1.25) and frequency is substantial
+            // Strong candidate: physical distance is small (<= 1.5) and word is unknown
             !isExactKnown && top.distance <= 1.5f -> true
             // Common transposition or extreme frequency imbalance (e.g. "teh" -> "the")
             isExactKnown && top.distance <= 0.8f && top.frequency > exactFreq * 10 -> true
@@ -136,14 +140,16 @@ class SymSpellAutocorrect(
         return suggestions.firstOrNull()?.takeIf { it.isAutocorrectDefault }
     }
 
+    /** Combines keyboard-weighted edit proximity and logarithmic word frequency into a composite rank score. */
     private fun calculateScore(physicalDistance: Float, frequency: Long): Float {
-        // Frequency component: logarithmic scale
+        // Frequency component: logarithmic scale so ultra-common words get a gentle boost
         val freqFactor = 1.0f + 0.18f * ln(max(1.0, frequency.toDouble())).toFloat()
-        // Distance penalty: exponential dropoff
+        // Distance penalty: steep decay as physical key error grows
         val distanceFactor = 100.0f / (1.0f + physicalDistance * 2.0f)
         return distanceFactor * freqFactor
     }
 
+    /** Intermediate scoring record retaining raw [distance] and [frequency] prior to [CandidateWord] projection. */
     private data class ScoredCandidate(
         val word: String,
         val distance: Float,

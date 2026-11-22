@@ -20,11 +20,15 @@ import android.view.View
  */
 class CoverAppWidgetHostManager(
     private val context: Context,
+    // Numeric host ID isolating Cover Screen OS widgets from the phone's main home launcher.
     private val hostId: Int = COVER_WIDGET_HOST_ID,
+    // Android host object that allocates IDs, creates AppWidgetHostViews, and receives RemoteViews broadcasts.
     private val appWidgetHost: AppWidgetHost = AppWidgetHost(context.applicationContext, hostId),
+    // System service queried for installed widget providers and bind permissions; null in non-system unit tests.
     private val appWidgetManager: AppWidgetManager? = runCatching { AppWidgetManager.getInstance(context.applicationContext) }.getOrNull()
 ) {
 
+    /** Tracks whether [appWidgetHost] is currently registered to receive RemoteViews updates. */
     @Volatile
     private var isListening: Boolean = false
 
@@ -93,10 +97,12 @@ class CoverAppWidgetHostManager(
         }
     }
 
+    /** Looks up provider metadata for an already-bound [appWidgetId] via [AppWidgetManager]. */
     fun getAppWidgetInfo(appWidgetId: Int): AppWidgetProviderInfo? {
         return appWidgetManager?.getAppWidgetInfo(appWidgetId)
     }
 
+    /** Returns all widget providers installed across accessible user profiles on the device. */
     fun getInstalledProviders(): List<AppWidgetProviderInfo> {
         return try {
             appWidgetManager?.installedProviders.orEmpty()
@@ -106,6 +112,11 @@ class CoverAppWidgetHostManager(
         }
     }
 
+    /**
+     * Attempts silent binding of [appWidgetId] to [info] when this app holds widget bind permission,
+     * preserving the provider's user profile (e.g., personal vs. work profile) when available.
+     * Returns `false` if the caller must prompt the user via [createBindIntent].
+     */
     fun bindAppWidgetIdIfAllowed(appWidgetId: Int, info: AppWidgetProviderInfo): Boolean {
         val manager = appWidgetManager ?: return false
         return try {
@@ -121,6 +132,10 @@ class CoverAppWidgetHostManager(
         }
     }
 
+    /**
+     * Builds the system [AppWidgetManager.ACTION_APPWIDGET_BIND] consent intent when silent
+     * binding is denied for a third-party app widget.
+     */
     fun createBindIntent(appWidgetId: Int, info: AppWidgetProviderInfo): Intent {
         return Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
             putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
@@ -131,12 +146,17 @@ class CoverAppWidgetHostManager(
         }
     }
 
+    /**
+     * Launches the widget provider's optional configuration activity via [AppWidgetHost], which
+     * delivers its result back to `activity.onActivityResult` using [requestCode].
+     */
     fun startConfigureActivityForResult(
         activity: Activity,
         appWidgetId: Int,
         requestCode: Int
     ): Boolean {
         return try {
+            // AppWidgetHost manages an internal IntentSender launch, so ActivityResultContracts cannot wrap it directly.
             appWidgetHost.startAppWidgetConfigureActivityForResult(
                 activity,
                 appWidgetId,
@@ -151,10 +171,12 @@ class CoverAppWidgetHostManager(
         }
     }
 
+    /** Returns whether [AppWidgetHost.startListening] is currently active. */
     fun isHostListening(): Boolean = isListening
 
     companion object {
         private const val TAG = "CoverAppWidgetHost"
+        /** Stable host ID distinguishing Cover Screen OS widgets from other launchers on the device. */
         const val COVER_WIDGET_HOST_ID = 1042
     }
 }

@@ -63,8 +63,11 @@ fun ComposingTextPreview(
     counterColor: Color = textColor.copy(alpha = 0.6f),
     showCharCount: Boolean = true
 ) {
+    // Screen density used to convert computed pixel line heights back into Compose dp bounds.
     val density = LocalDensity.current
+    // User toggle between compact (maxCollapsedLines) and expanded (expandedMaxLines) preview height.
     var expanded by remember { mutableStateOf(false) }
+    // Wrapped line count updated by Compose's TextLayoutResult after text measurement.
     var totalLineCount by remember { mutableIntStateOf(1) }
     // Seeded from the text style so the very first frame already renders close to the
     // correct clamped height; onTextLayout below refines it to the true measured value.
@@ -77,11 +80,16 @@ fun ComposingTextPreview(
         )
     }
 
+    // Mask password characters before measurement so character count and line wrapping match.
     val displayText = if (isPassword) "•".repeat(text.length) else text
     val isEmpty = displayText.isEmpty()
+    // Final string drawn inside Text (placeholder hint when empty, otherwise displayText).
     val shown = if (isEmpty) placeholder else displayText
+    // True when wrapped lines exceed the collapsed budget so tapping can toggle expansion.
     val isTruncatable = totalLineCount > maxCollapsedLines
+    // Active line cap applied to the preview container's maxHeight constraint.
     val visibleLines = if (expanded) expandedMaxLines else maxCollapsedLines
+    // Vertical scroll controller pinned to the bottom so the user always sees what they just typed.
     val scrollState = rememberScrollState()
 
     // Keep the viewport scrolled to the end (where the caret normally sits) whenever the
@@ -94,9 +102,11 @@ fun ComposingTextPreview(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                // Clamp viewport height to the current line budget using measured line height.
                 .heightIn(max = with(density) { (lineHeightPx * visibleLines).toDp() })
                 .verticalScroll(scrollState)
                 .then(
+                    // Expose expand/collapse click semantics only when text actually overflows.
                     if (isTruncatable) {
                         Modifier.clickable(role = Role.Button) { expanded = !expanded }
                     } else Modifier
@@ -111,6 +121,7 @@ fun ComposingTextPreview(
                 onTextLayout = { result: TextLayoutResult ->
                     totalLineCount = result.lineCount
                     if (result.lineCount > 0) {
+                        // Derive average rendered line height from TextLayoutResult for font-scale accuracy.
                         lineHeightPx = result.size.height / result.lineCount.toFloat()
                     }
                 }
@@ -142,8 +153,10 @@ fun ComposingTextPreview(
     }
 }
 
+// Compact metadata font size for the character count and line-expansion indicator row.
 private val CounterFontSize = 10.sp
 
+/** Compose preview of [ComposingTextPreview] with a short single-line buffer. */
 @Preview(showBackground = true, name = "ComposingTextPreview — short")
 @Composable
 private fun ComposingTextPreviewShortPreview() {
@@ -152,6 +165,7 @@ private fun ComposingTextPreviewShortPreview() {
     }
 }
 
+/** Compose preview of [ComposingTextPreview] demonstrating multi-line truncation and toggle hint. */
 @Preview(showBackground = true, name = "ComposingTextPreview — long, collapsed")
 @Composable
 private fun ComposingTextPreviewLongPreview() {

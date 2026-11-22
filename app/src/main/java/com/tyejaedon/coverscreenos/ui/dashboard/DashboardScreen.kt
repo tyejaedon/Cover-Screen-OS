@@ -33,6 +33,17 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUICardGroup
 import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUINowPill
 import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUIScaffold
 
+/**
+ * Primary dashboard view hosted inside a [OneUIScaffold] with a live status pill ([OneUINowPill])
+ * and top-bar [TopBarStatusChip].
+ *
+ * Presents [DashboardHeroCard], a dismissible [FeatureDegradedNotice] when required grants are
+ * missing, [QuickActionsRow] controls, debug-only [RecentActivityCard], [TipsCarousel], and a
+ * local [AlertDialog] cover-surface preview.
+ *
+ * @param onToggleService Starts or stops the foreground service and returns `false` if starting is
+ *   blocked (for example due to missing required permissions).
+ */
 @Composable
 fun DashboardScreen(
     state: DashboardState,
@@ -41,8 +52,11 @@ fun DashboardScreen(
     modifier: Modifier = Modifier,
     topBarActions: @Composable () -> Unit = {}
 ) {
+    // Controls whether the local "Cover Surface Preview" mock dialog is displayed.
     var previewVisible by remember { mutableStateOf(false) }
+    // True when tapping Start failed (e.g., missing required permissions), showing an error hint below Quick Controls.
     var startBlocked by remember { mutableStateOf(false) }
+    // Remembers if the user dismissed the "Limited features" warning banner across rotation/folding.
     var noticeDismissed by rememberSaveable { mutableStateOf(false) }
 
     OneUIScaffold(
@@ -76,6 +90,7 @@ fun DashboardScreen(
 
             if (state.permissions.missing.isNotEmpty() && !noticeDismissed) {
                 item {
+                    // Names of still-missing required grants and matching singular/plural verb for the banner text.
                     val missingList = state.permissions.missing
                     val verb = if (missingList.size == 1) "is" else "are"
                     FeatureDegradedNotice(
@@ -98,6 +113,7 @@ fun DashboardScreen(
                 }
             }
 
+            // Surfaced when ForegroundServiceHelper refuses to start due to incomplete prerequisites.
             if (startBlocked) {
                 item {
                     Text(
@@ -109,6 +125,7 @@ fun DashboardScreen(
                 }
             }
 
+            // Restrict the raw overlay event stream card to debug builds.
             if (BuildConfig.DEBUG) {
                 item {
                     OneUICardGroup(header = "Recent Activity") {
@@ -125,6 +142,7 @@ fun DashboardScreen(
         }
     }
 
+    // Local mock dialog previewing cover layout proportions without touching the outer display.
     if (previewVisible) {
         AlertDialog(
             onDismissRequest = { previewVisible = false },
@@ -171,6 +189,9 @@ fun DashboardScreen(
     }
 }
 
+/**
+ * Light and OLED Dark Mode Compose previews for [DashboardScreen] in an active, fully granted state.
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable

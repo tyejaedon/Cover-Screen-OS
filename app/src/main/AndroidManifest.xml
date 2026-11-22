@@ -64,6 +64,12 @@
         <intent>
             <action android:name="android.settings.action.MANAGE_WRITE_SETTINGS" />
         </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
     </queries>
 
     <!-- Specific type permission (Android 14+ / API 34+) -->

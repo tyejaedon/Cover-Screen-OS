@@ -87,11 +87,18 @@ internal fun QuickSettingsPanelTile(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // Snapshot initial hardware/system states synchronously so the first frame reflects current values.
+    // Live Wi-Fi radio toggle state mirrored on the Wi-Fi tile.
     var wifiEnabled by remember { mutableStateOf(QuickSettingsController.isWifiEnabled(context)) }
+    // Live Bluetooth adapter toggle state mirrored on the Bluetooth tile.
     var bluetoothEnabled by remember { mutableStateOf(QuickSettingsController.isBluetoothEnabled(context)) }
+    // Current camera torch state updated by TorchCallback and tile clicks.
     var flashlightEnabled by remember { mutableStateOf(false) }
+    // Whether the app currently holds WRITE_SETTINGS permission to drag the brightness slider directly.
     var canWriteSettings by remember { mutableStateOf(QuickSettingsController.canWriteSystemSettings(context)) }
+    // Current screen brightness normalized to 0f..1f for the Material 3 Slider.
     var brightnessPercent by remember { mutableFloatStateOf(QuickSettingsController.getBrightnessPercent(context)) }
+    // Camera ID owning the rear flash LED (null if hardware lacks a torch).
     val torchCameraId = remember { QuickSettingsController.resolveTorchCameraId(context) }
 
     // The overlay stays alive (just hidden) while a system Settings fallback screen is on
@@ -103,6 +110,7 @@ internal fun QuickSettingsPanelTile(
         brightnessPercent = QuickSettingsController.getBrightnessPercent(context)
     }
 
+    // Observe Compose lifecycle ON_RESUME to resync toggles after user returns from Android Settings.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) refreshSystemState()
@@ -122,6 +130,7 @@ internal fun QuickSettingsPanelTile(
                     if (cameraId == torchCameraId) flashlightEnabled = enabled
                 }
             }
+            // Passing null Handler delivers callbacks on the current looper/main thread.
             cameraManager.registerTorchCallback(callback, null)
             onDispose { cameraManager.unregisterTorchCallback(callback) }
         }
@@ -149,6 +158,7 @@ internal fun QuickSettingsPanelTile(
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
                 .padding(12.dp)
+                // Apply One UI frosted-glass backdrop blur sourced from the parent HazeState.
                 .oneUiPanel(shape = cardShape, hazeState = hazeState, blurRadius = 26.dp)
                 // Swallow taps on the sheet itself so they don't fall through to the scrim.
                 .clickable(
@@ -156,6 +166,7 @@ internal fun QuickSettingsPanelTile(
                     indication = null,
                     onClick = {}
                 )
+                // Allow a quick swipe-up gesture on the panel to close the sheet.
                 .pointerInput(swipeUpThresholdPx) {
                     var cumulativeDrag = 0f
                     detectVerticalDragGestures(
@@ -271,6 +282,10 @@ internal fun QuickSettingsPanelTile(
     }
 }
 
+/**
+ * Individual One-UI-styled square toggle chip in the Quick Settings grid, adjusting background,
+ * border, and icon/text alpha across unavailable, off, and active states.
+ */
 @Composable
 private fun QuickSettingsToggleTile(
     label: String,
@@ -281,6 +296,7 @@ private fun QuickSettingsToggleTile(
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(CoverOneUITokens.radiusChip)
+    // Visual prominence tokens: bright fill/border when active, dimmed when off or hardware-unavailable.
     val fillAlpha = if (!isAvailable) 0.04f else if (isEnabled) 0.30f else 0.08f
     val borderAlpha = if (!isAvailable) 0.08f else if (isEnabled) 0.4f else 0.14f
     val contentTint = when {
@@ -322,6 +338,13 @@ private fun QuickSettingsToggleTile(
     }
 }
 
+/**
+ * Screen brightness row inside [QuickSettingsPanelTile].
+ *
+ * Displays a live Material 3 [Slider] when `Settings.System.canWrite` ([canWriteSettings]) is
+ * granted; otherwise renders a prompt chip that launches Android's `ACTION_MANAGE_WRITE_SETTINGS`
+ * permission screen via [onRequestWritePermission].
+ */
 @Composable
 private fun QuickSettingsBrightnessControl(
     brightnessPercent: Float,

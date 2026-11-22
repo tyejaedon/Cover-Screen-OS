@@ -9,12 +9,16 @@ import kotlin.math.max
  * Evaluates digit sequences against [CompactTrieDictionary] via pruned tree traversal.
  */
 class T9PredictiveEngine(
+    /** Trie dictionary traversed along valid T9 key-to-letter branches. */
     private val dictionary: CompactTrieDictionary,
+    /** User-learned personal words boosted above standard corpus frequencies. */
     private val learnedWords: Set<String> = emptySet(),
+    /** Words explicitly dismissed/suppressed by the user so they never appear as suggestions. */
     private val suppressedWords: Set<String> = emptySet()
 ) {
 
     companion object {
+        /** Forward phone-keypad mapping from T9 digit (`'2'..'9'`) to candidate letters. */
         private val DIGIT_TO_LETTERS: Map<Char, String> = mapOf(
             '2' to "abc",
             '3' to "def",
@@ -26,6 +30,7 @@ class T9PredictiveEngine(
             '9' to "wxyz"
         )
 
+        /** Reverse lookup table mapping every lowercase letter `'a'..'z'` back to its T9 digit. */
         private val CHAR_TO_DIGIT: Map<Char, Char> = buildMap {
             for ((digit, letters) in DIGIT_TO_LETTERS) {
                 for (c in letters) {
@@ -90,7 +95,7 @@ class T9PredictiveEngine(
 
         // Handle multi-tap format if grouped by dashes
         if ('-' in digits) {
-            val decodedWord = decodeMultiTapGrouped(digits)
+            val decodedWord = decodeMultiTapGrouped(digits) // Literal multi-tap word decoded before lookup
             if (decodedWord.isNotEmpty()) {
                 val prefixCompletions = dictionary.predictForPrefix(decodedWord, limit)
                 if (prefixCompletions.isNotEmpty()) return prefixCompletions
@@ -105,12 +110,12 @@ class T9PredictiveEngine(
             return emptyList()
         }
 
-        // Clean digits: filter to '2'..'9'
+        // Clean digits: strip any non-letter-bearing digits, keeping only '2'..'9'
         val cleanDigits = digits.filter { it in '2'..'9' }
         if (cleanDigits.isEmpty()) return emptyList()
 
-        val exactMatches = mutableListOf<CompactTrieDictionary.TrieNode>()
-        val prefixCompletions = mutableListOf<CompactTrieDictionary.TrieNode>()
+        val exactMatches = mutableListOf<CompactTrieDictionary.TrieNode>() // Words matching exact digit length
+        val prefixCompletions = mutableListOf<CompactTrieDictionary.TrieNode>() // Longer words extending those matches
 
         // DFS through Trie following allowed letters for each digit position
         searchT9(
@@ -121,9 +126,9 @@ class T9PredictiveEngine(
             prefixCompletions = prefixCompletions
         )
 
-        val candidateMap = LinkedHashMap<String, CandidateWord>()
+        val candidateMap = LinkedHashMap<String, CandidateWord>() // Ordered result map preserving exact-then-prefix order
 
-        // Process exact length matches first (highest priority)
+        // Process exact length matches first (highest priority), boosting learned words above corpus words
         val sortedExact = exactMatches
             .filter { it.terminalWord != null && it.terminalWord !in suppressedWords }
             .sortedWith(
@@ -143,7 +148,7 @@ class T9PredictiveEngine(
             )
         }
 
-        // Fill remaining slots with prefix completions
+        // Fill remaining slots with prefix completions (down-weighted by 0.8x unless learned)
         val sortedCompletions = prefixCompletions
             .filter { it.terminalWord != null && it.terminalWord !in suppressedWords && it.terminalWord !in candidateMap }
             .sortedWith(
@@ -166,6 +171,7 @@ class T9PredictiveEngine(
         return candidateMap.values.take(limit)
     }
 
+    /** Recursively explores trie paths matching each digit in [digits] and gathers exact/prefix hits. */
     private fun searchT9(
         node: CompactTrieDictionary.TrieNode,
         digits: String,
@@ -193,6 +199,7 @@ class T9PredictiveEngine(
         }
     }
 
+    /** Collects up to [maxCollect] terminal completion nodes beneath [node]. */
     private fun collectCompletions(
         node: CompactTrieDictionary.TrieNode,
         output: MutableList<CompactTrieDictionary.TrieNode>,

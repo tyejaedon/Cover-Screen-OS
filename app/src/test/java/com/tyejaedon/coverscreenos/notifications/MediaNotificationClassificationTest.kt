@@ -1,6 +1,7 @@
 package com.tyejaedon.coverscreenos.notifications
 
 import android.app.Notification
+import android.media.session.PlaybackState
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -8,41 +9,39 @@ import org.junit.Test
 class MediaNotificationClassificationTest {
 
     @Test
-    fun `media session token, media style, or transport category qualify as media`() {
+    fun `media session token qualifies as media for non-blocked categories`() {
         assertTrue(
             CoverNotificationListenerService.isMediaNotification(
                 category = null,
-                templateClassName = null,
-                hasMediaSessionToken = true,
-                hasProgressBar = false,
-                hasPlaybackSemanticAction = false,
-                actionLabels = emptyList()
-            )
-        )
-        assertTrue(
-            CoverNotificationListenerService.isMediaNotification(
-                category = null,
-                templateClassName = "android.app.Notification\$MediaStyle",
-                hasMediaSessionToken = false,
-                hasProgressBar = false,
-                hasPlaybackSemanticAction = false,
-                actionLabels = emptyList()
+                hasMediaSessionToken = true
             )
         )
         assertTrue(
             CoverNotificationListenerService.isMediaNotification(
                 category = Notification.CATEGORY_TRANSPORT,
-                templateClassName = null,
-                hasMediaSessionToken = false,
-                hasProgressBar = false,
-                hasPlaybackSemanticAction = false,
-                actionLabels = emptyList()
+                hasMediaSessionToken = true
             )
         )
     }
 
     @Test
-    fun `non-media categories are rejected even with media-like actions`() {
+    fun `notifications without media session token are rejected`() {
+        assertFalse(
+            CoverNotificationListenerService.isMediaNotification(
+                category = Notification.CATEGORY_TRANSPORT,
+                hasMediaSessionToken = false
+            )
+        )
+        assertFalse(
+            CoverNotificationListenerService.isMediaNotification(
+                category = null,
+                hasMediaSessionToken = false
+            )
+        )
+    }
+
+    @Test
+    fun `non-media categories are rejected even with media session token`() {
         val nonMediaCategories = listOf(
             Notification.CATEGORY_CALL,
             Notification.CATEGORY_ALARM,
@@ -57,75 +56,48 @@ class MediaNotificationClassificationTest {
                 "Expected category=$category to be rejected",
                 CoverNotificationListenerService.isMediaNotification(
                     category = category,
-                    templateClassName = null,
-                    hasMediaSessionToken = false,
-                    hasProgressBar = false,
-                    hasPlaybackSemanticAction = true,
-                    actionLabels = listOf("Pause", "Next")
+                    hasMediaSessionToken = true
                 )
             )
         }
     }
 
     @Test
-    fun `ongoing utility notifications with single action or progress bar are rejected`() {
-        // Timer / recorder with only Pause
-        assertFalse(
-            CoverNotificationListenerService.isMediaNotification(
-                category = null,
-                templateClassName = null,
-                hasMediaSessionToken = false,
-                hasProgressBar = false,
-                hasPlaybackSemanticAction = true,
-                actionLabels = listOf("Pause", "Stop")
-            )
+    fun `playback capabilities map playback state and action flags`() {
+        val playing = CoverNotificationListenerService.resolvePlaybackCapabilities(
+            state = PlaybackState.STATE_PLAYING,
+            actions = PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT
         )
-        // Onboarding / navigation with Next and Skip
-        assertFalse(
-            CoverNotificationListenerService.isMediaNotification(
-                category = null,
-                templateClassName = null,
-                hasMediaSessionToken = false,
-                hasProgressBar = false,
-                hasPlaybackSemanticAction = false,
-                actionLabels = listOf("Next", "Skip")
-            )
-        )
-        // Substring false positive ("display" contains "play")
-        assertFalse(
-            CoverNotificationListenerService.isMediaNotification(
-                category = null,
-                templateClassName = null,
-                hasMediaSessionToken = false,
-                hasProgressBar = false,
-                hasPlaybackSemanticAction = false,
-                actionLabels = listOf("Display", "Next")
-            )
-        )
-        // Download / backup notification with progress bar
-        assertFalse(
-            CoverNotificationListenerService.isMediaNotification(
-                category = null,
-                templateClassName = null,
-                hasMediaSessionToken = false,
-                hasProgressBar = true,
-                hasPlaybackSemanticAction = false,
-                actionLabels = listOf("Pause", "Skip")
-            )
-        )
-    }
+        assertTrue(playing.isPlaying)
+        assertTrue(playing.canPlayPause)
+        assertFalse(playing.canSkipPrevious)
+        assertTrue(playing.canSkipNext)
 
-    @Test
-    fun `fallback requires both play-pause and track-stepping controls`() {
-        assertTrue(
-            CoverNotificationListenerService.isMediaNotification(
-                category = null,
-                templateClassName = null,
-                hasMediaSessionToken = false,
-                hasProgressBar = false,
-                hasPlaybackSemanticAction = false,
-                actionLabels = listOf("Pause", "Next")
-            )
+        val buffering = CoverNotificationListenerService.resolvePlaybackCapabilities(
+            state = PlaybackState.STATE_BUFFERING,
+            actions = PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_PREVIOUS
         )
+        assertTrue(buffering.isPlaying)
+        assertTrue(buffering.canPlayPause)
+        assertTrue(buffering.canSkipPrevious)
+        assertFalse(buffering.canSkipNext)
+
+        val paused = CoverNotificationListenerService.resolvePlaybackCapabilities(
+            state = PlaybackState.STATE_PAUSED,
+            actions = PlaybackState.ACTION_PLAY
+        )
+        assertFalse(paused.isPlaying)
+        assertTrue(paused.canPlayPause)
+        assertFalse(paused.canSkipPrevious)
+        assertFalse(paused.canSkipNext)
+
+        val none = CoverNotificationListenerService.resolvePlaybackCapabilities(
+            state = null,
+            actions = 0L
+        )
+        assertFalse(none.isPlaying)
+        assertFalse(none.canPlayPause)
+        assertFalse(none.canSkipPrevious)
+        assertFalse(none.canSkipNext)
     }
 }

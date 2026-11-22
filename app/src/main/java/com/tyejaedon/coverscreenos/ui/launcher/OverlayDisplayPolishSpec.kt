@@ -13,29 +13,53 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+/**
+ * Display-dependent spacing and hardware cutout insets for the cover screen overlay.
+ *
+ * Adapts compact status chips, dock bottom spacing, and edge padding around camera
+ * punch-holes or display cutouts exposed via [WindowInsets.displayCutout].
+ */
 internal data class CoverDisplayPolishSpec(
+    /** Minimum touch/visual height for status chips (lock pill, search affordance), scaled to cover height. */
     val statusChipMinHeight: Dp,
+    /** Extra bottom padding beneath the dock row so it avoids clipping on short cover bezels. */
     val dockBottomPadding: Dp,
+    /** Top inset needed to keep overlay chrome clear of a top display cutout or camera hole. */
     val cutoutTopPadding: Dp = 0.dp,
+    /** Bottom inset needed to keep overlay chrome clear of a bottom display cutout. */
     val cutoutBottomPadding: Dp = 0.dp,
+    /** Layout-direction-aware start inset clearing side camera cutouts or hinge edges. */
     val cutoutStartPadding: Dp = 0.dp,
+    /** Layout-direction-aware end inset clearing side camera cutouts or hinge edges. */
     val cutoutEndPadding: Dp = 0.dp
 )
 
+/**
+ * Computes and remembers a [CoverDisplayPolishSpec] matched to the current cover window height
+ * and display cutout insets.
+ *
+ * Uses [LocalWindowInfo] container bounds (converted to `dp` via [LocalDensity]) together with
+ * layout-direction-aware [WindowInsets.displayCutout] padding so chips and the dock remain
+ * clear of camera cutouts across different clamshell cover display sizes.
+ */
 @Composable
 internal fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
+    // Current cover window height in pixels and dp, used to pick the height-bucket spacing preset.
     val containerHeightPx = LocalWindowInfo.current.containerSize.height
     val containerHeightDp = with(density) { containerHeightPx.toDp() }
 
+    // Resolve directional cutout insets so overlay content clears hinge/camera obstructions.
     val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
+    // Edge padding values extracted for the active layout direction so consumers stay inset-agnostic.
     val cutoutTop = cutoutInsets.calculateTopPadding()
     val cutoutBottom = cutoutInsets.calculateBottomPadding()
     val cutoutStart = cutoutInsets.calculateStartPadding(layoutDirection)
     val cutoutEnd = cutoutInsets.calculateEndPadding(layoutDirection)
 
     return remember(containerHeightPx, cutoutTop, cutoutBottom, cutoutStart, cutoutEnd) {
+        // Bucket cover displays by height so status chips and dock padding stay proportional.
         when {
             containerHeightDp <= 680.dp -> CoverDisplayPolishSpec(
                 statusChipMinHeight = 28.dp,

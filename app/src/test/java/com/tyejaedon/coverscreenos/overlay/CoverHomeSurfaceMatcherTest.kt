@@ -80,4 +80,81 @@ class CoverHomeSurfaceMatcherTest {
         assertTrue(transientPolicy.isTransientSystemUiPackage(homePkg, shadeClass))
         assertFalse(transientPolicy.isTransientForegroundSafeForResume(homePkg, shadeClass))
     }
+
+    @Test
+    fun `known transient SystemUI overlay classes block fallback dwell while generic containers recover`() {
+        assertTrue(CoverHomeSurfaceMatcher.isKnownTransientSystemUiOverlayClass("com.android.systemui.shade.NotificationShadeWindowView"))
+        assertTrue(CoverHomeSurfaceMatcher.isKnownTransientSystemUiOverlayClass("com.android.systemui.volume.VolumeDialogImpl"))
+        assertFalse(CoverHomeSurfaceMatcher.isKnownTransientSystemUiOverlayClass("android.widget.FrameLayout"))
+        assertFalse(CoverHomeSurfaceMatcher.isKnownTransientSystemUiOverlayClass(null))
+
+        val pkg = "com.android.systemui"
+        val genericClass = "android.widget.FrameLayout"
+        // Shade class must never satisfy sustained SystemUI fallback dwell even after timeout.
+        assertFalse(
+            transientPolicy.shouldResumeFromSustainedSystemUiFallback(
+                packageName = pkg,
+                className = "com.android.systemui.shade.NotificationShadeWindowView",
+                suppressedForMs = 2_000L,
+                nowElapsedMs = 1_000L
+            )
+        )
+        assertFalse(
+            transientPolicy.shouldResumeFromSustainedSystemUiFallback(
+                packageName = pkg,
+                className = "com.android.systemui.shade.NotificationShadeWindowView",
+                suppressedForMs = 3_500L,
+                nowElapsedMs = 2_500L
+            )
+        )
+
+        // Generic SystemUI container starts dwell on tick 1 and succeeds after >= 1,200 ms.
+        assertFalse(
+            transientPolicy.shouldResumeFromSustainedSystemUiFallback(
+                packageName = pkg,
+                className = genericClass,
+                suppressedForMs = 1_000L,
+                nowElapsedMs = 5_000L
+            )
+        )
+        assertFalse(
+            transientPolicy.shouldResumeFromSustainedSystemUiFallback(
+                packageName = pkg,
+                className = genericClass,
+                suppressedForMs = 1_600L,
+                nowElapsedMs = 5_600L
+            )
+        )
+        assertTrue(
+            transientPolicy.shouldResumeFromSustainedSystemUiFallback(
+                packageName = pkg,
+                className = genericClass,
+                suppressedForMs = 2_250L,
+                nowElapsedMs = 6_250L
+            )
+        )
+    }
+
+    @Test
+    fun `native Recents and Overview surfaces never match cover home or trigger reclaim`() {
+        val samsungRecentsPkg = "com.sec.android.app.launcher"
+        val samsungRecentsCls = "com.sec.android.app.launcher.recents.RecentsActivity"
+        val systemRecentsPkg = "com.android.systemui"
+        val systemRecentsCls = "com.android.systemui.recents.OverviewProxyService"
+
+        assertTrue(CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(samsungRecentsCls))
+        assertTrue(CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(systemRecentsCls))
+        assertFalse(CoverHomeSurfaceMatcher.isCoverHomeDestination(samsungRecentsPkg, samsungRecentsCls))
+        assertFalse(CoverHomeSurfaceMatcher.isCoverHomeDestination(systemRecentsPkg, systemRecentsCls))
+        assertFalse(transientPolicy.isLauncherPackageForResume(samsungRecentsPkg, samsungRecentsCls))
+        assertFalse(
+            transientPolicy.shouldResumeOverlayForPackage(
+                packageName = samsungRecentsPkg,
+                className = samsungRecentsCls,
+                launchedPackage = "com.android.chrome",
+                appPackageName = "com.tyejaedon.coverscreenos"
+            )
+        )
+        assertTrue(CoverAccessibilityService.isUserForegroundApplicationPackage(samsungRecentsPkg, samsungRecentsCls))
+    }
 }

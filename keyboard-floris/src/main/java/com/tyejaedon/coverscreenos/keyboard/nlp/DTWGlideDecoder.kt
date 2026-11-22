@@ -13,13 +13,18 @@ import kotlin.math.sqrt
  * start/end key pruning, and Euclidean Dynamic Time Warping (DTW) path alignment.
  */
 class DTWGlideDecoder(
+    /** Trie dictionary queried for candidate words matching start/end glide keys. */
     private val dictionary: CompactTrieDictionary,
+    /** Normalized `(x, y)` center position for every letter key (`'a'..'z'`). */
     private val keyCentroids: Map<Char, Offset> = QwertyGeometry.getDefaultCentroidMap(),
+    /** Minimum spatial radius around the swipe start/end used when picking candidate boundary letters. */
     private val candidateSearchRadius: Float = 1.5f
 ) {
 
     companion object {
+        /** Fixed number of evenly spaced sample points used to compare swipe trails against word templates. */
         const val RESAMPLED_POINT_COUNT = 32
+        /** Large sentinel cost initializing unreachable cells in the DTW alignment matrix. */
         private const val INFINITY_COST = 1e9f
 
         /**
@@ -32,8 +37,8 @@ class DTWGlideDecoder(
                 return List(targetCount) { points[0] }
             }
 
-            // Step 1: Compute cumulative arc lengths
-            val distances = FloatArray(points.size)
+            // Step 1: Compute cumulative arc lengths along each segment of the polyline
+            val distances = FloatArray(points.size) // distances[i] = total path length from points[0] to points[i]
             distances[0] = 0.0f
             for (i in 1 until points.size) {
                 val p1 = points[i - 1]
@@ -43,16 +48,16 @@ class DTWGlideDecoder(
                 distances[i] = distances[i - 1] + sqrt(dx * dx + dy * dy)
             }
 
-            val totalLength = distances[distances.size - 1]
+            val totalLength = distances[distances.size - 1] // Overall length of the finger swipe path
             if (totalLength <= 1e-4f) {
                 return List(targetCount) { points[0] }
             }
 
-            val step = totalLength / (targetCount - 1)
+            val step = totalLength / (targetCount - 1) // Constant arc-length spacing between resampled points
             val resampled = ArrayList<Offset>(targetCount)
             resampled.add(points[0])
 
-            var currentSegment = 0
+            var currentSegment = 0 // Index of the input polyline segment currently being interpolated
             for (i in 1 until targetCount - 1) {
                 val targetDistance = i * step
                 while (currentSegment < distances.size - 2 && distances[currentSegment + 1] < targetDistance) {
@@ -63,7 +68,7 @@ class DTWGlideDecoder(
                 val segEndDist = distances[currentSegment + 1]
                 val segLen = segEndDist - segStartDist
 
-                val t = if (segLen > 0.0f) (targetDistance - segStartDist) / segLen else 0.0f
+                val t = if (segLen > 0.0f) (targetDistance - segStartDist) / segLen else 0.0f // Interpolation fraction [0..1]
                 val pStart = points[currentSegment]
                 val pEnd = points[currentSegment + 1]
 
@@ -80,7 +85,8 @@ class DTWGlideDecoder(
         }
     }
 
-    // Pre-allocated scratch matrix to eliminate allocations in hot DTW decoding loops (up to 32 points x 32 letters)
+    // Pre-allocated scratch matrix (33 x 33) storing cumulative alignment costs dtwMatrix[i][j]
+    // between input point i and template point j to avoid heap allocations during swipe decoding.
     private val dtwMatrix = Array(RESAMPLED_POINT_COUNT + 1) { FloatArray(33) }
 
     /**
@@ -93,12 +99,12 @@ class DTWGlideDecoder(
     fun decodeGlidePath(rawPoints: List<Offset>, limit: Int = 5): List<CandidateWord> {
         if (rawPoints.size < 2 || limit <= 0) return emptyList()
 
-        val sampled = resample(rawPoints, RESAMPLED_POINT_COUNT)
+        val sampled = resample(rawPoints, RESAMPLED_POINT_COUNT) // Normalized 32-point user swipe curve
         val startPoint = sampled.first()
         val endPoint = sampled.last()
 
-        val startChars = findCandidateKeys(startPoint)
-        val endChars = findCandidateKeys(endPoint)
+        val startChars = findCandidateKeys(startPoint) // Keys closest to where the finger landed
+        val endChars = findCandidateKeys(endPoint) // Keys closest to where the finger lifted
 
         if (startChars.isEmpty() || endChars.isEmpty()) return emptyList()
 
@@ -117,14 +123,14 @@ class DTWGlideDecoder(
 
         for (cand in candidateWords) {
             val word = cand.word
-            val keyCentroidsList = buildWordCentroidTemplate(word)
+            val keyCentroidsList = buildWordCentroidTemplate(word) // Ideal key-to-key polyline for `word`
             if (keyCentroidsList.isEmpty()) continue
 
-            val templatePoints = resample(keyCentroidsList, RESAMPLED_POINT_COUNT)
-            val dtwDist = computeDtwDistance(sampled, templatePoints)
-            val normalizedDist = dtwDist / RESAMPLED_POINT_COUNT
+            val templatePoints = resample(keyCentroidsList, RESAMPLED_POINT_COUNT) // Resampled 32-point ideal curve
+            val dtwDist = computeDtwDistance(sampled, templatePoints) // Total cumulative spatial alignment error
+            val normalizedDist = dtwDist / RESAMPLED_POINT_COUNT // Mean per-point distance error
 
-            val freqFactor = 1.0f + 0.15f * ln(max(1.0, cand.frequency.toDouble())).toFloat()
+            val freqFactor = 1.0f + 0.15f * ln(max(1.0, cand.frequency.toDouble())).toFloat() // Log boost for common words
             val score = (100.0f / (1.0f + normalizedDist * 2.0f)) * freqFactor
 
             scoredList.add(CandidateWord(word = word, score = score, isAutocorrectDefault = false))
@@ -148,8 +154,9 @@ class DTWGlideDecoder(
         return topResults
     }
 
+    /** Returns up to 4 letter keys nearest to [point] within [candidateSearchRadius] or 1.5x closest distance. */
     private fun findCandidateKeys(point: Offset): List<Char> {
-        val keysByDistance = ArrayList<Pair<Char, Float>>(keyCentroids.size)
+        val keysByDistance = ArrayList<Pair<Char, Float>>(keyCentroids.size) // (letter, Euclidean distance) pairs
         for ((char, centroid) in keyCentroids) {
             val dx = point.x - centroid.x
             val dy = point.y - centroid.y
@@ -161,7 +168,7 @@ class DTWGlideDecoder(
         if (keysByDistance.isEmpty()) return emptyList()
 
         val closestDist = keysByDistance.first().second
-        val threshold = max(candidateSearchRadius, closestDist * 1.5f)
+        val threshold = max(candidateSearchRadius, closestDist * 1.5f) // Adaptive inclusion radius
 
         return keysByDistance
             .filter { it.second <= threshold }
@@ -169,6 +176,7 @@ class DTWGlideDecoder(
             .map { it.first }
     }
 
+    /** Collects dictionary words in [node]'s subtree whose final character appears in [endChars]. */
     private fun collectWordsEndingWith(
         node: CompactTrieDictionary.TrieNode,
         endChars: List<Char>,
@@ -186,6 +194,7 @@ class DTWGlideDecoder(
         }
     }
 
+    /** Builds the sequence of key centroid points for [word], collapsing repeated consecutive letters. */
     private fun buildWordCentroidTemplate(word: String): List<Offset> {
         val template = ArrayList<Offset>(word.length)
         var lastChar: Char? = null
@@ -200,9 +209,13 @@ class DTWGlideDecoder(
         return template
     }
 
+    /**
+     * Computes Dynamic Time Warping distance between [inputPoints] and [templatePoints]
+     * inside [dtwMatrix], allowing non-linear time stretching along the swipe path.
+     */
     private fun computeDtwDistance(inputPoints: List<Offset>, templatePoints: List<Offset>): Float {
-        val n = inputPoints.size
-        val m = min(templatePoints.size, 32)
+        val n = inputPoints.size // Number of resampled user gesture points (typically 32)
+        val m = min(templatePoints.size, 32) // Number of template points clamped to scratch matrix width
 
         for (i in 0..n) {
             for (j in 0..m) {
@@ -217,13 +230,13 @@ class DTWGlideDecoder(
                 val pTemplate = templatePoints[j - 1]
                 val dx = pInput.x - pTemplate.x
                 val dy = pInput.y - pTemplate.y
-                val cost = sqrt(dx * dx + dy * dy)
+                val cost = sqrt(dx * dx + dy * dy) // Euclidean distance between current sample pair
 
                 val minPrev = min(
-                    dtwMatrix[i - 1][j], // insertion
+                    dtwMatrix[i - 1][j], // insertion (finger lingered/moved extra point)
                     min(
-                        dtwMatrix[i][j - 1], // deletion
-                        dtwMatrix[i - 1][j - 1] // match
+                        dtwMatrix[i][j - 1], // deletion (finger jumped past template point)
+                        dtwMatrix[i - 1][j - 1] // match (diagonal advance along both paths)
                     )
                 )
 

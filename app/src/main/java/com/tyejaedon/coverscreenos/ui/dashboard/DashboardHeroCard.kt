@@ -25,9 +25,17 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
+/**
+ * Expandable summary card on [DashboardScreen] displaying overall [DashboardStatus], required
+ * permission progress, and the primary action hint.
+ *
+ * Tapping toggles inline [DashboardStatusDetails] and updates TalkBack `stateDescription`.
+ */
 @Composable
 fun DashboardHeroCard(state: DashboardState, modifier: Modifier = Modifier) {
+    // Toggles whether the detailed diagnostic breakdown (missing items, uptime, last event) is expanded.
     var expanded by remember { mutableStateOf(false) }
+    // True on short viewports (<= 480dp) so card padding and line spacing tighten to fit better.
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
     Card(
         onClick = { expanded = !expanded },
@@ -81,6 +89,12 @@ fun DashboardHeroCard(state: DashboardState, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Renders detailed runtime diagnostics (missing permissions, service/accessibility-host/overlay
+ * state, uptime computed from [SystemClock.elapsedRealtime], and the latest overlay event).
+ *
+ * Reused by both [DashboardHeroCard] and [TopBarStatusChip][com.tyejaedon.coverscreenos.ui.appshell.TopBarStatusChip].
+ */
 @Composable
 fun DashboardStatusDetails(state: DashboardState) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

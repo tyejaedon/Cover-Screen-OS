@@ -12,6 +12,12 @@ import com.tyejaedon.coverscreenos.keyboard.nlp.T9PredictiveEngine
  * Coordinates key action dispatching, shift & auto-capitalization state, T9 predictive digit
  * buffering vs. 650ms multi-tap cycling, clear-with-undo recovery, autocorrect-on-space,
  * and DTW glide typing across [CoverEditorBridge].
+ *
+ * @property bridge Editor connection/callback multiplexer receiving all text and cursor mutations.
+ * @property t9EngineProvider Lazy provider for the dictionary-backed T9 predictor.
+ * @property glideDecoderProvider Lazy provider for the Dynamic Time Warping swipe-typing decoder.
+ * @property autocorrectProvider Optional callback returning a corrected word for Space-key autocorrect.
+ * @property onT9TraceUpdated Listener notified whenever T9 digit sequence or multi-tap trace changes.
  */
 class FlorisTextInputManager(
     val bridge: CoverEditorBridge,
@@ -21,9 +27,12 @@ class FlorisTextInputManager(
     private val autocorrectProvider: ((String) -> String)? = null,
     var onT9TraceUpdated: ((predictiveDigits: String, multiTapTrace: String) -> Unit)? = null
 ) {
+    /** Shared timing constants, classic keypad mappings, and auto-capitalization helpers. */
     companion object {
+        /** Max milliseconds between consecutive taps on the same T9 key to cycle letters instead of starting a new letter. */
         const val MULTI_TAP_TIMEOUT_MS = 650L
 
+        // Standard ITU E.161 / 3x4 keypad digit-to-letter mapping used when no layout hint is passed.
         private val T9_DIGIT_TO_LETTERS = mapOf(
             '1' to ".,!",
             '2' to "abc",
@@ -36,34 +45,44 @@ class FlorisTextInputManager(
             '9' to "wxyz"
         )
 
+        /** Returns true at the start of input or right after sentence-ending punctuation (`.`, `!`, `?`). */
         fun shouldAutoCap(textBeforeCursor: String): Boolean =
             textBeforeCursor.isBlank() || Regex("[.!?]\\s*$").containsMatchIn(textBeforeCursor)
     }
 
+    /** Currently active keyboard layout mode (QWERTY, T9, Symbols, Numeric). */
     var activeMode: CoverLayoutMode = initialMode
         private set
 
+    /** Current alphabetic casing state (lowercase, single-shift, or Caps Lock). */
     var shiftState: CoverShiftState = CoverShiftState.LOWERCASE
         private set
 
+    /** Uptime timestamp of the previous Shift key tap, used to detect double-tap Caps Lock. */
     var lastShiftTapMs: Long = -1000L
         private set
 
+    /** True when T9 keys predict whole words by digit sequence; false for multi-tap ABC letter cycling. */
     var isT9Predictive: Boolean = true
 
+    /** Sequence of T9 digits buffered for the current word (for example `"4663"` -> `"good"`/`"home"`). */
     var t9PredictiveDigits: String = ""
         private set
 
+    /** Human-readable multi-tap digit trail shown in diagnostics or preview overlays (e.g. `"4-4-6"`). */
     var t9MultiTapTrace: String = ""
         private set
 
+    // Last digit tapped in multi-tap ABC mode, plus its timestamp and current letter offset.
     private var lastTapDigit: Char? = null
     private var lastTapTimeMs: Long = 0L
     private var multiTapCycleIndex: Int = 0
 
+    /** Text saved before a Clear action so a quick tap on Clear can restore it while the buffer is empty. */
     var lastClearedText: String? = null
         private set
 
+    /** Switches [activeMode] to [mode], clearing any partial T9 word buffer if the mode changed. */
     fun setLayoutMode(mode: CoverLayoutMode) {
         if (activeMode != mode) {
             resetT9Composing()
@@ -71,16 +90,19 @@ class FlorisTextInputManager(
         }
     }
 
+    /** Explicitly overrides [shiftState] (used by hosts syncing external auto-cap or selection changes). */
     fun setShift(state: CoverShiftState) {
         shiftState = state
     }
 
+    /** Advances [shiftState] using the double-tap Caps Lock window and returns the new state. */
     fun toggleShift(nowMs: Long): CoverShiftState {
         shiftState = shiftState.nextState(lastShiftTapMs, nowMs)
         lastShiftTapMs = nowMs
         return shiftState
     }
 
+    /** Clears pending T9 predictive digits and multi-tap state, notifying [onT9TraceUpdated]. */
     fun resetT9Composing() {
         t9PredictiveDigits = ""
         t9MultiTapTrace = ""
@@ -214,6 +236,7 @@ class FlorisTextInputManager(
         }
     }
 
+    /** Inserts a single character [char], resets T9 composing, and drops single-shot Shift. */
     fun handleCharInput(char: Char) {
         lastClearedText = null
         resetT9Composing()
@@ -228,10 +251,12 @@ class FlorisTextInputManager(
      */
     fun handleT9DigitTap(digit: Char, lettersHint: String = "", nowMs: Long = System.currentTimeMillis()) {
         lastClearedText = null
+        // Lowercase letter group associated with this key (e.g. "abc" for '2').
         val letters = lettersHint.ifEmpty { T9_DIGIT_TO_LETTERS[digit].orEmpty() }.lowercase()
 
         if (isT9Predictive && digit in '2'..'9') {
             t9PredictiveDigits += digit
+            // Pick the highest-ranked dictionary match for the digit sequence, or fall back to its first letter.
             val topCandidate = t9EngineProvider?.invoke()
                 ?.predictForDigits(t9PredictiveDigits, limit = 1)
                 ?.firstOrNull()
@@ -242,6 +267,7 @@ class FlorisTextInputManager(
             if (t9PredictiveDigits.length == 1) {
                 bridge.insertText(topCandidate)
             } else {
+                // Replace the previously previewed word in the editor with the updated prediction.
                 val before = bridge.getSurroundingText(50, 0).textBefore
                 val prevWordLen = before.takeLastWhile { it.isLetterOrDigit() }.length
                 if (prevWordLen > 0) {
@@ -259,12 +285,14 @@ class FlorisTextInputManager(
             (nowMs - lastTapTimeMs) < MULTI_TAP_TIMEOUT_MS &&
             effectiveLetters.isNotEmpty()
         ) {
+            // Same digit pressed within 650ms: advance cycle index and replace the prior character.
             multiTapCycleIndex = (multiTapCycleIndex + 1) % effectiveLetters.length
             lastTapTimeMs = nowMs
             t9MultiTapTrace = if (digit == '1') "" else t9MultiTapTrace + digit
             val nextChar = effectiveLetters[multiTapCycleIndex]
             bridge.replacePreviousChar(if (shiftState.isShifted) nextChar.uppercaseChar() else nextChar)
         } else {
+            // New digit or timeout expired: start a fresh character cycle and append its first letter.
             lastTapDigit = digit
             lastTapTimeMs = nowMs
             multiTapCycleIndex = 0
@@ -283,6 +311,7 @@ class FlorisTextInputManager(
         onT9TraceUpdated?.invoke(t9PredictiveDigits, t9MultiTapTrace)
     }
 
+    /** Deletes one character and trims the trailing digit from active T9 buffers. */
     fun handleBackspace() {
         lastClearedText = null
         if (t9PredictiveDigits.isNotEmpty()) {
@@ -296,6 +325,7 @@ class FlorisTextInputManager(
         bridge.deleteSurroundingText(1, 0)
     }
 
+    /** Inserts a space, running QWERTY autocorrect on the preceding word when enabled. */
     fun handleSpace(
         autocorrectEnabled: Boolean = true,
         currentTextBeforeCursor: String? = null,
@@ -305,6 +335,7 @@ class FlorisTextInputManager(
         resetT9Composing()
         if (autocorrectEnabled && activeMode == CoverLayoutMode.QWERTY) {
             val before = currentTextBeforeCursor ?: bridge.getSurroundingText(50, 0).textBefore
+            // Trailing alphabetic word immediately preceding the cursor.
             val word = before.takeLastWhile { it.isLetter() }
             if (word.isNotEmpty()) {
                 val corrected = autocorrectProvider?.invoke(word) ?: word
@@ -327,6 +358,7 @@ class FlorisTextInputManager(
      */
     fun handleClearTapUndo(currentTextBeforeCursor: String? = null): Boolean {
         val before = currentTextBeforeCursor ?: bridge.getSurroundingText(500, 0).textBefore
+        // Snapshot to restore if Clear was just long-pressed and the field is still empty.
         val saved = lastClearedText
         if (before.isEmpty() && !saved.isNullOrEmpty()) {
             lastClearedText = null
@@ -357,6 +389,7 @@ class FlorisTextInputManager(
      * the top candidate word.
      */
     fun handleGlideGesture(normalizedPoints: List<Offset>): List<CandidateWord> {
+        // Skip decoding gracefully when no glide engine is wired (e.g. PIN or non-QWERTY modes).
         val decoder = glideDecoderProvider?.invoke() ?: return emptyList()
         val candidates = decoder.decodeGlidePath(normalizedPoints, limit = 5)
         val top = candidates.firstOrNull()
@@ -364,6 +397,7 @@ class FlorisTextInputManager(
             lastClearedText = null
             resetT9Composing()
             val before = bridge.getSurroundingText(50, 0).textBefore
+            // Automatically insert a separating space when gliding right after an existing word.
             val needsLeadingSpace = before.isNotEmpty() && !before.last().isWhitespace()
             if (needsLeadingSpace) {
                 bridge.insertText(" ${top.word}")

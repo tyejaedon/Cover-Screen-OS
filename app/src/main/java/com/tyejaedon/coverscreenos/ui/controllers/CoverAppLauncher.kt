@@ -14,15 +14,32 @@ import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
 import com.tyejaedon.coverscreenos.overlay.CoverAccessibilityService
 import com.tyejaedon.coverscreenos.overlay.ForegroundService
 
+/**
+ * Central coordinator for launching apps and intents onto the secondary cover display.
+ *
+ * Handles:
+ * - **Display targeting**: builds [ActivityOptions.makeBasic] with `launchDisplayId` so launched
+ *   activities open on the cover display rather than [Display.DEFAULT_DISPLAY].
+ * - **Lockscreen gating**: checks [KeyguardManager] and delegates locked-device requests to
+ *   [UnlockBridgeActivity] before opening the target app.
+ * - **Background-Activity-Launch (BAL) exemption**: routes starts through bound
+ *   [AccessibilityService] contexts when invoked from background services.
+ * - **Overlay focus handoff**: instructs [ForegroundService] to hide the cover launcher overlay
+ *   once the target activity is dispatched.
+ */
 object CoverAppLauncher {
 
+    // Logcat tag for launch routing, lockscreen handoff, and BAL-fallback diagnostics.
     private const val LOG_TAG = "CoverAppLauncher"
 
+    /** Testable abstraction over the platform activity-launch step for a resolved display ID. */
     internal fun interface ActivityLaunchExecutor {
         fun launch(context: Context, launchIntent: Intent, launchDisplayId: Int)
     }
 
+    // Standard launch path: bundles the target display ID into ActivityOptions and dispatches via BAL-exempt channels.
     private val defaultActivityLaunchExecutor = ActivityLaunchExecutor { context, launchIntent, launchDisplayId ->
+        // Pin the launched Activity window to the resolved cover display via ActivityOptions.
         val launchOptions = ActivityOptions.makeBasic().apply {
             this.launchDisplayId = launchDisplayId
         }.toBundle()
@@ -46,6 +63,7 @@ object CoverAppLauncher {
         launchOptions: android.os.Bundle?,
         launchDisplayId: Int
     ) {
+        // True once our primary input accessibility service accepts the launch, skipping secondary fallbacks.
         val dispatchedViaAccessibility = CoverInputAccessibilityService.startActivityFromAccessibilityService(
             launchIntent = launchIntent,
             launchOptions = launchOptions
@@ -83,6 +101,10 @@ object CoverAppLauncher {
         )
     }
 
+    /**
+     * Launches the main launcher activity for [packageName] onto [displayId] (or the resolved
+     * cover display when null) using [defaultActivityLaunchExecutor].
+     */
     fun launchPackageOnDisplay(
         context: Context,
         packageName: String,
@@ -113,6 +135,10 @@ object CoverAppLauncher {
         )
     }
 
+    /**
+     * Internal [launchIntentOnDisplay] overload allowing test injection of [activityLaunchExecutor]
+     * and [skipUnlockChallenge] bypass when called immediately after unlock.
+     */
     internal fun launchIntentOnDisplay(
         context: Context,
         intent: Intent,
@@ -149,6 +175,11 @@ object CoverAppLauncher {
         }
     }
 
+    /**
+     * Resumes a deferred [packageName] launch on [displayId] from [UnlockBridgeActivity],
+     * passing `skipUnlockChallenge = true` to avoid re-entering the unlock gate while keyguard
+     * dismissal is still settling.
+     */
     internal fun launchPackageOnDisplayAfterUnlock(
         context: Context,
         packageName: String,
@@ -163,6 +194,10 @@ object CoverAppLauncher {
         )
     }
 
+    /**
+     * Validates lock state, package visibility, component enabled/exported flags, and launches
+     * [packageName] onto the target display, hiding the cover overlay on success.
+     */
     internal fun launchPackageOnDisplay(
         context: Context,
         packageName: String,
@@ -187,12 +222,14 @@ object CoverAppLauncher {
             return false
         }
 
+        // Entry launcher Intent resolved by PackageManager for the target app.
         val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
         if (launchIntent == null) {
             logWarning("No launch intent found for package $packageName")
             return false
         }
 
+        // Component metadata used to detect package-visibility filtering and disabled/private activities.
         val launchActivityInfo = resolveLaunchActivityInfo(
             context = context,
             packageName = packageName,
@@ -226,6 +263,7 @@ object CoverAppLauncher {
                     Intent.FLAG_ACTIVITY_CLEAR_TOP
         )
 
+        // Final numeric display ID (cover display or fallback) passed to ActivityOptions.
         val launchDisplayId = resolveLaunchDisplayId(context = context, displayId = displayId)
 
         return try {
@@ -248,11 +286,16 @@ object CoverAppLauncher {
         }
     }
 
+    /**
+     * Resolves the destination display ID in priority order: explicit valid [displayId],
+     * [Context.getDisplay] (for display-scoped contexts), or [DisplayManager] default display.
+     */
     internal fun resolveLaunchDisplayId(context: Context, displayId: Int?): Int {
         if (displayId != null && displayId != Display.INVALID_DISPLAY) {
             return displayId
         }
 
+        // Display ID attached directly to a display-scoped Context (such as the cover overlay window).
         val contextDisplayId = runCatching {
             context.display.displayId
         }.getOrNull()
@@ -261,11 +304,13 @@ object CoverAppLauncher {
             return contextDisplayId
         }
 
+        // Last-resort DisplayManager lookup for Display.DEFAULT_DISPLAY if no cover/context display is set.
         val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
         val defaultDisplay = displayManager?.getDisplay(Display.DEFAULT_DISPLAY)
         return defaultDisplay?.displayId ?: Display.DEFAULT_DISPLAY
     }
 
+    /** Resolves target [android.content.pm.ActivityInfo] under `MATCH_DEFAULT_ONLY` visibility rules. */
     private fun resolveLaunchActivityInfo(
         context: Context,
         packageName: String,
@@ -278,7 +323,9 @@ object CoverAppLauncher {
         }.getOrNull()
     }
 
+    /** Returns true if [KeyguardManager] reports the device or keyguard is currently locked. */
     private fun isDeviceLocked(context: Context): Boolean {
+        // Android's lockscreen service, checked before launching so locked taps route via UnlockBridgeActivity.
         val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         return keyguardManager?.isDeviceLocked
             ?: keyguardManager?.isKeyguardLocked

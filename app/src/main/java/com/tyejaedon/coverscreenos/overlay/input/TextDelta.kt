@@ -49,18 +49,32 @@ sealed interface TextDelta {
  * [replaceStart] and [replaceEnd] are indices into the **old** buffer;
  * [insert] is the substring that should be written at that range.
  * `replaceEnd == replaceStart` with empty [insert] indicates a no-op.
+ *
+ * This representation bridges the cover keyboard's local [TextBuffer] and the Android
+ * injection layer:
+ * - Over `InputConnection` (IME path), only `[replaceStart, replaceEnd)` is replaced by [insert].
+ * - Over `AccessibilityNodeInfo.ACTION_SET_TEXT` or `ACTION_PASTE` (accessibility fallback paths),
+ *   the full [new] buffer is written because accessibility actions lack range-level mutations.
  */
 internal data class BufferDelta(
+    /** Buffer text before the edit was applied. */
     val old: String,
+    /** Buffer text after the edit was applied. */
     val new: String,
+    /** Inclusive start index in [old] where characters begin to differ. */
     val replaceStart: Int,
+    /** Exclusive end index in [old] of the slice being replaced. */
     val replaceEnd: Int,
+    /** Replacement substring taken from [new] to splice into `[replaceStart, replaceEnd)`. */
     val insert: String,
+    /** Target cursor index inside [new] once the replacement completes. */
     val newCaret: Int
 ) {
+    /** True when neither characters are removed nor inserted (e.g. a pure caret move). */
     val isNoOp: Boolean
         get() = replaceStart == replaceEnd && insert.isEmpty()
 
+    /** Number of characters removed from [old] at `[replaceStart, replaceEnd)`. */
     val removedLength: Int
         get() = replaceEnd - replaceStart
 
@@ -72,6 +86,7 @@ internal data class BufferDelta(
          * `removedLength == 0`.
          */
         fun compute(old: String, new: String, newCaret: Int): BufferDelta {
+            // Fast path: identical text produces an empty replacement span at the clamped caret.
             if (old == new) {
                 return BufferDelta(
                     old = old,
@@ -83,12 +98,15 @@ internal data class BufferDelta(
                 )
             }
 
-            val maxPrefix = minOf(old.length, new.length)
-            var prefix = 0
+            // Advance from the left while characters match to find the start of the edited span.
+            val maxPrefix = minOf(old.length, new.length) // Upper bound for identical leading characters
+            var prefix = 0 // Count of matching characters at the start of `old` and `new`
             while (prefix < maxPrefix && old[prefix] == new[prefix]) prefix++
 
-            val maxSuffix = minOf(old.length - prefix, new.length - prefix)
-            var suffix = 0
+            // Retreat from the right within the unconsumed tail (never crossing `prefix`, which
+            // prevents double-counting characters when inserting/deleting inside repeated chars).
+            val maxSuffix = minOf(old.length - prefix, new.length - prefix) // Max trailing chars left after `prefix`
+            var suffix = 0 // Count of matching characters at the end of `old` and `new`
             while (
                 suffix < maxSuffix &&
                 old[old.length - 1 - suffix] == new[new.length - 1 - suffix]
@@ -96,7 +114,7 @@ internal data class BufferDelta(
 
             val replaceStart = prefix
             val replaceEnd = old.length - suffix
-            val insert = new.substring(prefix, new.length - suffix)
+            val insert = new.substring(prefix, new.length - suffix) // Minimal changed slice from `new`
             return BufferDelta(
                 old = old,
                 new = new,

@@ -11,7 +11,8 @@ import kotlin.math.sqrt
  */
 object QwertyGeometry {
 
-    // Normalized (x, y) coordinates for each QWERTY letter, assuming key width/height = 1.0.
+    // Normalized (x, y) coordinates for each QWERTY letter in key-unit coordinates (key width/height = 1.0).
+    // Row 2 ('a'..'l') is staggered +0.5x and Row 3 ('z'..'m') +1.5x to match real physical key centers.
     private val KEY_COORDINATES: Map<Char, Offset> = mapOf(
         'q' to Offset(0.0f, 0.0f),
         'w' to Offset(1.0f, 0.0f),
@@ -62,8 +63,8 @@ object QwertyGeometry {
         val ch1 = c1.lowercaseChar()
         val ch2 = c2.lowercaseChar()
         if (ch1 == ch2) return 0.0f
-        val p1 = KEY_COORDINATES[ch1] ?: return 3.5f
-        val p2 = KEY_COORDINATES[ch2] ?: return 3.5f
+        val p1 = KEY_COORDINATES[ch1] ?: return 3.5f // Center of first key in normalized grid
+        val p2 = KEY_COORDINATES[ch2] ?: return 3.5f // Center of second key in normalized grid
         val dx = p1.x - p2.x
         val dy = p1.y - p2.y
         return sqrt(dx * dx + dy * dy)
@@ -90,7 +91,7 @@ object QwertyGeometry {
 
         val lenA = a.length
         val lenB = b.length
-        // DP table with border rows
+        // Dynamic-programming matrix where dp[i][j] = weighted edit cost between a[0..i) and b[0..j)
         val dp = Array(lenA + 1) { FloatArray(lenB + 1) }
 
         for (i in 0..lenA) dp[i][0] = i.toFloat()
@@ -109,6 +110,7 @@ object QwertyGeometry {
                     0.5f + min(1.5f, dist * 0.25f)
                 }
 
+                // Double-tap / missed double-letter edits cost less (0.6) than unrelated character edits (1.0).
                 val deletionCost = if (i > 1 && a[i - 1] == a[i - 2]) 0.6f else 1.0f
                 val insertionCost = if (j > 1 && b[j - 1] == b[j - 2]) 0.6f else 1.0f
 
@@ -121,7 +123,7 @@ object QwertyGeometry {
                     )
                 )
 
-                // Transposition check (Damerau condition)
+                // Transposition check (Damerau condition): swapping two adjacent letters costs 0.65
                 if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) {
                     val transpositionCost = dp[i - 2][j - 2] + 0.65f
                     if (transpositionCost < minCost) {

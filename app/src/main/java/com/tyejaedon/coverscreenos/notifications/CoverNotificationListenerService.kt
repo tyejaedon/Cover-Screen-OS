@@ -13,6 +13,7 @@ import android.graphics.drawable.Icon
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -21,6 +22,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.annotation.RequiresApi
 import com.tyejaedon.coverscreenos.models.CoverMediaModel
+import com.tyejaedon.coverscreenos.models.CoverMediaTransportAction
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.receivers.LockStatusReceiver
 import com.tyejaedon.coverscreenos.notifications.CallPackageMatchers
@@ -31,12 +33,32 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import androidx.core.graphics.createBitmap
 
+/**
+ * System-bound [NotificationListenerService] that mirrors active notifications and media playback
+ * sessions onto the cover screen and coordinates call-overlay suppression with [ForegroundService].
+ *
+ * Bridges [StatusBarNotification] snapshots and active [MediaController] callbacks into a single
+ * reactive [StateFlow] consumed by Cover Screen OS UI panels.
+ */
 class CoverNotificationListenerService : NotificationListenerService() {
 
+    /** Pairs a bound [MediaController] with its registered callback and [MediaSession.Token]. */
+    private data class RegisteredMediaController(
+        val token: MediaSession.Token,
+        val controller: MediaController,
+        val callback: MediaController.Callback
+    )
+
+    // Main-thread Handler used both for coalescing refreshes and dispatching MediaController callbacks.
     private val callbackHandler by lazy { Handler(Looper.getMainLooper()) }
+    // Active MediaController registrations keyed by StatusBarNotification.key so callbacks stay bound across updates.
+    private val mediaControllers = mutableMapOf<String, RegisteredMediaController>()
+
+    /** Prevents queuing duplicate refresh runnables within the same main-Looper frame. */
     @Volatile
     private var refreshScheduled = false
 
+    /** Rebuilds the active notification and call-state snapshot on the main thread. */
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     private val refreshRunnable = Runnable {
         refreshScheduled = false
@@ -44,10 +66,8 @@ class CoverNotificationListenerService : NotificationListenerService() {
     }
 
     companion object {
-        private const val MEDIA_STYLE_TEMPLATE_CLASS = "android.app.Notification\$MediaStyle"
         private const val NOTIFICATION_LOG_TAG = "CoverNotifListener"
-        private val PLAY_PAUSE_WORD_REGEX = Regex("\\b(play|pause|resume)\\b")
-        private val TRACK_STEP_WORD_REGEX = Regex("\\b(next|previous|prev|skip)\\b")
+        // Notification categories that must stay normal notifications even if they attach a MediaSession token.
         private val NON_MEDIA_CATEGORIES = setOf(
             Notification.CATEGORY_CALL,
             Notification.CATEGORY_ALARM,
@@ -60,46 +80,70 @@ class CoverNotificationListenerService : NotificationListenerService() {
             "stopwatch"
         )
 
+        /** Decoded playback status and transport control flags exposed to cover media cards. */
+        internal data class MediaPlaybackCapabilities(
+            val isPlaying: Boolean,
+            val canPlayPause: Boolean,
+            val canSkipPrevious: Boolean,
+            val canSkipNext: Boolean
+        )
+
+        /**
+         * Returns `true` when a notification attaches a [MediaSession.Token] and does not belong
+         * to a non-media category such as calls, alarms, or navigation.
+         */
         internal fun isMediaNotification(
             category: String?,
-            templateClassName: String?,
-            hasMediaSessionToken: Boolean,
-            hasProgressBar: Boolean,
-            hasPlaybackSemanticAction: Boolean,
-            actionLabels: List<String>
+            hasMediaSessionToken: Boolean
         ): Boolean {
             if (category in NON_MEDIA_CATEGORIES) return false
-
-            val isTransportCategory = category == Notification.CATEGORY_TRANSPORT
-            val hasMediaStyleTemplate = templateClassName == MEDIA_STYLE_TEMPLATE_CLASS
-            if (hasMediaSessionToken || hasMediaStyleTemplate || isTransportCategory) {
-                return true
-            }
-
-            if (hasProgressBar) return false
-
-            val normalizedLabels = actionLabels
-                .asSequence()
-                .map { it.trim().lowercase() }
-                .filter { it.isNotEmpty() }
-                .toList()
-
-            val hasPlayPauseControl = hasPlaybackSemanticAction ||
-                normalizedLabels.any { PLAY_PAUSE_WORD_REGEX.containsMatchIn(it) }
-            val hasTrackStepControl = normalizedLabels.any { TRACK_STEP_WORD_REGEX.containsMatchIn(it) }
-
-            return hasPlayPauseControl && hasTrackStepControl
+            return hasMediaSessionToken
         }
 
+        /**
+         * Maps Android [PlaybackState] state codes and supported-action bitmasks into UI transport
+         * button capabilities.
+         */
+        internal fun resolvePlaybackCapabilities(
+            state: Int?,
+            actions: Long
+        ): MediaPlaybackCapabilities {
+            // Treat buffering as active playback so the button immediately offers Pause.
+            val isPlaying = state == PlaybackState.STATE_PLAYING ||
+                state == PlaybackState.STATE_BUFFERING
+            // Bitmask checks against PlaybackState.getActions() determine which media buttons to show.
+            val canPlayPause = (actions and (
+                PlaybackState.ACTION_PLAY or
+                    PlaybackState.ACTION_PAUSE or
+                    PlaybackState.ACTION_PLAY_PAUSE
+                )) != 0L
+            val canSkipPrevious = (actions and PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0L
+            val canSkipNext = (actions and PlaybackState.ACTION_SKIP_TO_NEXT) != 0L
+            return MediaPlaybackCapabilities(
+                isPlaying = isPlaying,
+                canPlayPause = canPlayPause,
+                canSkipPrevious = canSkipPrevious,
+                canSkipNext = canSkipNext
+            )
+        }
+
+        /** Tracks whether the OS currently binds this [NotificationListenerService]. */
         @Volatile
         private var listenerConnected: Boolean = false
 
+        /** Weak singleton pointer to the live service instance for overlay actions. */
         @Volatile
         private var activeService: CoverNotificationListenerService? = null
 
+        // Reactive StateFlow backing activeNotificationsFlow() so cover panels recompose on every change.
         private val activeNotificationModels = MutableStateFlow<List<CoverNotificationModel>>(emptyList())
+        // Cached (isActive, packageName) pair used to deduplicate call-state broadcasts to ForegroundService.
         private var lastCallNotificationState: Pair<Boolean, String?> = false to null
 
+        /**
+         * Builds [ActivityOptions] allowing [PendingIntent] launches from the visible cover
+         * overlay under Android 16+ background-activity-start restrictions.
+         */
         private fun createPendingIntentLaunchOptions(): android.os.Bundle {
             return ActivityOptions.makeBasic().apply {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
@@ -109,10 +153,15 @@ class CoverNotificationListenerService : NotificationListenerService() {
             }.toBundle()
         }
 
+        /** Exposes the live, sorted list of cover-displayable notifications and media cards. */
         fun activeNotificationsFlow(): StateFlow<List<CoverNotificationModel>> {
             return activeNotificationModels.asStateFlow()
         }
 
+        /**
+         * Re-sends the most recent call-notification state to [ForegroundService] after service
+         * restart or rebind.
+         */
         fun replayCallNotificationStateToForegroundService() {
             val (isActive, packageName) = lastCallNotificationState
             ForegroundService.updateCallNotificationState(
@@ -121,6 +170,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
             )
         }
 
+        /** Dismisses a single notification by its [StatusBarNotification.getKey] via the OS listener. */
         fun dismissNotificationFromOverlay(notificationKey: String): Boolean {
             val service = activeService ?: return false
             return runCatching {
@@ -132,6 +182,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
             }
         }
 
+        /** Clears all dismissible notifications via [NotificationListenerService.cancelAllNotifications]. */
         fun clearAllNotificationsFromOverlay(): Boolean {
             val service = activeService ?: return false
             return runCatching {
@@ -143,15 +194,24 @@ class CoverNotificationListenerService : NotificationListenerService() {
             }
         }
 
+        /**
+         * Opens a tapped notification from the cover overlay when the device is unlocked.
+         *
+         * Hides the cover overlay first, attempts to invoke the notification's [PendingIntent]
+         * (`contentIntent`), and falls back to launching the source app on the cover display if
+         * the [PendingIntent] is missing, canceled, or fails.
+         */
         fun openNotificationFromOverlay(context: Context, model: CoverNotificationModel): Boolean {
             if (isDeviceLocked(context)) {
                 Log.d(NOTIFICATION_LOG_TAG, "Blocked notification open while locked key=${model.notificationKey}")
                 return false
             }
 
+            // Live listener instance and matching system notification looked up for its tap PendingIntent.
             val service = activeService
             val targetSbn = service?.findNotificationByKey(model.notificationKey)
 
+            // Records whether ForegroundService accepted the command to hide the cover overlay before launching.
             val launchAcknowledged = runCatching {
                 context.startService(
                     ForegroundService.createHideOverlayIntent(
@@ -161,6 +221,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
                 )
             }.isSuccess
 
+            // App-provided PendingIntent deep-linking into the specific conversation or item.
             val contentIntent = targetSbn?.notification?.contentIntent
             if (contentIntent != null) {
                 val launchedFromIntent = runCatching {
@@ -190,6 +251,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
             )
         }
 
+        /** Hides the cover overlay and launches [packageName] directly on the current display. */
         fun launchNotificationSourceApp(context: Context, packageName: String): Boolean {
 
             runCatching {
@@ -202,44 +264,41 @@ class CoverNotificationListenerService : NotificationListenerService() {
             )
         }
 
-        fun performNotificationAction(notificationKey: String, actionLabel: String? = null): Boolean {
+        /**
+         * Dispatches a play/pause or track-skip command to the [MediaController] bound to
+         * [notificationKey].
+         */
+        fun performMediaTransportAction(
+            notificationKey: String,
+            action: CoverMediaTransportAction
+        ): Boolean {
             val service = activeService ?: return false
-            val sbn = service.findNotificationByKey(notificationKey) ?: return false
-            val actions = sbn.notification.actions ?: return false
-            if (actions.isEmpty()) return false
-
-            val requestedLabel = actionLabel
-                ?.trim()
-                ?.takeUnless { it.isEmpty() }
-
-            val targetAction = actionLabel
-                ?.let { label ->
-                    actions.firstOrNull { action ->
-                        action.title
-                            ?.toString()
-                            ?.trim()
-                            ?.equals(label, ignoreCase = true) == true
-                    }
-                }
-                ?: actions.firstOrNull { action -> action.actionIntent != null }
-                ?: return false
-
-            val intent = targetAction.actionIntent ?: return false
+            // MediaController handle bound to the media app's active MediaSession.Token.
+            val controller = service.resolveMediaController(notificationKey) ?: return false
+            // TransportControls interface translating play/pause/skip commands to the media app.
+            val controls = controller.transportControls
+            val playbackState = runCatching { controller.playbackState }.getOrNull()
+            val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING ||
+                playbackState?.state == PlaybackState.STATE_BUFFERING
             return runCatching {
-                val options = createPendingIntentLaunchOptions()
-                intent.send(service, 0, null, null, null, null, options)
+                when (action) {
+                    CoverMediaTransportAction.PLAY_PAUSE -> {
+                        if (isPlaying) controls.pause() else controls.play()
+                    }
+                    CoverMediaTransportAction.PREVIOUS -> controls.skipToPrevious()
+                    CoverMediaTransportAction.NEXT -> controls.skipToNext()
+                }
                 true
             }.getOrElse { error ->
-                val message = if (error is PendingIntent.CanceledException) {
-                    "Notification action canceled key=$notificationKey requestedLabel=$requestedLabel resolvedLabel=${targetAction.title}"
-                } else {
-                    "Notification action failed key=$notificationKey requestedLabel=$requestedLabel resolvedLabel=${targetAction.title} error=${error.message}"
-                }
-                Log.w(NOTIFICATION_LOG_TAG, message)
+                Log.w(
+                    NOTIFICATION_LOG_TAG,
+                    "Media transport action failed key=$notificationKey action=$action error=${error.message}"
+                )
                 false
             }
         }
 
+        /** Checks both the cached lock receiver and [KeyguardManager] to enforce lockscreen safety. */
         private fun isDeviceLocked(context: Context): Boolean {
             if (LockStatusReceiver.currentLockStatus(context)) return true
             val keyguardManager = context.getSystemService(KeyguardManager::class.java)
@@ -254,10 +313,15 @@ class CoverNotificationListenerService : NotificationListenerService() {
         activeService = this
     }
 
+    /**
+     * Cleans up pending refresh callbacks, unregisters every [MediaController.Callback],
+     * clears active notification/call state, and detaches the singleton listener reference.
+     */
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     override fun onDestroy() {
         callbackHandler.removeCallbacks(refreshRunnable)
         refreshScheduled = false
+        unregisterAllMediaControllers()
         if (activeService === this) {
             activeService = null
         }
@@ -267,6 +331,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
         super.onDestroy()
     }
 
+    /** Called by Android once the notification listener binds; primes the initial notification snapshot. */
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -276,10 +341,12 @@ class CoverNotificationListenerService : NotificationListenerService() {
         Log.d(NOTIFICATION_LOG_TAG, "Notification listener connected")
     }
 
+    /** Tears down media callbacks and clears cover notification state when unbound by the OS. */
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     override fun onListenerDisconnected() {
         callbackHandler.removeCallbacks(refreshRunnable)
         refreshScheduled = false
+        unregisterAllMediaControllers()
         if (activeService === this) {
             activeService = null
         }
@@ -290,18 +357,21 @@ class CoverNotificationListenerService : NotificationListenerService() {
         super.onListenerDisconnected()
     }
 
+    /** Schedules a coalesced snapshot refresh when a notification is posted or updated. */
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
         scheduleNotificationRefresh()
     }
 
+    /** Schedules a coalesced snapshot refresh when a notification is dismissed or canceled. */
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         super.onNotificationRemoved(sbn)
         scheduleNotificationRefresh()
     }
 
+    /** Schedules at most one pending refresh on [callbackHandler] while the listener is connected. */
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     private fun scheduleNotificationRefresh() {
         if (!listenerConnected) return
@@ -311,8 +381,14 @@ class CoverNotificationListenerService : NotificationListenerService() {
         callbackHandler.post(refreshRunnable)
     }
 
+    /**
+     * Queries [NotificationListenerService.getActiveNotifications], reconciles [MediaController]
+     * bindings, emits sorted [CoverNotificationModel] items, and notifies [ForegroundService]
+     * if an active call notification is present.
+     */
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     private fun refreshActiveNotifications() {
+        // Live snapshot of all system status-bar notifications queried over Binder IPC.
         val activeSbns = runCatching {
             this.activeNotifications.toList()
         }.getOrElse { error ->
@@ -320,6 +396,9 @@ class CoverNotificationListenerService : NotificationListenerService() {
             emptyList()
         }
 
+        syncMediaControllers(activeSbns)
+
+        // UI-ready notification and media models sorted newest-first for the cover notification panel.
         val snapshot = runCatching {
             activeSbns
                 .asSequence()
@@ -333,6 +412,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
 
         activeNotificationModels.value = snapshot
 
+        // Package name of the newest active call notification so ForegroundService can yield the overlay.
         val activeCallPackage = activeSbns
             .asSequence()
             .filter { sbn -> sbn.isLikelyActiveCallNotification() }
@@ -346,6 +426,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
         )
     }
 
+    /** Forwards call-overlay suppression changes to [ForegroundService] only when state changes. */
     private fun dispatchCallNotificationState(isActive: Boolean, packageName: String?) {
         val normalizedPackage = packageName?.trim()?.takeUnless { it.isEmpty() }
         val normalizedState = isActive to normalizedPackage
@@ -358,6 +439,90 @@ class CoverNotificationListenerService : NotificationListenerService() {
         )
     }
 
+    /**
+     * Reconciles active media notifications against [mediaControllers], unregistering stale
+     * controllers and attaching [MediaController.Callback] listeners for newly discovered sessions
+     * so playback state/metadata updates push refreshes immediately without polling.
+     */
+    @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
+    private fun syncMediaControllers(activeSbns: List<StatusBarNotification>) {
+        // Desired notification key -> MediaSession.Token map from the current active notification snapshot.
+        val desiredTokens = mutableMapOf<String, MediaSession.Token>()
+        for (sbn in activeSbns) {
+            if (sbn.isLikelyActiveCallNotification()) continue
+            val token = sbn.extractMediaSessionToken()
+            if (isMediaNotification(category = sbn.notification.category, hasMediaSessionToken = token != null) && token != null) {
+                desiredTokens[sbn.key] = token
+            }
+        }
+
+        // Drop controllers whose notification disappeared or rotated its MediaSession.Token.
+        val iterator = mediaControllers.entries.iterator()
+        while (iterator.hasNext()) {
+            val (key, entry) = iterator.next()
+            val desiredToken = desiredTokens[key]
+            if (desiredToken == null || desiredToken != entry.token) {
+                runCatching { entry.controller.unregisterCallback(entry.callback) }
+                iterator.remove()
+            }
+        }
+
+        // Bind new MediaControllers on callbackHandler so transport controls stay reactive.
+        for ((key, token) in desiredTokens) {
+            if (mediaControllers.containsKey(key)) continue
+            // System MediaController bound to this media session for metadata, playback state, and transport controls.
+            val controller = runCatching { MediaController(this, token) }.getOrNull() ?: continue
+            // Callback pushing instant UI refreshes whenever track info, play state, or session lifecycle changes.
+            val callback = object : MediaController.Callback() {
+                override fun onPlaybackStateChanged(state: PlaybackState?) {
+                    scheduleNotificationRefresh()
+                }
+
+                override fun onMetadataChanged(metadata: MediaMetadata?) {
+                    scheduleNotificationRefresh()
+                }
+
+                override fun onSessionDestroyed() {
+                    scheduleNotificationRefresh()
+                }
+            }
+            runCatching {
+                controller.registerCallback(callback, callbackHandler)
+                mediaControllers[key] = RegisteredMediaController(
+                    token = token,
+                    controller = controller,
+                    callback = callback
+                )
+            }.onFailure { error ->
+                Log.w(NOTIFICATION_LOG_TAG, "Unable to register MediaController callback key=$key: ${error.message}")
+            }
+        }
+    }
+
+    /** Unregisters all tracked [MediaController] callbacks to prevent binder/memory leaks. */
+    private fun unregisterAllMediaControllers() {
+        mediaControllers.values.forEach { entry ->
+            runCatching { entry.controller.unregisterCallback(entry.callback) }
+        }
+        mediaControllers.clear()
+    }
+
+    /** Looks up the cached [MediaController] for [notificationKey] or instantiates one on demand. */
+    private fun resolveMediaController(notificationKey: String): MediaController? {
+        mediaControllers[notificationKey]?.let { return it.controller }
+        val token = findNotificationByKey(notificationKey)?.extractMediaSessionToken() ?: return null
+        return runCatching { MediaController(this, token) }.getOrNull()
+    }
+
+    /** Extracts the [MediaSession.Token] from [Notification.EXTRA_MEDIA_SESSION] if present. */
+    private fun StatusBarNotification.extractMediaSessionToken(): MediaSession.Token? {
+        val extras = notification.extras ?: return null
+        return runCatching {
+            extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, MediaSession.Token::class.java)
+        }.getOrNull()
+    }
+
+    /** Finds a live [StatusBarNotification] matching [notificationKey] in [activeNotifications]. */
     private fun findNotificationByKey(notificationKey: String): StatusBarNotification? {
         return runCatching {
             activeNotifications.firstOrNull { item -> item.key == notificationKey }
@@ -367,6 +532,10 @@ class CoverNotificationListenerService : NotificationListenerService() {
         }
     }
 
+    /**
+     * Heuristic detecting incoming or ongoing voice/VoIP call notifications using
+     * [CallPackageMatchers], [Notification.CATEGORY_CALL], and ongoing call text cues.
+     */
     private fun StatusBarNotification.isLikelyActiveCallNotification(): Boolean {
         val callPackage = packageName.trim().takeUnless { it.isEmpty() }
         val notificationCategory = notification.category.orEmpty()
@@ -396,10 +565,15 @@ class CoverNotificationListenerService : NotificationListenerService() {
             mergedText.contains("calling")
     }
 
+    /**
+     * Converts a system [StatusBarNotification] into a cover-screen [CoverNotificationModel],
+     * enriching media notifications with live [MediaController] metadata, playback actions, and
+     * artwork.
+     */
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     private fun StatusBarNotification.toCoverNotificationModel(): CoverNotificationModel? {
+        // Notification payload Bundle holding title, body text, icons, and optional MediaSession token.
         val extras = notification.extras ?: return null
-        val actions = notification.actions.orEmpty()
         val resolvedTitle = extras.getCharSequence(Notification.EXTRA_TITLE)
             ?.toString()
             ?.trim()
@@ -413,30 +587,19 @@ class CoverNotificationListenerService : NotificationListenerService() {
             ?.trim()
             .orEmpty()
 
+        // Fall back to the posting app's launcher label if the notification omitted a title.
         val title = resolvedTitle.ifEmpty {
             runCatching {
                 packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
             }.getOrDefault(packageName)
         }
 
-        val templateClassName = extras.getString(Notification.EXTRA_TEMPLATE).orEmpty()
-        val hasMediaSessionToken = runCatching {
-            extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, MediaSession.Token::class.java) != null
-        }.getOrDefault(false)
-        val hasProgressBar = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0) > 0 ||
-            extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
-        val hasPlaybackSemanticAction = actions.any { action ->
-            action.semanticAction == Notification.Action.SEMANTIC_ACTION_PLAY ||
-                action.semanticAction == Notification.Action.SEMANTIC_ACTION_PAUSE
-        }
-        val rawActionLabels = actions.mapNotNull { it.title?.toString() }
+        // Non-null when the notification embeds an active MediaSession for playback controls.
+        val mediaToken = extractMediaSessionToken()
+        // Exclude active calls so call cards stay prioritized as call alerts rather than media players.
         val isMediaNotification = !isLikelyActiveCallNotification() && isMediaNotification(
             category = notification.category,
-            templateClassName = templateClassName,
-            hasMediaSessionToken = hasMediaSessionToken,
-            hasProgressBar = hasProgressBar,
-            hasPlaybackSemanticAction = hasPlaybackSemanticAction,
-            actionLabels = rawActionLabels
+            hasMediaSessionToken = mediaToken != null
         )
 
         val mediaArtistExtra = extras.getCharSequence(Notification.EXTRA_TEXT)
@@ -450,47 +613,48 @@ class CoverNotificationListenerService : NotificationListenerService() {
                     .orEmpty()
             }
 
-        val mediaTitle = if (isMediaNotification) {
-            resolvedTitle.ifEmpty { null }
-        } else {
-            null
-        }
-        val mediaArtist = if (isMediaNotification) {
-            mediaArtistExtra.ifEmpty { resolvedText.ifEmpty { null } }
-        } else {
-            null
-        }
-
-        val actionLabels = actions
-            .mapNotNull { action ->
-                action.title
-                    ?.toString()
-                    ?.trim()
-                    ?.takeUnless { it.isEmpty() }
-            }
-            .distinct()
-            .take(4)
-
-        val playPauseActionLabel = resolvePlayPauseActionLabel(actions)
-
-        val mediaArtwork = if (isMediaNotification) {
-            resolveMediaArtwork(notification, extras)
-        } else {
-            null
-        }
-
+        // Rich playback model populated from MediaController metadata, transport flags, and album art.
         val media = if (isMediaNotification) {
+            val controller = mediaControllers[key]?.controller
+                ?: mediaToken?.let {
+                    runCatching { MediaController(this@CoverNotificationListenerService, it) }.getOrNull()
+                }
+            val metadata = runCatching { controller?.metadata }.getOrNull()
+            val playbackState = runCatching { controller?.playbackState }.getOrNull()
+            val capabilities = resolvePlaybackCapabilities(
+                state = playbackState?.state,
+                actions = playbackState?.actions ?: 0L
+            )
+            // Prefer MediaSession metadata over notification extras, which can lag during track skips.
+            val mediaTitle = metadata
+                ?.firstNonBlankString(
+                    MediaMetadata.METADATA_KEY_DISPLAY_TITLE,
+                    MediaMetadata.METADATA_KEY_TITLE
+                )
+                ?: resolvedTitle.ifEmpty { null }
+            val mediaArtist = metadata
+                ?.firstNonBlankString(
+                    MediaMetadata.METADATA_KEY_ARTIST,
+                    MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE,
+                    MediaMetadata.METADATA_KEY_ALBUM_ARTIST
+                )
+                ?: mediaArtistExtra.ifEmpty { resolvedText.ifEmpty { null } }
+            val mediaArtwork = resolveMediaArtwork(notification, extras, metadata)
+
             CoverMediaModel(
                 title = mediaTitle,
                 artist = mediaArtist,
-                actionLabels = actionLabels,
-                playPauseActionLabel = playPauseActionLabel,
+                isPlaying = capabilities.isPlaying,
+                canPlayPause = capabilities.canPlayPause,
+                canSkipPrevious = capabilities.canSkipPrevious,
+                canSkipNext = capabilities.canSkipNext,
                 artworkBitmap = mediaArtwork
             )
         } else {
             null
         }
 
+        // True for persistent/foreground notifications that users cannot simply swipe away.
         val ongoingLike = isOngoing ||
             (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0 ||
             (notification.flags and Notification.FLAG_FOREGROUND_SERVICE) != 0
@@ -508,8 +672,24 @@ class CoverNotificationListenerService : NotificationListenerService() {
         )
     }
 
-    private fun resolveMediaArtwork(notification: Notification, extras: android.os.Bundle): Bitmap? {
-        val metadataArtwork = resolveMediaArtworkFromSession(extras)
+    /** Returns the first non-blank string value found across [keys] in [MediaMetadata]. */
+    private fun MediaMetadata.firstNonBlankString(vararg keys: String): String? {
+        return keys
+            .asSequence()
+            .mapNotNull { key -> getString(key)?.trim()?.takeIf { it.isNotEmpty() } }
+            .firstOrNull()
+    }
+
+    /**
+     * Resolves album/media artwork by falling back from [MediaMetadata] bitmaps through
+     * [Notification.EXTRA_PICTURE], [Notification.EXTRA_LARGE_ICON_BIG], and [Notification.getLargeIcon].
+     */
+    private fun resolveMediaArtwork(
+        notification: Notification,
+        extras: android.os.Bundle,
+        metadata: MediaMetadata?
+    ): Bitmap? {
+        val metadataArtwork = resolveMediaArtworkFromMetadata(metadata)
         if (metadataArtwork != null) return metadataArtwork
 
         val pictureArtwork = getParcelableBitmap(extras, Notification.EXTRA_PICTURE)
@@ -522,16 +702,8 @@ class CoverNotificationListenerService : NotificationListenerService() {
         return notificationLargeIcon?.let { icon -> iconToBitmap(icon) }
     }
 
-    private fun resolveMediaArtworkFromSession(extras: android.os.Bundle): Bitmap? {
-        val token = runCatching {
-            extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, MediaSession.Token::class.java)
-        }.getOrNull() ?: return null
-
-        val metadata = runCatching { MediaController(this, token).metadata }
-            .getOrElse { error ->
-                Log.d(NOTIFICATION_LOG_TAG, "Unable to read media metadata from session: ${error.message}")
-                null
-            } ?: return null
+    private fun resolveMediaArtworkFromMetadata(metadata: MediaMetadata?): Bitmap? {
+        if (metadata == null) return null
 
         val artKeys = listOf(
             MediaMetadata.METADATA_KEY_ALBUM_ART,
@@ -545,6 +717,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
             .firstOrNull()
     }
 
+    /** Reads a [Bitmap] or [Icon] extra safely via typed `getParcelable` and normalizes it. */
     private fun getParcelableBitmap(extras: android.os.Bundle, key: String): Bitmap? {
         val bitmapValue = runCatching {
             extras.getParcelable(key, Bitmap::class.java)
@@ -565,7 +738,6 @@ class CoverNotificationListenerService : NotificationListenerService() {
 
         return iconToBitmap(iconValue)?.let { bitmap -> toArgb8888Bitmap(bitmap) }
     }
-
 
     private fun iconToBitmap(icon: Icon): Bitmap? {
         val drawable = runCatching { icon.loadDrawable(this) }
@@ -595,6 +767,10 @@ class CoverNotificationListenerService : NotificationListenerService() {
         }
     }
 
+    /**
+     * Bounds oversized album art to 512px max edge and converts hardware/indexed bitmaps to
+     * `ARGB_8888` so Compose `asImageBitmap()` can render them without hardware-bitmap errors.
+     */
     private fun toArgb8888Bitmap(bitmap: Bitmap): Bitmap {
         val maxEdge = maxOf(bitmap.width, bitmap.height)
         val scaled = if (maxEdge > 512) {
@@ -607,29 +783,6 @@ class CoverNotificationListenerService : NotificationListenerService() {
         }
         if (scaled.config == Bitmap.Config.ARGB_8888) return scaled
         return scaled.copy(Bitmap.Config.ARGB_8888, false) ?: scaled
-    }
-
-    @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
-    private fun resolvePlayPauseActionLabel(actions: Array<out Notification.Action>): String? {
-        val semanticMatch = actions.firstOrNull { action ->
-            action.semanticAction == Notification.Action.SEMANTIC_ACTION_PLAY ||
-                action.semanticAction == Notification.Action.SEMANTIC_ACTION_PAUSE
-        }?.title?.toString()?.trim().orEmpty()
-        if (semanticMatch.isNotEmpty()) return semanticMatch
-
-        // Fallback when apps don't publish semanticAction: keep OEM-provided label text.
-        val keywordMatch = actions.firstOrNull { action ->
-            val label = action.title?.toString()?.trim()?.lowercase().orEmpty()
-            label.contains("play") || label.contains("pause") || label.contains("resume")
-        }?.title?.toString()?.trim().orEmpty()
-        if (keywordMatch.isNotEmpty()) return keywordMatch
-
-        return actions
-            .firstOrNull { action -> action.actionIntent != null }
-            ?.title
-            ?.toString()
-            ?.trim()
-            ?.takeUnless { it.isEmpty() }
     }
 
 }

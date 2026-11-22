@@ -29,6 +29,10 @@ import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUIPressable
 
+/**
+ * Equal-width row of OneUI quick controls on [DashboardScreen] to start/stop the foreground
+ * service, open the permissions onboarding flow, or display a local cover-surface preview.
+ */
 @Composable
 fun QuickActionsRow(
     running: Boolean,
@@ -62,6 +66,9 @@ fun QuickActionsRow(
     }
 }
 
+/**
+ * Circular OneUI pressable icon tile with centered label beneath it.
+ */
 @Composable
 private fun QuickAction(label: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -75,6 +82,7 @@ private fun QuickAction(label: String, icon: ImageVector, onClick: () -> Unit, m
                 .size(OneUITheme.dimensions.encircledIconSize)
                 .clip(CircleShape)
                 .background(OneUITheme.colors.cardSurfaceVariant.copy(alpha = 0.7f))
+                // Replace standard Material ripple (indication = null) with OneUI press-scale feedback.
                 .oneUIPressable(interactionSource = interactionSource)
                 .clickable(
                     interactionSource = interactionSource,

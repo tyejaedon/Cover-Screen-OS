@@ -27,8 +27,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.R
 
+/**
+ * Describes a single page in the first-run [WelcomeHomeTour] sheet, pairing a tab title with
+ * explanatory body copy string resources.
+ */
 private data class TourStep(@StringRes val title: Int, @StringRes val description: Int)
 
+// Ordered tour cards matching the four main tabs inside AppShell (Dashboard, Customize, Permissions, About).
 private val steps = listOf(
     TourStep(R.string.home_dashboard, R.string.home_tour_dashboard),
     TourStep(R.string.home_customize, R.string.home_tour_customize),
@@ -36,16 +41,27 @@ private val steps = listOf(
     TourStep(R.string.home_about, R.string.home_tour_about)
 )
 
+/**
+ * First-run Material3 [ModalBottomSheet] introducing the four main areas of Cover Screen OS.
+ *
+ * Uses a [PrimaryScrollableTabRow] so users can jump between tabs directly or advance sequentially,
+ * and compacts padding/typography when `screenHeightDp <= 480` (for example in landscape or
+ * half-folded postures).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun WelcomeHomeTour(onDismiss: () -> Unit) {
+    // Index (0..3) of the tour page currently shown; survives rotation or fold-state changes.
     var selectedStep by rememberSaveable { mutableIntStateOf(0) }
+    // True on short displays (<= 480dp tall) so text and spacing shrink to stay comfortable.
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
+    // Shared left/right inset used across the title, tab strip, description, and action row.
     val horizontalPad = if (isCompactHeight) 16.dp else 24.dp
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // Allow scrolling inside the sheet on compact-height displays so buttons stay reachable.
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 10.dp else 16.dp)
         ) {

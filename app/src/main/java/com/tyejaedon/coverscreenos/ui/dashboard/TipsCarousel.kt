@@ -17,6 +17,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
+// Static usage tips cycled on the Dashboard until dismissed for the saved UI session.
 private val tips = listOf(
     "Set your favorite apps in the dock from Customize.",
     "Choose a wallpaper that stays readable on the cover display.",
@@ -24,12 +25,20 @@ private val tips = listOf(
     "Check notification access to see alerts on the cover screen."
 )
 
+/**
+ * Dismissible card displaying configuration tips one at a time on [DashboardScreen].
+ *
+ * Uses a bitmask (`dismissed`) persisted with [rememberSaveable] to track hidden tip indices and
+ * collapses out of composition once all tips have been dismissed.
+ */
 @Composable
 fun TipsCarousel(modifier: Modifier = Modifier) {
     var dismissed by rememberSaveable { mutableIntStateOf(0) }
     var selected by rememberSaveable { mutableIntStateOf(0) }
+    // Keep only indices whose corresponding bit in the dismissed bitmask is still 0.
     val available = tips.indices.filter { dismissed and (1 shl it) == 0 }
     if (available.isEmpty()) return
+    // Advance to the next available index at or after `selected`, wrapping around when past the end.
     val index = available.firstOrNull { it >= selected } ?: available.first()
     Card(modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

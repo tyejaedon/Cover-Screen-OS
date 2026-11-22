@@ -14,13 +14,26 @@ import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.ui.appshell.AppShell
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 
+/**
+ * Companion phone-screen entry point for Cover-Screen-OS.
+ *
+ * While the cover display desktop is rendered independently inside an overlay service, this
+ * [ComponentActivity] hosts the main-screen companion UI ([AppShell]) where users complete
+ * permission onboarding, customize dock/wallpaper/keyboard settings, and manage preferences.
+ */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Opt into edge-to-edge drawing so Compose layouts extend behind system status and
+        // navigation bars instead of being letterboxed by legacy system-bar decor fits.
         enableEdgeToEdge()
 
         setContent {
+            // Holds the single settings store handle across UI recompositions; uses applicationContext
+            // so retaining this store never keeps the short-lived Activity in memory.
             val settingsStore = remember { LauncherSettingsStore(applicationContext) }
+            // Live Compose state mirroring the user's saved preferences, starting with defaults
+            // for the first frame until DataStore finishes reading from disk.
             val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
 
             CoverOSTheme(

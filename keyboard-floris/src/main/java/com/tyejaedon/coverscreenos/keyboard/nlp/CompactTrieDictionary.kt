@@ -13,20 +13,30 @@ class CompactTrieDictionary(
     initialWords: Map<String, Long> = emptyMap()
 ) {
 
-    class TrieNode(val char: Char = '\u0000') {
+    /** Single letter node in the prefix tree holding terminal status, frequencies, and `'a'..'z'` child slots. */
+    class TrieNode(
+        /** Letter along the incoming edge from this node's parent (`\u0000` at the root). */
+        val char: Char = '\u0000'
+    ) {
+        /** True if the path ending at this node is a complete dictionary word. */
         var isTerminal: Boolean = false
+        /** Usage/corpus frequency recorded for this word (`0L` if non-terminal). */
         var frequency: Long = 0L
+        /** Highest [frequency] across this node and all its descendants (drives pruning). */
         var maxSubtreeFrequency: Long = 0L
+        /** Original unnormalized word string stored at this terminal node, or `null`. */
         var terminalWord: String? = null
 
         // Fixed-size array for direct O(1) indexed child access ('a'..'z')
         private val children: Array<TrieNode?> = arrayOfNulls(26)
 
+        /** Returns the child node for lowercase letter [c], or `null` if no branch exists. */
         fun getChild(c: Char): TrieNode? {
             val idx = c - 'a'
             return if (idx in 0..25) children[idx] else null
         }
 
+        /** Looks up child [c] or allocates a new [TrieNode] slot in [children]. */
         fun getOrCreateChild(c: Char): TrieNode {
             val idx = c - 'a'
             require(idx in 0..25) { "Character '$c' outside 'a'..'z'" }
@@ -38,6 +48,7 @@ class CompactTrieDictionary(
             return child
         }
 
+        /** Iterates every populated child edge in `'a'..'z'` alphabetical order. */
         fun forEachChild(action: (Char, TrieNode) -> Unit) {
             for (i in 0..25) {
                 val child = children[i] ?: continue
@@ -45,6 +56,7 @@ class CompactTrieDictionary(
             }
         }
 
+        /** Number of active outgoing letter branches from this node. */
         val childCount: Int
             get() {
                 var count = 0
@@ -55,7 +67,9 @@ class CompactTrieDictionary(
             }
     }
 
+    /** Root node representing the empty prefix `""`. */
     val root = TrieNode()
+    /** Total number of distinct terminal words inserted into this trie. */
     var size: Int = 0
         private set
 
@@ -69,11 +83,11 @@ class CompactTrieDictionary(
      * Inserts a word with the specified frequency into the Trie.
      */
     fun insert(word: String, frequency: Long = 1L) {
-        val normalized = normalizeWord(word)
+        val normalized = normalizeWord(word) // Lowercase `'a'..'z'`-only path key
         if (normalized.isEmpty()) return
 
-        val clampedFreq = max(1L, frequency)
-        var current = root
+        val clampedFreq = max(1L, frequency) // Guarantee every stored word has positive frequency >= 1
+        var current = root // Cursor walking down from root, updating `maxSubtreeFrequency` along the path
         current.maxSubtreeFrequency = max(current.maxSubtreeFrequency, clampedFreq)
 
         for (i in 0 until normalized.length) {
@@ -128,7 +142,7 @@ class CompactTrieDictionary(
         val normalized = normalizeWord(prefix)
         val prefixNode = findNode(normalized) ?: return emptyList()
 
-        val results = mutableListOf<CandidateWord>()
+        val results = mutableListOf<CandidateWord>() // Final top completions starting with exact prefix match
 
         // Check if prefix itself is an exact word
         if (prefixNode.isTerminal && prefixNode.terminalWord != null) {
@@ -148,7 +162,7 @@ class CompactTrieDictionary(
             queue.add(child)
         }
 
-        val collectedWords = mutableListOf<TrieNode>()
+        val collectedWords = mutableListOf<TrieNode>() // Candidate terminal nodes gathered before final top-N sort
 
         while (!queue.isEmpty()) {
             val node = queue.poll() ?: break
@@ -163,7 +177,7 @@ class CompactTrieDictionary(
             // Pruning condition: if we already have enough candidates and the best remaining
             // node's maxSubtreeFrequency cannot beat what we have, we can stop.
             if (results.size + collectedWords.size >= limit * 2) {
-                val minCollected = collectedWords.minOfOrNull { it.frequency } ?: 0L
+                val minCollected = collectedWords.minOfOrNull { it.frequency } ?: 0L // Worst frequency currently in pool
                 if (node.maxSubtreeFrequency <= minCollected) {
                     break
                 }
@@ -199,7 +213,7 @@ class CompactTrieDictionary(
      * summing to 1.0f.
      */
     fun getNextCharPriors(prefix: String): Map<Char, Float> {
-        val priors = HashMap<Char, Float>(26)
+        val priors = HashMap<Char, Float>(26) // Output probability distribution across 'a'..'z'
         val node = if (prefix.isEmpty()) root else findNode(prefix)
 
         if (node == null) {
@@ -211,8 +225,8 @@ class CompactTrieDictionary(
             return priors
         }
 
-        var totalWeight = 0.0
-        val weights = FloatArray(26)
+        var totalWeight = 0.0 // Sum of smoothed letter weights used to normalize probabilities to 1.0
+        val weights = FloatArray(26) // Per-letter raw weight indexed by `c - 'a'`
         val smoothingEpsilon = 0.01f // Base smoothing so adjacent keys never have 0 prior
 
         for (i in 0..25) {

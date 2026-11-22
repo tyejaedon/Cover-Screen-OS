@@ -3,25 +3,25 @@ package com.tyejaedon.coverscreenos.ui.widgets
 import android.appwidget.AppWidgetHostView
 import android.graphics.Outline
 import android.os.Bundle
+import android.util.SizeF
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -37,12 +37,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -51,10 +53,17 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeEffect
 import kotlin.math.roundToInt
 
-private const val WIDGET_MIN_HEIGHT_DP = 84
-private const val WIDGET_MAX_HEIGHT_DP = 160
+// Shared rounded corner radius matching CoverOS glass cards on the cover display.
 private val WIDGET_CORNER_RADIUS = 18.dp
 
+/**
+ * Scrollable cover-screen tile hosting user-pinned Android `AppWidget` views in a two-column
+ * masonry grid ([CoverWidgetTwoColumnGrid]) over a Haze glassmorphic backdrop.
+ *
+ * Bridges legacy [AppWidgetHostView] instances into Compose via [AndroidView], clips them with a
+ * hardware-accelerated [ViewOutlineProvider], updates each widget's responsive dp size bounds via
+ * [AppWidgetHostView.updateAppWidgetSize], and delegates widget taps via [onLaunchWidgetApp].
+ */
 @Composable
 fun CoverAppWidgetHostTile(
     widgetIds: List<Int>,
@@ -62,8 +71,10 @@ fun CoverAppWidgetHostTile(
     onRemoveWidget: (Int) -> Unit,
     onAddWidgetRequest: () -> Unit,
     hazeState: HazeState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onLaunchWidgetApp: (String) -> Unit = {}
 ) {
+    // Host Context used to inflate AppWidgetHostViews; Density converts dp metrics to pixels.
     val context = LocalContext.current
     val density = LocalDensity.current
 
@@ -146,134 +157,171 @@ fun CoverAppWidgetHostTile(
                 }
             }
         } else {
-            // Populated widget container
-            val availableWidthDp = (LocalConfiguration.current.screenWidthDp - 24).coerceAtLeast(180)
+            val configuration = LocalConfiguration.current
+            // Usable grid width in dp (screen width minus 12dp left/right padding), floored at 180dp so columns stay legible.
+            val availableWidthDp = (configuration.screenWidthDp - 24).coerceAtLeast(180)
+            // Height cap (~68% of cover screen) so a single tall widget never pushes all others off-screen.
+            val maxSlotHeightDp = (configuration.screenHeightDp * 0.68f)
+                .roundToInt()
+                .coerceIn(160, WIDGET_DEFAULT_MAX_HEIGHT_DP)
+            // Compose shape and matching native pixel radius for clipping both the card and inner RemoteViews.
             val cornerShape = RoundedCornerShape(WIDGET_CORNER_RADIUS)
             val cornerRadiusPx = with(density) { WIDGET_CORNER_RADIUS.toPx() }
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 56.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+            // Precomputed layout spec per widget ID (column span, outer slot size, and fitted widget viewport).
+            val specs = remember(widgetIds, availableWidthDp, maxSlotHeightDp, density.density) {
+                widgetIds.map { widgetId ->
+                    val meta = widgetHostManager.getAppWidgetInfo(widgetId)
+                        .toWidgetGridMetadata(density.density)
+                    computeWidgetPlacementSpec(
+                        meta = meta,
+                        containerWidthDp = availableWidthDp,
+                        maxSlotHeightDp = maxSlotHeightDp
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 56.dp),
+                verticalArrangement = Arrangement.spacedBy(WIDGET_GRID_GAP_DP.dp)
             ) {
-                items(widgetIds, key = { it }) { widgetId ->
-                    val widgetView = remember(widgetId, widgetHostManager) {
-                        widgetHostManager.createWidgetView(context, widgetId)?.also { view ->
-                            if (view is AppWidgetHostView) {
-                                val rawMinHeightDp = ((view.appWidgetInfo?.minHeight ?: 0) / density.density)
-                                    .roundToInt()
-                                val targetHeightDp = if (rawMinHeightDp > 0) {
-                                    rawMinHeightDp.coerceIn(WIDGET_MIN_HEIGHT_DP, WIDGET_MAX_HEIGHT_DP)
-                                } else {
-                                    120
-                                }
-                                view.updateAppWidgetSize(
-                                    Bundle(),
-                                    availableWidthDp,
-                                    targetHeightDp,
-                                    availableWidthDp,
-                                    WIDGET_MAX_HEIGHT_DP
-                                )
-                            }
+                CoverWidgetTwoColumnGrid(specs = specs) {
+                    widgetIds.forEachIndexed { index, widgetId ->
+                        // Placement geometry for this widget slot.
+                        val spec = specs[index]
+                        // Owning app package looked up once per widget so taps can open that app on the cover screen.
+                        val widgetPackageName = remember(widgetId, widgetHostManager) {
+                            widgetHostManager.getAppWidgetInfo(widgetId)?.provider?.packageName
                         }
-                    }
+                        // Native Android AppWidgetHostView inflated and remembered across recompositions for this ID.
+                        val widgetView = remember(widgetId, widgetHostManager) {
+                            widgetHostManager.createWidgetView(context, widgetId)
+                        }
 
-                    Surface(
-                        shape = cornerShape,
-                        color = Color.White.copy(alpha = 0.08f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = WIDGET_MAX_HEIGHT_DP.dp)
-                            .clip(cornerShape)
-                            .hazeEffect(state = hazeState)
-                    ) {
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            if (widgetView != null) {
-                                AndroidView(
-                                    factory = { ctx ->
-                                        FrameLayout(ctx).apply {
-                                            layoutParams = ViewGroup.LayoutParams(
-                                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                                ViewGroup.LayoutParams.WRAP_CONTENT
-                                            )
-                                            clipToOutline = true
-                                            outlineProvider = RoundedWidgetOutlineProvider(cornerRadiusPx)
-                                            (widgetView.parent as? ViewGroup)?.removeView(widgetView)
-                                            addView(widgetView)
-                                        }
-                                    },
-                                    update = { container ->
-                                        val provider = container.outlineProvider as? RoundedWidgetOutlineProvider
-                                        if (provider == null || provider.radiusPx != cornerRadiusPx) {
-                                            container.outlineProvider = RoundedWidgetOutlineProvider(cornerRadiusPx)
-                                            container.clipToOutline = true
-                                            container.invalidateOutline()
-                                        }
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(max = WIDGET_MAX_HEIGHT_DP.dp)
-                                        .clip(cornerShape)
-                                )
-                            } else {
-                                Text(
-                                    text = "Widget unavailable ($widgetId)",
-                                    color = Color.White.copy(alpha = 0.6f),
-                                    fontSize = 12.sp,
-                                    modifier = Modifier.padding(16.dp)
-                                )
-                            }
-
-                            // Remove affordance
-                            IconButton(
-                                onClick = { onRemoveWidget(widgetId) },
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .size(32.dp)
-                                    .padding(4.dp)
+                        Surface(
+                            shape = cornerShape,
+                            color = Color.White.copy(alpha = 0.08f),
+                            modifier = Modifier
+                                .clip(cornerShape)
+                                .hazeEffect(state = hazeState)
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Remove Widget",
-                                    tint = Color.White.copy(alpha = 0.55f),
-                                    modifier = Modifier.size(16.dp)
-                                )
+                                if (widgetView != null) {
+                                    AndroidView(
+                                        factory = { ctx ->
+                                            FrameLayout(ctx).apply {
+                                                layoutParams = ViewGroup.LayoutParams(
+                                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                                )
+                                                // Clip RemoteViews at the Android View layer because Compose clip alone does not clip native children cleanly on all API levels.
+                                                clipToOutline = true
+                                                outlineProvider = RoundedWidgetOutlineProvider(cornerRadiusPx)
+                                                // Detach from any previous wrapper if Compose recreates the AndroidView node.
+                                                (widgetView.parent as? ViewGroup)?.removeView(widgetView)
+                                                addView(widgetView)
+                                            }
+                                        },
+                                        update = { container ->
+                                            val provider = container.outlineProvider as? RoundedWidgetOutlineProvider
+                                            if (provider == null || provider.radiusPx != cornerRadiusPx) {
+                                                container.outlineProvider = RoundedWidgetOutlineProvider(cornerRadiusPx)
+                                                container.clipToOutline = true
+                                                container.invalidateOutline()
+                                            }
+                                            if (widgetView is AppWidgetHostView) {
+                                                // Exact rendered widget size in dp reported to the provider so it chooses an appropriate layout.
+                                                val targetSize = SizeF(
+                                                    spec.widgetWidthDp.toFloat(),
+                                                    spec.widgetHeightDp.toFloat()
+                                                )
+                                                // Deduplicate size updates via View.tag to avoid spamming AppWidgetService IPC on recomposition.
+                                                if (widgetView.tag != targetSize) {
+                                                    widgetView.tag = targetSize
+                                                    widgetView.updateAppWidgetSize(Bundle(), listOf(targetSize))
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .size(spec.widgetWidthDp.dp, spec.widgetHeightDp.dp)
+                                            .clip(cornerShape)
+                                    )
+                                } else {
+                                    Text(
+                                        text = "Widget unavailable ($widgetId)",
+                                        color = Color.White.copy(alpha = 0.6f),
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(16.dp)
+                                    )
+                                }
+
+                                // Intercept widget taps in Compose so CoverOS hides the overlay and
+                                // launches the widget's owning app on the cover display via CoverAppLauncher,
+                                // while still yielding to parent verticalScroll and the delete button above.
+                                if (widgetPackageName != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clickable(onClickLabel = "Open app") {
+                                                onLaunchWidgetApp(widgetPackageName)
+                                            }
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = { onRemoveWidget(widgetId) },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .size(32.dp)
+                                        .padding(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Remove Widget",
+                                        tint = Color.White.copy(alpha = 0.55f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         }
                     }
                 }
 
-                item(key = "add_widget_footer") {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        contentAlignment = Alignment.Center
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        onClick = onAddWidgetRequest,
+                        modifier = Modifier.height(38.dp)
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(24.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            onClick = onAddWidgetRequest,
-                            modifier = Modifier.height(38.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center,
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.size(6.dp))
-                                Text(
-                                    text = "Add Widget",
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.size(6.dp))
+                            Text(
+                                text = "Add Widget",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
                         }
                     }
                 }
@@ -282,6 +330,52 @@ fun CoverAppWidgetHostTile(
     }
 }
 
+/**
+ * Custom Compose [Layout] implementing a two-column masonry grid driven by [packTwoColumnGrid].
+ *
+ * Each child composable is measured with exact [Constraints.fixed] bounds and positioned using
+ * RTL-aware [placeRelative] coordinates.
+ */
+@Composable
+private fun CoverWidgetTwoColumnGrid(
+    specs: List<WidgetPlacementSpec>,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Layout(
+        content = content,
+        modifier = modifier.fillMaxWidth()
+    ) { measurables, constraints ->
+        // Available horizontal width in pixels and gap/single-column widths derived from it.
+        val fullWidthPx = constraints.maxWidth
+        val gapPx = WIDGET_GRID_GAP_DP.dp.roundToPx()
+        val singleColWidthPx = ((fullWidthPx - gapPx) / 2).coerceAtLeast(1)
+        // Compute exact (x, y, width, height) coordinates and total grid height before measuring children.
+        val packed = packTwoColumnGrid(
+            specs = specs,
+            singleColWidthPx = singleColWidthPx,
+            fullWidthPx = fullWidthPx,
+            columnGapPx = gapPx,
+            rowGapPx = gapPx,
+            dpToPx = { dp -> dp.dp.roundToPx() }
+        )
+
+        // Measure each widget tile with fixed bounds so Surface/Box matches the packed slot exactly.
+        val placeables = measurables.mapIndexed { index, measurable ->
+            val placement = packed.placements[index]
+            measurable.measure(Constraints.fixed(placement.widthPx, placement.heightPx))
+        }
+
+        layout(fullWidthPx, packed.totalHeightPx) {
+            placeables.forEachIndexed { index, placeable ->
+                val placement = packed.placements[index]
+                placeable.placeRelative(placement.xPx, placement.yPx)
+            }
+        }
+    }
+}
+
+/** Clips legacy `AppWidgetHostView` containers to a rounded rectangle matching Compose tiles. */
 private class RoundedWidgetOutlineProvider(
     val radiusPx: Float
 ) : ViewOutlineProvider() {

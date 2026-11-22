@@ -21,7 +21,10 @@ import kotlinx.coroutines.flow.asStateFlow
 class CoverDisplayHelper(private val context: Context) {
 
     private companion object {
+        // Backup check every 10s so lock status still catches up if an OEM drops a broadcast.
         private const val LOCK_STATUS_POLL_INTERVAL_MS = 10_000L
+
+        // Screen power modes where the outer cover display is awake or half-awake enough to keep our UI attached.
         private val USABLE_COVER_STATES = intArrayOf(
             Display.STATE_ON,
             Display.STATE_VR,
@@ -30,36 +33,54 @@ class CoverDisplayHelper(private val context: Context) {
         )
     }
 
+    // Android's screen directory service, used to list attached displays and check their power state.
     private val displayManager: DisplayManager by lazy {
         context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
     }
+
+    // Active broadcast listener catching screen-lock and unlock events from Android.
     private var lockStatusReceiver: LockStatusReceiver? = null
+
+    // Tracks whether lockStatusReceiver is currently registered so stopping monitoring stays safe and idempotent.
     private var isLockStatusReceiverRegistered = false
+
+    // Main-thread scheduler used to run the 10-second fallback lock-status check.
     private val mainHandler: Handler by lazy(LazyThreadSafetyMode.NONE) {
         Handler(Looper.getMainLooper())
     }
+
+    // Repeating task scheduled on mainHandler while monitoring is active; null when stopped.
     private var lockStatusPoller: Runnable? = null
+
+    // Internal mutable lock flag; starts true (locked) so nothing bypasses security before the first read.
     private val _isDeviceLocked = MutableStateFlow(true)
+    /** Reactive keyguard lock state updated by [LockStatusReceiver] and fallback polling. */
     val isDeviceLocked: StateFlow<Boolean> = _isDeviceLocked.asStateFlow()
 
+    // Dedicated tracker listening to Jetpack WindowManager for hinge open/close angles.
     private val foldPostureTracker: FoldPostureTracker by lazy {
         FoldPostureTracker(context)
     }
+    /** Current physical fold posture reported by Jetpack WindowManager via [FoldPostureTracker]. */
     val foldPosture: StateFlow<CoverFoldPosture>
         get() = foldPostureTracker.posture
 
+    /** Begins collecting Jetpack [androidx.window.layout.WindowLayoutInfo] posture transitions in [scope]. */
     fun startPostureMonitoring(scope: kotlinx.coroutines.CoroutineScope) {
         foldPostureTracker.startMonitoring(scope)
     }
 
+    /** Stops fold posture collection and cancels the underlying tracker job. */
     fun stopPostureMonitoring() {
         foldPostureTracker.stopMonitoring()
     }
 
+    /** Returns true only when the clamshell hinge is [CoverFoldPosture.CLOSED]. */
     fun isPosturePermittedForCover(): Boolean {
         return foldPosture.value == CoverFoldPosture.CLOSED
     }
 
+    /** Test-only hook to override the observed [CoverFoldPosture]. */
     internal fun setPostureForTest(posture: CoverFoldPosture) {
         foldPostureTracker.setPostureForTest(posture)
     }
@@ -75,20 +96,26 @@ class CoverDisplayHelper(private val context: Context) {
      * @return a usable secondary display, or null when none is available.
      */
     fun getCoverDisplay(): Display? {
-        // Prefer active presentation displays first.
+        // Prefer active presentation displays first (DisplayManager.DISPLAY_CATEGORY_PRESENTATION
+        // filters for displays tagged with Display.FLAG_PRESENTATION, commonly used for cover/secondary panels).
         val presentationDisplays = displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
         presentationDisplays.firstOrNull { it.isUsableCoverDisplay() }?.let { return it }
 
-        // Fallback to any active, valid non-default display.
+        // Fallback to any active, valid non-default display across all DisplayManager logical displays.
         return displayManager.displays.firstOrNull { display ->
             display.isUsableCoverDisplay()
         }
     }
 
+    /** Returns the [Display.getDisplayId] of the active usable cover display, or null if none is ready. */
     fun getCoverDisplayId(): Int? {
         return getCoverDisplay()?.displayId
     }
 
+    /**
+     * Registers [LockStatusReceiver] (non-exported) and starts low-frequency fallback polling
+     * so [isDeviceLocked] stays synchronized with system keyguard changes.
+     */
     fun startLockStatusMonitoring() {
         if (isLockStatusReceiverRegistered) {
             _isDeviceLocked.value = LockStatusReceiver.currentLockStatus(context)
@@ -111,6 +138,7 @@ class CoverDisplayHelper(private val context: Context) {
         startLockStatusPolling()
     }
 
+    /** Unregisters [LockStatusReceiver] and stops the fallback polling runnable if active. */
     fun stopLockStatusMonitoring() {
         if (!isLockStatusReceiverRegistered) return
 
@@ -126,16 +154,21 @@ class CoverDisplayHelper(private val context: Context) {
         stopLockStatusPolling()
     }
 
+    /** Returns the latest cached keyguard lock state from [isDeviceLocked]. */
     fun getDisplayLockStatus(): Boolean {
         return isDeviceLocked.value
     }
 
+    /** Synchronously queries [LockStatusReceiver.currentLockStatus], updates [isDeviceLocked], and returns it. */
     fun refreshLockStatus(): Boolean {
         val current = LockStatusReceiver.currentLockStatus(context)
         _isDeviceLocked.value = current
         return current
     }
 
+    /**
+     * Evaluates whether this [Display] is a valid non-default panel in an acceptable power state.
+     */
     private fun Display.isUsableCoverDisplay(): Boolean {
         // A cover display remains usable across the transient power states a foldable
         // reports while the main panel is changing (STATE_DOZE, STATE_ON_SUSPEND,
@@ -145,18 +178,21 @@ class CoverDisplayHelper(private val context: Context) {
         return displayId != Display.DEFAULT_DISPLAY && isValid && state in USABLE_COVER_STATES
     }
 
+    /** Formats all displays currently reported by [DisplayManager] for diagnostic logging. */
     fun describeDisplays(): String {
         return displayManager.displays.joinToString(prefix = "[", postfix = "]") { display ->
             "id=${display.displayId},state=${display.state}(${stateName(display.state)}),valid=${display.isValid}"
         }
     }
 
+    /** Formats the current state and validity of [displayId] for diagnostic logging. */
     fun describeDisplayState(displayId: Int?): String {
         val id = displayId ?: return "state=none"
         val display = runCatching { displayManager.getDisplay(id) }.getOrNull() ?: return "id=$id,missing"
         return "id=$id,state=${display.state}(${stateName(display.state)}),valid=${display.isValid}"
     }
 
+    /** Maps [Display] power-state constants to readable names for diagnostic output. */
     private fun stateName(state: Int): String = when (state) {
         Display.STATE_OFF -> "OFF"
         Display.STATE_ON -> "ON"
@@ -169,6 +205,7 @@ class CoverDisplayHelper(private val context: Context) {
     }
 
 
+    /** Starts the periodic main-thread runnable that polls keyguard state every 10 seconds. */
     private fun startLockStatusPolling() {
         if (lockStatusPoller != null) return
 
@@ -184,6 +221,7 @@ class CoverDisplayHelper(private val context: Context) {
         mainHandler.post(poller)
     }
 
+    /** Cancels any pending lock-status polling callbacks on [mainHandler]. */
     private fun stopLockStatusPolling() {
         lockStatusPoller?.let { mainHandler.removeCallbacks(it) }
         lockStatusPoller = null

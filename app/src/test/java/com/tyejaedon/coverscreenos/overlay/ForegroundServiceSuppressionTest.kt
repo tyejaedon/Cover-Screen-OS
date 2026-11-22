@@ -1,12 +1,15 @@
 package com.tyejaedon.coverscreenos.overlay
 
+import android.os.Looper
 import android.os.SystemClock
 import com.tyejaedon.coverscreenos.helpers.CoverDisplayHelper
+import com.tyejaedon.coverscreenos.helpers.CoverFoldPosture
 import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,7 +19,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -165,6 +171,147 @@ class ForegroundServiceSuppressionTest {
 
         assertFalse(state.hasStableResumeSignal("com.sec.android.app.launcher", requiredCount = 2))
         assertEquals(1, state.resumeSignalStableCount)
+    }
+
+    @Test
+    fun `secondary user app above cover home blocks reclaim when launched app closes`() {
+        startSuppression("com.example.first")
+        every { getField<OverlayWindowController>("overlayWindowController").getActiveDisplayId() } returns null
+        every { displayHelper.getCoverDisplayId() } returns 5
+        every {
+            CoverAccessibilityService.inspectDisplayWindowState(5, "com.example.first")
+        } returns CoverAccessibilityService.Companion.CoverWindowSnapshot(
+            hasLaunchedAppWindow = false,
+            hasAnyUserAppWindowAboveHome = true,
+            activeUserAppPackage = "com.google.android.permissioncontroller",
+            coverHomePackage = "com.android.systemui",
+            coverHomeClassName = "com.android.systemui.subscreen.SubHomeActivity"
+        )
+        foregroundPackage = "com.sec.android.app.launcher"
+
+        invoke("maybeResumeOverlayAfterAppLaunch", "poll")
+        invoke("maybeResumeOverlayAfterAppLaunch", "poll")
+
+        assertTrue(state.isOverlaySuppressedForAppLaunch)
+    }
+
+    @Test
+    fun `unfolding device while suppressed for app launch transitions to posture suppression until closed`() {
+        val postureFlow = MutableStateFlow(CoverFoldPosture.CLOSED)
+        every { displayHelper.foldPosture } returns postureFlow
+        startSuppression("com.example.first")
+
+        ForegroundService::class.java.getDeclaredMethod("startFoldPostureObservation").apply {
+            isAccessible = true
+        }.invoke(service)
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+
+        postureFlow.value = CoverFoldPosture.FLAT
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(OverlaySuppressionReason.POSTURE_UNFOLDED, state.suppressionReason)
+
+        foregroundPackage = "com.sec.android.app.launcher"
+        invoke("maybeResumeOverlayAfterAppLaunch", "poll")
+        invoke("maybeResumeOverlayAfterAppLaunch", "poll")
+        assertTrue(state.isOverlaySuppressedForAppLaunch)
+        assertEquals(OverlaySuppressionReason.POSTURE_UNFOLDED, state.suppressionReason)
+
+        postureFlow.value = CoverFoldPosture.CLOSED
+        invoke("maybeResumeOverlayAfterAppLaunch", "poll")
+        assertFalse(state.isOverlaySuppressedForAppLaunch)
+    }
+
+    @Test
+    fun `mid-app incoming call preserves prior app and downgrades back to app launch when call ends`() {
+        startSuppression("com.example.first")
+        state.markSuppressionStarted(
+            packageName = "com.samsung.android.incallui",
+            reason = OverlaySuppressionReason.INCOMING_CALL,
+            nowElapsedMs = SystemClock.elapsedRealtime() - 1_000L
+        )
+        assertEquals("com.example.first", state.priorAppLaunchPackageName)
+
+        // Call ended (no active call passthrough/notification) and pre-call app is in foreground.
+        state.incomingCallPassthroughPackage = null
+        state.callNotificationActive = false
+        foregroundPackage = "com.example.first"
+        foregroundEventAgeMs = 0L
+
+        invoke("maybeResumeOverlayAfterAppLaunch", "poll")
+
+        assertTrue(state.isOverlaySuppressedForAppLaunch)
+        assertEquals(OverlaySuppressionReason.APP_LAUNCH, state.suppressionReason)
+        assertEquals("com.example.first", state.launchSuppressedPackageName)
+        assertEquals(null, state.priorAppLaunchPackageName)
+    }
+
+    @Test
+    fun `poll recovers from sustained generic SystemUI foreground without AOD event`() {
+        startSuppression("com.example.first", elapsedMs = 1_000L)
+        foregroundPackage = "com.android.systemui"
+        every { CoverInputAccessibilityService.currentForegroundClassName() } returns "android.widget.FrameLayout"
+
+        invoke("maybeResumeOverlayAfterAppLaunch", "poll")
+        assertTrue(state.isOverlaySuppressedForAppLaunch)
+
+        ShadowSystemClock.advanceBy(Duration.ofMillis(1_300L))
+        invoke("maybeResumeOverlayAfterAppLaunch", "poll")
+
+        assertFalse(state.isOverlaySuppressedForAppLaunch)
+    }
+
+    @Test
+    fun `requestCoverRecents prioritizes native Recents and opens fallback carousel when rejected`() {
+        mockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        try {
+            every { com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper.hasCoreOverlayPermissions(any()) } returns true
+            every { CoverAccessibilityService.performGlobalRecentsOnActiveService() } returns false
+
+            val tracker = getField<CoverRecentAppsTracker>("recentAppsTracker")
+            val requestMethod = ForegroundService::class.java.getDeclaredMethod(
+                "requestCoverRecentsInternal",
+                Boolean::class.javaPrimitiveType
+            ).apply { isAccessible = true }
+
+            val handled = requestMethod.invoke(service, true) as Boolean
+            assertTrue(handled)
+            assertTrue(tracker.isRecentsSheetVisible.value)
+            assertFalse(state.isOverlaySuppressedForAppLaunch)
+        } finally {
+            unmockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        }
+    }
+
+    @Test
+    fun `requestCoverRecents stays suppressed when native Recents opens and falls back on no-op`() {
+        mockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        try {
+            every { com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper.hasCoreOverlayPermissions(any()) } returns true
+            every { CoverAccessibilityService.performGlobalRecentsOnActiveService() } returns true
+            val tracker = getField<CoverRecentAppsTracker>("recentAppsTracker")
+            val requestMethod = ForegroundService::class.java.getDeclaredMethod(
+                "requestCoverRecentsInternal",
+                Boolean::class.javaPrimitiveType
+            ).apply { isAccessible = true }
+
+            // Native Recents opened cleanly -> overlay stays suppressed and fallback carousel stays closed.
+            every { CoverAccessibilityService.currentForegroundClassName() } returns "com.sec.android.app.launcher.recents.RecentsActivity"
+            requestMethod.invoke(service, true)
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500L))
+            assertTrue(state.isOverlaySuppressedForAppLaunch)
+            assertFalse(tracker.isRecentsSheetVisible.value)
+
+            // Reset suppression, then simulate OEM cover firmware ignoring GLOBAL_ACTION_RECENTS (stuck on SubHomeActivity).
+            state.clearSuppressionState()
+            every { CoverAccessibilityService.currentForegroundClassName() } returns "com.android.systemui.subscreen.SubHomeActivity"
+            requestMethod.invoke(service, true)
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500L))
+            assertFalse(state.isOverlaySuppressedForAppLaunch)
+            assertTrue(tracker.isRecentsSheetVisible.value)
+        } finally {
+            unmockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        }
     }
 
     private fun startSuppression(packageName: String, elapsedMs: Long = 1_000L) {

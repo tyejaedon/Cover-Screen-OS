@@ -70,6 +70,7 @@ import dev.chrisbanes.haze.HazeState
 
 private const val NOTIFICATION_RECENT_WINDOW_MS = 60L * 60L * 1000L // "Now" vs "Earlier" boundary.
 
+// Fade + spring-slide transitions when expanding or collapsing stacked notifications inside an app card.
 private val notificationGroupExpandEnter = fadeIn(animationSpec = tween(180, delayMillis = 50)) +
     expandVertically(
         animationSpec = spring(
@@ -86,11 +87,18 @@ private val notificationGroupExpandExit = fadeOut(animationSpec = tween(120)) +
         )
     )
 
+/**
+ * Groups active notifications originating from a single app (`packageName`), ordered newest-first.
+ */
 private data class NotificationProviderGroup(
     val packageName: String,
     val notifications: List<CoverNotificationModel>
 )
 
+/**
+ * Aggregates flat [notifications] into per-package groups sorted by the most recent `postTime`
+ * both within each app card and across the resulting list of provider groups.
+ */
 private fun groupNotificationsByProvider(notifications: List<CoverNotificationModel>): List<NotificationProviderGroup> {
     return notifications
         .sortedByDescending { it.postTime }
@@ -99,6 +107,7 @@ private fun groupNotificationsByProvider(notifications: List<CoverNotificationMo
         .sortedByDescending { it.notifications.firstOrNull()?.postTime ?: 0L }
 }
 
+/** Pill toggle allowing the user to collapse or expand ongoing/non-clearable notifications. */
 @Composable
 private fun OngoingCollapseToggle(collapseOngoing: Boolean, ongoingCount: Int, onToggle: () -> Unit) {
     val label = if (collapseOngoing) "Show ongoing ($ongoingCount)" else "Hide ongoing"
@@ -131,6 +140,7 @@ private fun OngoingCollapseToggle(collapseOngoing: Boolean, ongoingCount: Int, o
     }
 }
 
+/** Sticky bucket header ("Now" or "Earlier") displayed above grouped notification cards. */
 @Composable
 private fun NotificationSectionHeader(title: String) {
     Box(
@@ -146,6 +156,7 @@ private fun NotificationSectionHeader(title: String) {
     }
 }
 
+/** Action chip that dismisses all clearable notifications via `CoverNotificationListenerService`. */
 @Composable
 private fun NotificationClearAllButton(
     enabled: Boolean,
@@ -168,6 +179,16 @@ private fun NotificationClearAllButton(
     }
 }
 
+/**
+ * Cover-screen notification shade panel rendered inside the overlay.
+ *
+ * Partitions incoming [notifications] into collapsible ongoing items (`isOngoing || !isClearable`)
+ * and dismissible items grouped by source package (`packageName`), then splits clearable groups into
+ * `"Now"` (within [NOTIFICATION_RECENT_WINDOW_MS]) and `"Earlier"` sticky-header sections inside a
+ * `LazyColumn`. Frosted-glass card backgrounds are driven by [hazeState], taps delegate to
+ * [onNotificationOpen] (where the host triggers the notification's action/`PendingIntent`), and
+ * clear-all / swipe-to-dismiss actions call into `CoverNotificationListenerService`.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun NotificationsPanelTile(
@@ -176,20 +197,24 @@ internal fun NotificationsPanelTile(
     modifier: Modifier = Modifier,
     hazeState: HazeState? = null
 ) {
+    // User-controlled toggle that tucks persistent/ongoing cards out of the main scroll list.
     var collapseOngoing by remember { mutableStateOf(false) }
 
+    // Partition incoming alerts into persistent/non-clearable items vs. normal dismissible items.
     val ongoingNotifications = remember(notifications) {
         notifications.filter { it.isOngoing || !it.isClearable }
     }
     val importantNotifications = remember(notifications) {
         notifications.filterNot { it.isOngoing || !it.isClearable }
     }
+    // Group notifications by sender app so multiple messages from one app collapse into one card.
     val ongoingGroupedNotifications = remember(ongoingNotifications) {
         groupNotificationsByProvider(ongoingNotifications)
     }
     val importantGroupedNotifications = remember(importantNotifications) {
         groupNotificationsByProvider(importantNotifications)
     }
+    // Bucket dismissible app groups into "Now" (posted within the last hour) vs. "Earlier".
     val nowGroups = remember(importantGroupedNotifications) {
         importantGroupedNotifications.filter { isRecentGroup(it) }
     }
@@ -305,11 +330,23 @@ internal fun NotificationsPanelTile(
     }
 }
 
+/**
+ * Returns `true` if the newest notification in [group] was posted within [NOTIFICATION_RECENT_WINDOW_MS].
+ */
 private fun isRecentGroup(group: NotificationProviderGroup): Boolean {
     val latestPostTime = group.notifications.maxOfOrNull { it.postTime } ?: return true
     return (System.currentTimeMillis() - latestPostTime) <= NOTIFICATION_RECENT_WINDOW_MS
 }
 
+/**
+ * Grouped notification card for a single source app (`group.packageName`).
+ *
+ * Resolves the app icon and label asynchronously via [rememberPackageIconBitmap] and
+ * [rememberPackageLabel], applies One UI frosted-glass blur via `oneUiPanel(..., hazeState)`,
+ * collapses groups with more than 2 items behind a `"Show N more"` / `"Show less"` toggle,
+ * and routes per-row swipe-to-dismiss gestures to
+ * `CoverNotificationListenerService.dismissNotificationFromOverlay`.
+ */
 @Composable
 private fun NotificationProviderGroupCard(
     group: NotificationProviderGroup,
@@ -318,11 +355,14 @@ private fun NotificationProviderGroupCard(
     hazeState: HazeState? = null
 ) {
     val cardShape = RoundedCornerShape(LocalCoverPanelCornerRadius.current)
+    // App icon and friendly app title resolved off-thread from PackageManager + caches.
     val providerIcon = rememberPackageIconBitmap(group.packageName)
     val providerLabel = rememberPackageLabel(group.packageName)
+    // Whether the user tapped "Show N more" to reveal all alerts beyond the 2-row summary.
     var isExpanded by remember(group.packageName) { mutableStateOf(false) }
     val providerNotifications = group.notifications
 
+    // Show at most 2 alerts per app when collapsed so a busy chat app doesn't hog the screen.
     val visibleNotifications = if (isExpanded || providerNotifications.size <= 2) {
         providerNotifications
     } else {
@@ -436,6 +476,13 @@ private fun NotificationProviderGroupCard(
     }
 }
 
+/**
+ * Single notification item inside [NotificationProviderGroupCard].
+ *
+ * Wraps the row in Material 3's `SwipeToDismissBox` (start-to-end swipe enabled only when
+ * `notification.isClearable` is true, requiring a 60% drag threshold) and invokes [onOpen] on tap
+ * or [onDismiss] once settled in the dismissed state.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NotificationGroupRow(
@@ -443,6 +490,8 @@ private fun NotificationGroupRow(
     onOpen: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    // Require a 60% horizontal drag before committing dismissal to prevent accidental swipes while scrolling.
+    // Tracks the user's horizontal swipe progress and settled/dismissed state for this row.
     val dismissState = rememberSwipeToDismissBoxState(
         initialValue = SwipeToDismissBoxValue.Settled,
         positionalThreshold = { totalDistance -> totalDistance * 0.6f }
@@ -459,6 +508,7 @@ private fun NotificationGroupRow(
         enableDismissFromEndToStart = false,
         enableDismissFromStartToEnd = notification.isClearable,
         backgroundContent = {
+            // Smoothly tints the swipe reveal backdrop red once the drag passes the dismiss threshold.
             val color by animateColorAsState(
                 targetValue = when (dismissState.targetValue) {
                     SwipeToDismissBoxValue.StartToEnd -> CoverOSDestructiveColor.copy(alpha = 0.5f)

@@ -30,11 +30,17 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme
 @Composable
 fun OneUICardGroup(
     modifier: Modifier = Modifier,
+    // Optional group title placed above the card rather than inside it.
     header: String? = null,
+    // Rounded card outline shape; defaults to One UI's 24dp squircle-style curve.
     shape: Shape = OneUITheme.shapes.card,
+    // Card background fill lifted above the outer screen canvas.
     containerColor: Color = OneUITheme.colors.cardSurface,
+    // Default text/icon tint passed down to child elements inside the card.
     contentColor: Color = OneUITheme.colors.textPrimary,
+    // Optional custom border override; null falls back to a crisp 1dp hairline stroke.
     border: BorderStroke? = null,
+    // Inner breathing room between the card border and its child rows.
     internalPadding: Dp = 16.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -42,6 +48,7 @@ fun OneUICardGroup(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.Top
     ) {
+        // Section header sits outside the rounded card container, aligned with the card's internal text column.
         if (!header.isNullOrBlank()) {
             Text(
                 text = header.uppercase(),
@@ -51,6 +58,7 @@ fun OneUICardGroup(
             )
         }
 
+        // Material 3 Surface handles shape clipping, background fill, hairline border, and LocalContentColor propagation.
         Surface(
             shape = shape,
             color = containerColor,
@@ -75,9 +83,12 @@ fun OneUICardGroup(
 @Composable
 fun OneUIInternalDivider(
     modifier: Modifier = Modifier,
+    // Left/right inset matching card padding so the rule lines up neatly with row text.
     indent: Dp = OneUITheme.dimensions.internalDividerIndent,
+    // Subtle translucent line color matching the card's outer hairline stroke.
     color: Color = OneUITheme.colors.hairlineBorder
 ) {
+    // Inset horizontally so dividers align with row content instead of touching the card's rounded border.
     HorizontalDivider(
         modifier = modifier.padding(horizontal = indent),
         thickness = 1.dp,
@@ -85,6 +96,10 @@ fun OneUIInternalDivider(
     )
 }
 
+/**
+ * Dual-mode Android Studio `@Preview` comparing [OneUICardGroup] and [OneUIInternalDivider]
+ * across Light Mode (`UI_MODE_NIGHT_NO`) and OLED Dark Mode (`UI_MODE_NIGHT_YES`).
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable

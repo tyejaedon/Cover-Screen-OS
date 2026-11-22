@@ -24,6 +24,16 @@ import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme
 
+/**
+ * OneUI-styled banner surfaced when missing required permissions limit cover-screen functionality.
+ *
+ * Displays [message], a touch-target-safe `"Review permissions"` action invoking [onPermissions],
+ * and an optional close button when [onDismiss] is supplied.
+ *
+ * @param message Plain-English explanation naming which permissions are still missing.
+ * @param onPermissions Opens the Permissions tab so the user can finish setup.
+ * @param onDismiss Optional callback to hide the notice; when `null`, the close icon is omitted.
+ */
 @Composable
 fun FeatureDegradedNotice(
     message: String,

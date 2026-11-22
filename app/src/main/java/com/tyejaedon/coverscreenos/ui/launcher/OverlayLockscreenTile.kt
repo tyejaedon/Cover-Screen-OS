@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tyejaedon.coverscreenos.models.AppModel
+import com.tyejaedon.coverscreenos.models.CoverMediaTransportAction
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.CompactNowPlayingCard
@@ -68,6 +69,14 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+/**
+ * Primary lockscreen and home page rendered at the center pager slot (`LOCK_PAGER_PAGE_INDEX`).
+ *
+ * Combines the top lock/battery status bar, highlighted notification badges, clock/date readout,
+ * search/widget trigger button, compact media card, optional One UI dock row, and an expandable
+ * modal [ExpandedNowPlayingPanel] routed to [CoverNotificationListenerService] media transport
+ * controls.
+ */
 @Composable
 internal fun LockAndDockTile(
     notifications: List<CoverNotificationModel>,
@@ -87,9 +96,11 @@ internal fun LockAndDockTile(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    // Pick the most recent active media session to drive both the compact card and expanded panel.
     val mediaNotification = remember(notifications) {
         notifications.filter { it.isMediaNotification }.maxByOrNull { it.postTime }
     }
+    // Reset expanded state whenever the active media session changes or disappears.
     var showExpandedMedia by remember(mediaNotification?.notificationKey) { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -204,10 +215,10 @@ internal fun LockAndDockTile(
                     media.packageName
                 )
             },
-            onAction = { media, actionLabel ->
-                CoverNotificationListenerService.performNotificationAction(
+            onAction = { media, action ->
+                CoverNotificationListenerService.performMediaTransportAction(
                     media.notificationKey,
-                    actionLabel
+                    action
                 )
             },
             onOpenNotification = { media ->
@@ -218,6 +229,7 @@ internal fun LockAndDockTile(
     }
 }
 
+/** Closed-loop RGB gradient stops forming the subtle glowing rim around the search affordance chip. */
 private val LOCK_PILL_DIM_RGB_COLORS = listOf(
     Color(0xFFD66A78),
     Color(0xFF5BB58B),
@@ -226,12 +238,18 @@ private val LOCK_PILL_DIM_RGB_COLORS = listOf(
     Color(0xFFD66A78)
 )
 
+/**
+ * Draws a subtle two-pass RGB gradient halo and crisp inner rim behind a chip via [drawBehind].
+ */
 private fun Modifier.dimRgbGlow(): Modifier = this.drawBehind {
+    // Base chip corner radius and diagonal gradient endpoints spanning the chip bounds.
     val cornerPx = CoverOneUITokens.radiusChip.toPx()
     val start = Offset(0f, 0f)
     val end = Offset(size.width, size.height)
+    // Alpha-attenuated stop palettes for the diffused outer halo and crisper inner border.
     val outerColors = LOCK_PILL_DIM_RGB_COLORS.map { it.copy(alpha = 0.16f) }
     val innerColors = LOCK_PILL_DIM_RGB_COLORS.map { it.copy(alpha = 0.34f) }
+    // Soft outer halo stroke followed by a tighter, brighter inner rim stroke.
     val outerExpandPx = 3.dp.toPx()
     drawRoundRect(
         brush = Brush.linearGradient(colors = outerColors, start = start, end = end),
@@ -240,6 +258,7 @@ private fun Modifier.dimRgbGlow(): Modifier = this.drawBehind {
         cornerRadius = CornerRadius(cornerPx + outerExpandPx, cornerPx + outerExpandPx),
         style = Stroke(width = 3.dp.toPx())
     )
+    // Slight inset expansion for the thin inner rim stroke around the chip edge.
     val borderExpandPx = 0.75.dp.toPx()
     drawRoundRect(
         brush = Brush.linearGradient(colors = innerColors, start = start, end = end),
@@ -250,6 +269,10 @@ private fun Modifier.dimRgbGlow(): Modifier = this.drawBehind {
     )
 }
 
+/**
+ * Interactive lock indicator chip shown when the cover display is locked; tapping invokes
+ * [onClick] to request device unlock.
+ */
 @Composable
 private fun LockStatusPill(isDeviceLocked: Boolean, minHeight: Dp, onClick: () -> Unit) {
     Box(
@@ -298,17 +321,29 @@ private fun SearchAffordanceButton(onClick: () -> Unit, minHeight: Dp, modifier:
     }
 }
 
+/** Maximum ongoing alert icon badges (e.g., active call or timer) shown above the lockscreen clock. */
 private const val MAX_LOCK_ONGOING_HIGHLIGHTS = 1
+
+/** Maximum standard (non-ongoing) recent notification icon badges shown alongside ongoing highlights. */
 private const val MAX_LOCK_NORMAL_HIGHLIGHTS = 2
 
+/** SystemUI package names excluded so OS status chrome notifications never occupy highlight badges. */
 private val LOCK_HIGHLIGHT_BANNED_PACKAGES = setOf(
     "com.android.systemui",
     "com.samsung.systemui"
 )
 
+/**
+ * Filters active notifications down to prioritized lockscreen highlight badges.
+ *
+ * Excludes media sessions and SystemUI noise, then returns up to [MAX_LOCK_ONGOING_HIGHLIGHTS]
+ * ongoing notification (e.g., active calls/timers) followed by up to [MAX_LOCK_NORMAL_HIGHLIGHTS]
+ * newest standard notifications deduplicated by package name.
+ */
 internal fun selectLockHighlightNotifications(
     notifications: List<CoverNotificationModel>
 ): List<CoverNotificationModel> {
+    // Strip media sessions (handled by CompactNowPlayingCard) and SystemUI noise notifications.
     val eligible = notifications.filterNot { model ->
         val pkg = model.packageName.trim().lowercase(Locale.ROOT)
         model.isMediaNotification ||
@@ -316,10 +351,12 @@ internal fun selectLockHighlightNotifications(
             pkg.startsWith("com.android.systemui.") ||
             pkg.startsWith("com.samsung.systemui.")
     }
+    // Highest-priority ongoing alert (e.g., live call/timer) ordered newest-first.
     val ongoing = eligible
         .filter { it.isOngoing }
         .sortedByDescending { it.postTime }
         .take(MAX_LOCK_ONGOING_HIGHLIGHTS)
+    // Up to two newest standard notifications deduplicated to one icon badge per source app.
     val normal = eligible
         .filterNot { it.isOngoing }
         .sortedByDescending { it.postTime }
@@ -328,12 +365,17 @@ internal fun selectLockHighlightNotifications(
     return ongoing + normal
 }
 
+/**
+ * Row of circular app-icon badges rendered above the lockscreen clock for high-priority
+ * ongoing and recent notifications; tapping a badge dispatches [onNotificationOpen].
+ */
 @Composable
 private fun LockTopNotificationHighlights(
     notifications: List<CoverNotificationModel>,
     onNotificationOpen: (CoverNotificationModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Remembered prioritized subset of notifications displayed as icon badges above the clock.
     val highlightNotifications = remember(notifications) {
         selectLockHighlightNotifications(notifications)
     }
@@ -345,7 +387,9 @@ private fun LockTopNotificationHighlights(
         verticalAlignment = Alignment.CenterVertically
     ) {
         highlightNotifications.forEach { notification ->
+            // Cached app icon bitmap for this notification badge, loaded off the memory/disk cache.
             val iconBitmap = rememberPackageIconBitmap(notification.packageName)
+            // Call-active accent fill distinguishes ongoing alerts from translucent standard alert pills.
             val badgeColor = if (notification.isOngoing) {
                 CoverOSCallActiveColor.copy(alpha = 0.6f)
             } else {
@@ -373,6 +417,8 @@ private fun LockTopNotificationHighlights(
     }
 }
 
+/** Returns the formatted local wall-clock time string (`h:mm a`) for the lockscreen clock. */
 internal fun currentCoverTime(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
 
+/** Returns the formatted short local date string (`EEE, MMM d`) shown beneath the lockscreen clock. */
 internal fun currentCoverDate(): String = LocalDate.now().format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()))

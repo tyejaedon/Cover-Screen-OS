@@ -148,27 +148,36 @@ fun CoverFlorisKeyboardSurface(
 ) {
     val context = LocalContext.current
     val config = LocalConfiguration.current
+    // Cover display height in dp, used with ClamshellLayoutSpec to cap total keyboard height.
     val screenHeightDp = config.screenHeightDp.dp
     val view = LocalView.current
     val density = LocalDensity.current
+    // Hardware vibrator cached once for key-tap feedback when no custom haptic override is provided.
     val vibrator = remember(context) { context.getSystemService(Vibrator::class.java) }
     val themePalette = customization.themePalette
 
+    // Current layout mode displayed on screen (QWERTY, T9, Symbols, etc.), synced with initialMode.
     var activeMode by remember { mutableStateOf(initialMode) }
     LaunchedEffect(initialMode) {
         activeMode = initialMode
     }
 
+    // Current letter casing state and timestamp of the last Shift tap (for 350ms double-tap Caps Lock).
     var shiftState by remember { mutableStateOf(CoverShiftState.LOWERCASE) }
     var lastShiftTapMs by remember { mutableLongStateOf(-1000L) }
+    // Local fallback state holders used only when the host leaves customization callbacks null.
     var localDockAnchor by remember { mutableStateOf(customization.dockAnchor) }
     var localOneHanded by remember { mutableStateOf(customization.oneHandedEnabled) }
     var localExtraHeightDp by remember { mutableFloatStateOf(customization.extraHeightDp) }
     var localT9Predictive by remember { mutableStateOf(customization.isT9Predictive) }
+    // Mirror of typed text used for auto-caps/autocorrect when the host does not pass textBeforeCursor.
     var internalBuffer by remember { mutableStateOf("") }
+    // Snapshot of text erased by Clear so a follow-up tap can undo the clear if the field is still empty.
     var lastClearedText by remember { mutableStateOf<String?>(null) }
+    // Live finger points sampled during a QWERTY swipe gesture to draw the glowing glide trail.
     var activeGlideTrail by remember { mutableStateOf<List<Offset>>(emptyList()) }
 
+    // Resolve controlled (host-persisted) vs. local (uncontrolled) settings for resize, one-handed, and T9.
     val effectiveExtraHeightDp = if (customization.onExtraHeightChanged != null) {
         customization.extraHeightDp
     } else {
@@ -190,6 +199,7 @@ fun CoverFlorisKeyboardSurface(
         localT9Predictive
     }
 
+    // Coordinator handling T9 digit sequences, multi-tap timing, autocorrect, and glide decoding.
     val inputManager = remember(bridge) {
         FlorisTextInputManager(
             bridge = bridge,
@@ -207,7 +217,9 @@ fun CoverFlorisKeyboardSurface(
         inputManager.setLayoutMode(activeMode)
     }
 
+    // Host-supplied text takes priority over internalBuffer for auto-cap and autocorrect lookbacks.
     val effectiveBeforeCursor = textBeforeCursor ?: internalBuffer
+    // Auto-capitalize at the start of a field or immediately after sentence-ending punctuation.
     val autoCapActive = remember(effectiveBeforeCursor, shiftState, activeMode) {
         activeMode == CoverLayoutMode.QWERTY &&
             shiftState == CoverShiftState.LOWERCASE &&
@@ -215,6 +227,7 @@ fun CoverFlorisKeyboardSurface(
     }
     val effectiveShiftState = if (autoCapActive) CoverShiftState.SINGLE_SHIFT else shiftState
 
+    // Key rows rebuilt only when layout mode, shift state, or structural options change.
     val currentRows = remember(
         activeMode,
         effectiveShiftState,
@@ -243,6 +256,7 @@ fun CoverFlorisKeyboardSurface(
         }
     }
 
+    // Clamped height per key row based on screen budget, row count, and drag-resize offset.
     val effectiveRowHeight = remember(screenHeightDp, currentRows.size, effectiveExtraHeightDp) {
         val spec = layoutSpec.copy(extraHeightDp = effectiveExtraHeightDp)
         spec.calculateRowHeight(screenHeightDp, currentRows.size)
@@ -407,6 +421,8 @@ fun CoverFlorisKeyboardSurface(
                             inputManager.resetT9Composing()
                         }
                     } else null,
+                    isVoiceInputActive = customization.isVoiceInputActive,
+                    onVoiceInputToggle = customization.onVoiceInputToggle,
                     onDismissRequest = onDismissRequest,
                     onHaptic = ::performFeedback,
                     themePalette = themePalette,
@@ -417,8 +433,10 @@ fun CoverFlorisKeyboardSurface(
                 clipboardHistoryContent?.invoke()
 
                 // 2. Keyboard Key Rows + Interactive Glide-Typing Trail Overlay
+                // Total vertical budget reserved for all key rows plus inter-row spacing.
                 val maxRowsHeight = effectiveRowHeight * currentRows.size +
                     layoutSpec.rowSpacingDp * (currentRows.size - 1).coerceAtLeast(0)
+                // Swipe-to-type is active only on QWERTY when the host supplies a DTWGlideDecoder.
                 val glideEnabled = activeMode == CoverLayoutMode.QWERTY && glideDecoder != null
 
                 Box(
@@ -446,8 +464,11 @@ fun CoverFlorisKeyboardSurface(
                                     return@awaitEachGesture
                                 }
 
+                                // Recorded finger path samples for both DTW decoding and visual trail rendering.
                                 val sampledPoints = mutableListOf(down.position)
+                                // Require sliding ~1.15 key widths before switching from tap to glide mode.
                                 val glideThresholdPx = (w / 10f) * 1.15f
+                                // True once the finger crosses glideThresholdPx and claims the gesture.
                                 var isGliding = false
                                 var active = true
 
@@ -462,6 +483,7 @@ fun CoverFlorisKeyboardSurface(
                                             val decoded = inputManager.handleGlideGesture(normalized)
                                             val topWord = decoded.firstOrNull()?.word
                                             if (topWord != null) {
+                                                // Mirror space-separated word commit into the local fallback buffer.
                                                 internalBuffer = if (internalBuffer.isNotEmpty() && !internalBuffer.last().isWhitespace()) {
                                                     "$internalBuffer $topWord"
                                                 } else {
@@ -482,10 +504,12 @@ fun CoverFlorisKeyboardSurface(
                                         }
                                         if (isGliding) {
                                             val lastPt = sampledPoints.last()
+                                            // Downsample points spaced at least 4px apart to keep DTW fast.
                                             if (hypot(pos.x - lastPt.x, pos.y - lastPt.y) >= 4f) {
                                                 sampledPoints.add(pos)
                                                 activeGlideTrail = sampledPoints.toList()
                                             }
+                                            // Consume move events once gliding so individual keys abort their tap.
                                             change.consume()
                                         }
                                     }
@@ -713,22 +737,28 @@ private fun RowScope.CoverKeyView(
     onPopupOptionSelected: (String) -> Unit,
     onMoveCursor: ((Int) -> Unit)? = null
 ) {
+    // True while the user's finger is touching inside (or dragging from) this key.
     var isPressed by remember { mutableStateOf(false) }
+    // Controls visibility of the long-press alternate character strip (e.g. accented letters).
     var popupMenuExpanded by remember { mutableStateOf(false) }
+    // Running horizontal pixel counter on Spacebar; emits one cursor step per 24dp dragged.
     var cursorDragPixels by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
 
+    // Fresh callback holders so pointerInput coroutines always call the latest lambdas without restarting.
     val onActionState = rememberUpdatedState(onAction)
     val onLongPressState = rememberUpdatedState(onLongPressAction)
     val onFeedbackState = rememberUpdatedState(onFeedback)
     val onMoveCursorState = rememberUpdatedState(onMoveCursor)
 
+    // Pre-classified action flags used to wire special gestures (repeat delete, space scrub, Enter icon).
     val isBackspace = item.action == CoverKeyAction.Backspace
     val isSpace = item.action == CoverKeyAction.Space
     val isEnter = item.action == CoverKeyAction.Enter
     val isShift = item.action == CoverKeyAction.Shift
     val isClear = item.action == CoverKeyAction.ClearOrUndo
 
+    // Match the Enter key icon and TalkBack description to the target text box's IME action.
     val (enterIcon, enterDescription) = remember(imeOptions) {
         when (imeOptions and EditorInfo.IME_MASK_ACTION) {
             EditorInfo.IME_ACTION_SEARCH -> Icons.Rounded.Search to "Search"
@@ -740,6 +770,7 @@ private fun RowScope.CoverKeyView(
         }
     }
 
+    // Vector glyph shown instead of text for Backspace, Clear, and Enter keys.
     val iconVector: ImageVector? = when {
         isBackspace -> Icons.AutoMirrored.Rounded.Backspace
         isClear -> Icons.Rounded.Clear
@@ -747,6 +778,7 @@ private fun RowScope.CoverKeyView(
         else -> null
     }
 
+    // Spoken label announced by accessibility services such as TalkBack.
     val accessibleDescription = when {
         isBackspace -> "Backspace"
         isSpace -> "Space"
@@ -756,6 +788,7 @@ private fun RowScope.CoverKeyView(
         else -> item.primaryLabel
     }
 
+    // Visual styling tokens computed for resting, pressed, Shift-active, and Caps-Lock states.
     val isShiftActive = isShift && shiftState != CoverShiftState.LOWERCASE
     val isShiftLocked = isShift && shiftState == CoverShiftState.CAPS_LOCK
     val idleBg = when {
@@ -773,8 +806,10 @@ private fun RowScope.CoverKeyView(
         item.isFunctional -> themePalette.functionalKeyForeground
         else -> themePalette.keyForeground
     }
+    // Subtle 4% shrink on press for tactile key-cap depth.
     val keyScale = if (isPressed) 0.96f else 1f
 
+    // Enables the 400ms long-press coroutine only on keys that actually support a secondary action.
     val hasLongPress = isClear || item.popupSet.main != null || item.popupOptions.isNotEmpty()
     val keyShape = RoundedCornerShape(6.dp)
 
@@ -808,12 +843,14 @@ private fun RowScope.CoverKeyView(
                     val down = awaitFirstDown(requireUnconsumed = false)
                     isPressed = true
                     onFeedbackState.value()
+                    // Gesture-phase flags: long-press consumed, horizontal drag started, or finger lifted.
                     var held = false
                     var dragged = false
                     var released = false
                     var lastX = down.position.x
                     cursorDragPixels = 0f
 
+                    // Background timer driving repeat-backspace (350ms delay, 60ms ticks) or 400ms long-press popups.
                     val holdJob: Job? = if (isBackspace || hasLongPress) {
                         scope.launch {
                             if (isBackspace) {
@@ -846,6 +883,7 @@ private fun RowScope.CoverKeyView(
                                 !pointer.isConsumed &&
                                 pointer.position.x in 0f..size.width.toFloat() &&
                                 pointer.position.y in 0f..size.height.toFloat()
+                            // Only emit tap if the finger lifted inside key bounds and wasn't claimed by glide/drag.
                             val wasTap = inBoundsOnRelease && pointer.previousPressed
                             isPressed = false
                             holdJob?.cancel()
@@ -856,6 +894,7 @@ private fun RowScope.CoverKeyView(
                             val inBounds = pointer.position.x in 0f..size.width.toFloat() &&
                                 pointer.position.y in 0f..size.height.toFloat()
                             if (isBackspace || isSpace) {
+                                // Horizontal drag beyond 24px triggers Backspace swipe-delete-word or Spacebar cursor scrub.
                                 val totalDx = pointer.position.x - down.position.x
                                 if (abs(totalDx) >= 24f) {
                                     if (!dragged && isBackspace && totalDx < 0f) {
@@ -866,6 +905,7 @@ private fun RowScope.CoverKeyView(
                                     if (isSpace) {
                                         val deltaX = pointer.position.x - lastX
                                         cursorDragPixels += deltaX
+                                        // Emit 1 cursor character step for each 24dp dragged left/right.
                                         val stepPx = with(density) { 24.dp.toPx() }
                                         val chars = (cursorDragPixels / stepPx).roundToInt()
                                         if (chars != 0) {
@@ -973,12 +1013,18 @@ private fun RowScope.CoverKeyView(
     }
 }
 
+/**
+ * Vector canvas drawing the Shift arrow icon across lowercase (outline), single-shift
+ * (filled arrow), and Caps Lock (filled arrow + bottom lock bar) states.
+ */
 @Composable
 private fun ShiftKeyIcon(shiftState: CoverShiftState, tint: Color) {
     Canvas(modifier = Modifier.size(16.dp)) {
         val w = size.width
         val h = size.height
+        // Fill the arrow interior whenever shift or Caps Lock is engaged.
         val isFilled = shiftState != CoverShiftState.LOWERCASE
+        // Shorten the arrow stem slightly in Caps Lock to leave room for the underline lock bar.
         val arrowBottom = if (shiftState == CoverShiftState.CAPS_LOCK) h * 0.76f else h * 0.88f
         val path = Path().apply {
             moveTo(w * 0.5f, h * 0.12f)

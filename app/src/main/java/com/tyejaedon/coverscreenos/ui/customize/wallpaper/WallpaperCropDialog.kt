@@ -68,8 +68,12 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Computes the next normalized (cropX, cropY) after a pan gesture in pixels,
- * matching the exact scaling math used by WallpaperTransformFrame.
+ * Computes the next normalized `(cropX, cropY)` in `[-1f, 1f]` after a pan gesture in pixels,
+ * matching the exact scaling math used by `WallpaperTransformFrame`.
+ *
+ * Accounts for 90-degree [rotation] swaps, [WallpaperScaleMode.CROP] vs [WallpaperScaleMode.FIT]
+ * base scale, and [zoom] to determine the maximum pannable overflow along each axis. Returns `0f`
+ * along any axis whose scaled media dimension fits within the container (`maxPan <= 0.5f`).
  */
 internal fun computeNextWallpaperCrop(
     currentCropX: Float,
@@ -84,22 +88,29 @@ internal fun computeNextWallpaperCrop(
     zoom: Float,
     rotation: Int
 ): Pair<Float, Float> {
+    // Clamp viewport size to at least 1 px to guard against division by zero prior to initial layout.
     val widthPx = containerWidthPx.coerceAtLeast(1f)
     val heightPx = containerHeightPx.coerceAtLeast(1f)
+    // Swap source dimensions when rotated 90 or 270 degrees before computing aspect scaling.
     val rotatedWidth = if (rotation % 180 == 0) sourceWidth else sourceHeight
     val rotatedHeight = if (rotation % 180 == 0) sourceHeight else sourceWidth
+    // Ratio along each axis needed for the rotated media to match the container width or height.
     val widthScale = widthPx / rotatedWidth.coerceAtLeast(1)
     val heightScale = heightPx / rotatedHeight.coerceAtLeast(1)
+    // CROP fills the entire frame (max ratio); FIT keeps the whole image visible inside it (min ratio).
     val baseScale = if (scaleMode == WallpaperScaleMode.CROP) {
         max(widthScale, heightScale)
     } else {
         min(widthScale, heightScale)
     }
+    // Actual rendered pixel dimensions of the media after base scale and user pinch zoom.
     val scaledWidth = rotatedWidth * baseScale * zoom
     val scaledHeight = rotatedHeight * baseScale * zoom
+    // Half of the overflow beyond the viewport equals the maximum pixel travel for normalized [-1, 1] crop.
     val maxPanX = ((scaledWidth - widthPx) / 2f)
     val maxPanY = ((scaledHeight - heightPx) / 2f)
 
+    // Convert pixel drag deltas into normalized [-1f..1f] crop coordinates, locking axes with no overflow to 0.
     val nextX = if (maxPanX > 0.5f) {
         (currentCropX + panDeltaX / maxPanX).coerceIn(MIN_WALLPAPER_CROP_OFFSET, MAX_WALLPAPER_CROP_OFFSET)
     } else {
@@ -113,6 +124,13 @@ internal fun computeNextWallpaperCrop(
     return nextX to nextY
 }
 
+/**
+ * Full-screen interactive crop, zoom, scale-mode, and 90-degree rotation editor for cover wallpapers.
+ *
+ * Hosts a viewport locked to [coverAspectRatio] inside a Compose [Dialog], rendering live media via
+ * [WallpaperMediaContent] with a rule-of-thirds [Canvas] grid and [detectTransformGestures]
+ * pinch/pan handling. Draft changes are committed via [onApply] or discarded via [onDismiss].
+ */
 @Composable
 internal fun WallpaperCropDialog(
     uri: Uri,
@@ -132,14 +150,17 @@ internal fun WallpaperCropDialog(
         rotation: Int
     ) -> Unit
 ) {
+    // Local in-dialog transform drafts let the user pinch, pan, rotate, or Reset without saving until Apply.
     var draftScaleMode by remember { mutableStateOf(initialScaleMode) }
     var draftCropX by remember { mutableFloatStateOf(initialCropX) }
     var draftCropY by remember { mutableFloatStateOf(initialCropY) }
     var draftZoom by remember { mutableFloatStateOf(initialZoom.coerceIn(MIN_WALLPAPER_ZOOM, MAX_WALLPAPER_ZOOM)) }
     var draftRotation by remember { mutableIntStateOf(initialRotation) }
 
+    // True on short screens (like cover displays) to tighten bars and hide the bottom gesture hint pill.
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
 
+    // Use full-screen dialog bounds so pinch/pan gestures have maximum room even on small screens.
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -202,6 +223,7 @@ internal fun WallpaperCropDialog(
                     .fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
+                // Fit the cover-screen aspect ratio frame maximally within available stage constraints.
                 val frameModifier = if (maxWidth / maxHeight.coerceAtLeast(1.dp) > coverAspectRatio) {
                     Modifier.fillMaxHeight().aspectRatio(coverAspectRatio)
                 } else {
@@ -213,6 +235,7 @@ internal fun WallpaperCropDialog(
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color.Black)
                         .border(1.5.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(14.dp))
+                        // Re-key gesture math when framing mode, rotation, or frame dimensions change.
                         .pointerInput(draftScaleMode, draftRotation, frame.width, frame.height) {
                             detectTransformGestures { _, pan, zoomChange, _ ->
                                 val nextZoom = (draftZoom * zoomChange)
@@ -251,6 +274,7 @@ internal fun WallpaperCropDialog(
 
                     // Subtle rule-of-thirds crop grid
                     Canvas(modifier = Modifier.fillMaxSize()) {
+                        // Semi-transparent lines and 1/3 step sizes splitting the crop box into a 3x3 photography grid.
                         val gridColor = Color.White.copy(alpha = 0.25f)
                         val stroke = 1.dp.toPx()
                         val thirdW = size.width / 3f
@@ -300,6 +324,7 @@ internal fun WallpaperCropDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // Zoom multiplier rounded to one decimal place for the readout badge (e.g., "1.5x").
                     val displayZoom = (draftZoom * 10f).roundToInt() / 10f
                     Text(
                         text = "${displayZoom}x",

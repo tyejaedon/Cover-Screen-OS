@@ -47,6 +47,13 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUIPressable
 import kotlin.math.roundToInt
 
+/**
+ * Navigation destination metadata displayed inside [OneUIFloatingNavBar].
+ *
+ * @property route Unique navigation route key matched against `selectedRoute`.
+ * @property title Short tab label rendered below the icon (ellipsized to 1 line).
+ * @property icon Material/custom [ImageVector] shown in the tab slot.
+ */
 data class OneUINavItem(
     val route: String,
     val title: String,
@@ -67,12 +74,19 @@ fun OneUIFloatingNavBar(
     onItemSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // 0-based slot index of the currently active tab; defaults to the first tab if no route matches.
     val selectedIndex = items.indexOfFirst { it.route == selectedRoute }.coerceAtLeast(0)
+    // Total tab count clamped >= 1 so dividing the bar width never causes division by zero.
     val itemCount = items.size.coerceAtLeast(1)
+    // True when hosted on a short cover display (<= 480dp tall) so the bar trims height and padding.
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
+    // Adaptive bar height (52dp compact cover vs 60dp standard phone).
     val barHeight = if (isCompactHeight) 52.dp else OneUITheme.dimensions.floatingNavHeight
+    // Outer horizontal inset keeping the floating pill centered away from screen corners.
     val outerHorizontalPadding = if (isCompactHeight) 12.dp else 24.dp
+    // Tab icon size scaled slightly down on compact displays to preserve vertical breathing room.
     val iconSize = if (isCompactHeight) 20.dp else 22.dp
+    // Tab caption font size paired with iconSize so labels stay legible without wrapping.
     val labelSize = if (isCompactHeight) 10.sp else 11.sp
 
     Surface(
@@ -85,10 +99,14 @@ fun OneUIFloatingNavBar(
             .padding(horizontal = outerHorizontalPadding)
             .fillMaxWidth()
     ) {
+        // BoxWithConstraints exposes measured inner width so each tab slot and the sliding pill share exact geometry.
         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 6.dp)) {
+            // Equal width allotted to each navigation tab slot inside the pill container.
             val itemWidth = maxWidth / itemCount
+            // Destination horizontal X coordinate (in Dp) for the active tab's highlight pill.
             val targetOffset = itemWidth * selectedIndex
 
+            // Smooth spring-animated X offset (in raw dp Float) gliding the highlight pill between tabs.
             val animatedOffset by animateFloatAsState(
                 targetValue = targetOffset.value,
                 animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f),
@@ -96,6 +114,7 @@ fun OneUIFloatingNavBar(
             )
 
             // Tactile Sliding Pill Indicator
+            // Lambda-based offset defers pixel translation to the layout placement phase, avoiding recompositions per frame.
             Box(
                 modifier = Modifier
                     .offset { IntOffset(x = (animatedOffset * density).roundToInt(), y = 0) }
@@ -112,7 +131,9 @@ fun OneUIFloatingNavBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 items.forEachIndexed { index, item ->
+                    // True when this tab corresponds to the active destination.
                     val isSelected = index == selectedIndex
+                    // Per-tab touch tracker linking press scale feedback (oneUIPressable) with tap clicks.
                     val interactionSource = remember { MutableInteractionSource() }
 
                     Column(
@@ -122,6 +143,7 @@ fun OneUIFloatingNavBar(
                             .weight(1f)
                             .fillMaxHeight()
                             .clip(CircleShape)
+                            // Suppress Material ripple (indication = null) in favor of One UI tactile press scaling.
                             .oneUIPressable(interactionSource = interactionSource)
                             .clickable(
                                 interactionSource = interactionSource,
@@ -151,6 +173,10 @@ fun OneUIFloatingNavBar(
     }
 }
 
+/**
+ * Dual-mode `@Preview` verifying [OneUIFloatingNavBar] pill elevation, hairline border,
+ * and active tab indicator across Light and OLED Dark themes.
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable

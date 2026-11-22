@@ -5,15 +5,27 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.tyejaedon.coverscreenos.overlay.ForegroundService
 
+/**
+ * Facade for permission-gated lifecycle control of [ForegroundService].
+ *
+ * Ensures the persistent foreground service is only started once all critical permissions
+ * (notification posting, accessibility overlay service, notification listener, and battery
+ * optimization exemption) are granted.
+ */
 object ForegroundServiceHelper {
 
+    // Logcat tag used when skipping a service start because permissions aren't ready yet.
     private const val LOG_TAG = "ForegroundServiceHelper"
 
-    // Returns true when foreground notification posting is allowed.
+    /** Returns true when foreground notification posting (`POST_NOTIFICATIONS`) is allowed. */
     fun hasNotificationPermission(context: Context): Boolean {
         return AppPermissionHelper.hasNotificationPermission(context)
     }
 
+    /**
+     * Returns true when all mandatory permissions and special system accesses required for the
+     * cover-screen overlay runtime are enabled.
+     */
     fun hasCoreOverlayPermissions(context: Context): Boolean {
         return hasNotificationPermission(context) &&
             AppPermissionHelper.isAccessibilityServiceEnabled(context) &&
@@ -21,8 +33,14 @@ object ForegroundServiceHelper {
             AppPermissionHelper.isBatteryOptimizationDisabled(context)
     }
 
-    // Starts the foreground service using the canonical start intent.
+    /**
+     * Starts the foreground service using the canonical start intent via
+     * [ContextCompat.startForegroundService] if [hasCoreOverlayPermissions] passes.
+     *
+     * Uses `applicationContext` to prevent leaking short-lived UI contexts.
+     */
     fun startForegroundService(context: Context): Boolean {
+        // Application-scoped context avoids holding onto a short-lived screen/Activity across service calls.
         val appContext = context.applicationContext
         if (!hasCoreOverlayPermissions(appContext)) {
             Log.w(LOG_TAG, "Foreground service start skipped: required permissions are missing.")
@@ -35,12 +53,14 @@ object ForegroundServiceHelper {
         return true
     }
 
-    // Sends a stop command so the service can shut itself down cleanly.
+    /** Sends a stop command so the service can shut itself down cleanly. */
     fun stopForegroundService(context: Context) {
+        // Application-scoped context keeps service shutdown decoupled from any caller UI lifecycle.
         val appContext = context.applicationContext
         appContext.startService(ForegroundService.createStopIntent(appContext))
     }
 
+    /** Returns true when [ForegroundService] reports an active runtime instance. */
     fun isForegroundServiceRunning(): Boolean {
         return ForegroundService.isServiceRuntimeActive()
     }

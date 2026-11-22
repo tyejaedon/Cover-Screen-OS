@@ -70,11 +70,21 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUIInternalDivide
 import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUIScaffold
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUIPressable
 
+// Log tag used when an OEM device fails to resolve a System Settings Intent.
 private const val LOG_TAG = "PermissionsScreen"
 
+/**
+ * Categorizes permissions into onboarding priority tiers shown as distinct cards.
+ */
 internal enum class PermissionGroup { REQUIRED, RECOMMENDED, OPTIONAL }
 
-internal enum class PermissionId(val group: PermissionGroup) {
+/**
+ * Identifiers for every runtime permission and special system access tracked by [PermissionsScreen].
+ */
+internal enum class PermissionId(
+    /** Priority section under which this permission appears in the onboarding list. */
+    val group: PermissionGroup
+) {
     NOTIFICATIONS(PermissionGroup.REQUIRED),
     LAUNCHER_ACCESSIBILITY(PermissionGroup.REQUIRED),
     NOTIFICATION_LISTENER(PermissionGroup.REQUIRED),
@@ -85,16 +95,28 @@ internal enum class PermissionId(val group: PermissionGroup) {
     BLUETOOTH(PermissionGroup.OPTIONAL)
 }
 
+/**
+ * Complete snapshot of all permission and special-access grant states evaluated by [PermissionsScreen].
+ */
 internal data class PermissionGrants(
+    /** Required (Android 13+) to keep the foreground cover service notification visible. */
     val notifications: Boolean,
+    /** Required so the cover launcher AccessibilityService can host the outer-display overlay. */
     val launcherAccessibility: Boolean,
+    /** Required to receive active notifications and media metadata for cover-screen display. */
     val notificationListener: Boolean,
+    /** Required to prevent Android from throttling or killing the background cover service. */
     val batteryExemption: Boolean,
+    /** Recommended so cover-screen keyboard fallback and text injection work reliably. */
     val inputAccessibility: Boolean,
+    /** Optional gallery/photo read access for custom wallpaper imports. */
     val media: Boolean,
+    /** Optional audio recording access for voice search on the cover screen. */
     val microphone: Boolean,
+    /** Optional Bluetooth Connect access for Quick Settings Bluetooth status and toggling. */
     val bluetooth: Boolean
 ) {
+    /** Looks up the grant status corresponding to [id]. */
     fun granted(id: PermissionId): Boolean = when (id) {
         PermissionId.NOTIFICATIONS -> notifications
         PermissionId.LAUNCHER_ACCESSIBILITY -> launcherAccessibility
@@ -106,15 +128,19 @@ internal data class PermissionGrants(
         PermissionId.BLUETOOTH -> bluetooth
     }
 
+    /** `true` if any [PermissionGroup.REQUIRED] capability is still missing. */
     val requiredMissing: Boolean get() = PermissionId.entries.any {
         it.group == PermissionGroup.REQUIRED && !granted(it)
     }
+
+    /** Percentage (`0..100`) of [PermissionGroup.REQUIRED] and [PermissionGroup.RECOMMENDED] grants enabled. */
     val healthPercent: Int get() {
         val counted = PermissionId.entries.filter { it.group != PermissionGroup.OPTIONAL }
         return counted.count(::granted) * 100 / counted.size
     }
 
     companion object {
+        /** Reads live grant status across runtime permissions and system settings via [AppPermissionHelper]. */
         fun read(context: Context): PermissionGrants = PermissionGrants(
             notifications = AppPermissionHelper.hasNotificationPermission(context),
             launcherAccessibility = AppPermissionHelper.isAccessibilityServiceEnabled(context),
@@ -128,6 +154,9 @@ internal data class PermissionGrants(
     }
 }
 
+/**
+ * UI display model for a single interactive row in [PermissionsScreen].
+ */
 internal data class PermissionRowModel(
     val id: PermissionId,
     val title: String,
@@ -137,21 +166,35 @@ internal data class PermissionRowModel(
     val onAction: () -> Unit
 )
 
+/**
+ * Permission onboarding and diagnostics screen.
+ *
+ * Automatically re-polls permission grants via a [LifecycleEventObserver] (`ON_RESUME`) when the
+ * user returns from external Android Settings screens (Accessibility, Notification Access, Battery
+ * Optimization, or App Info) and registers [ActivityResultContracts] launchers for both runtime
+ * permissions (`POST_NOTIFICATIONS`, media, `RECORD_AUDIO`, `BLUETOOTH_CONNECT`) and settings
+ * activities, notifying [onPermissionsChanged] on each refresh.
+ */
 @Composable
 fun PermissionsScreen(
     onContinue: () -> Unit,
     onPermissionsChanged: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Android Context used to read permission states and construct Settings intents.
     val context = LocalContext.current
+    // Lifecycle owner observed for ON_RESUME so changes made in System Settings take effect on return.
     val lifecycleOwner = LocalLifecycleOwner.current
+    // Latest permission snapshot driving the health ring, guidance card, and every checklist row.
     var grants by remember(context) { mutableStateOf(PermissionGrants.read(context)) }
     fun refresh() {
         grants = PermissionGrants.read(context)
         onPermissionsChanged()
     }
 
+    // Re-read permission states whenever the host resumes from an external System Settings screen.
     DisposableEffect(context, lifecycleOwner) {
+        // Lifecycle listener that runs refresh() automatically when the user navigates back into the app.
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) refresh()
         }
@@ -159,22 +202,28 @@ fun PermissionsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Launcher for external Android Settings screens (Accessibility, Notification Listener, Battery, App Details); refreshes on return.
     val settingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { refresh() }
+    // Launcher for the Android 13+ POST_NOTIFICATIONS runtime dialog.
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { refresh() }
+    // Launcher for gallery/selected-photos runtime permissions (may request multiple permissions depending on API level).
     val mediaLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { refresh() }
+    // Launcher for the RECORD_AUDIO runtime permission dialog used by cover-screen voice search.
     val microphoneLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { refresh() }
+    // Launcher for the BLUETOOTH_CONNECT runtime permission dialog used by Quick Settings Bluetooth controls.
     val bluetoothLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { refresh() }
 
+    // Guard settings Intent launches against OEM builds that omit or rename a target settings screen.
     fun openSettings(intent: Intent) {
         try {
             settingsLauncher.launch(intent)
@@ -183,6 +232,7 @@ fun PermissionsScreen(
         }
     }
 
+    // Ordered checklist of all 8 tracked permissions; runtime ones prompt directly until granted, then open App Details, while special-access rows open System Settings.
     val rows = listOf(
         PermissionRowModel(
             PermissionId.NOTIFICATIONS, "Post notifications",
@@ -296,6 +346,15 @@ fun PermissionsScreen(
     }
 }
 
+/**
+ * Stateless scrollable body of [PermissionsScreen].
+ *
+ * Renders [PermissionHealthRing], grouped [OneUICardGroup] sections per [PermissionGroup], an
+ * inline [RestrictedAccessibilityHelp] card when the launcher accessibility service is still
+ * disabled (guiding users past Android 13+ restricted-settings restrictions),
+ * [PermissionSupportActions], and a `"Continue with limited features"` CTA when required grants
+ * remain incomplete.
+ */
 @Composable
 internal fun PermissionsContent(
     grants: PermissionGrants,
@@ -305,6 +364,7 @@ internal fun PermissionsContent(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // True on short viewports (<= 480dp) to tighten vertical card spacing so more rows fit on screen.
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -317,6 +377,7 @@ internal fun PermissionsContent(
         }
 
         PermissionGroup.entries.forEach { group ->
+            // Subset of permission rows belonging to the current tier (Required, Recommended, or Optional).
             val groupRows = rows.filter { it.id.group == group }
             if (groupRows.isNotEmpty()) {
                 item(key = group.name) {
@@ -336,6 +397,7 @@ internal fun PermissionsContent(
                     }
                 }
 
+                // Surface restricted-settings unlock guidance right below Required Access until enabled.
                 if (group == PermissionGroup.REQUIRED && !grants.launcherAccessibility) {
                     item(key = "restricted-accessibility-help") {
                         OneUICardGroup(header = "Setup Guidance") {
@@ -373,6 +435,10 @@ internal fun PermissionsContent(
     }
 }
 
+/**
+ * Guidance card explaining how to unlock restricted Accessibility settings on Android 13+
+ * sideloaded/non-Play installs via App Info ([onOpenAppSettings]).
+ */
 @Composable
 private fun RestrictedAccessibilityHelp(onOpenAppSettings: () -> Unit) {
     Column(
@@ -398,8 +464,14 @@ private fun RestrictedAccessibilityHelp(onOpenAppSettings: () -> Unit) {
     }
 }
 
+/**
+ * Circular setup-progress ring displaying [percentage] of required and recommended grants.
+ *
+ * Scales down ring size and typography when [compact] height (`<= 480.dp`) is active.
+ */
 @Composable
 private fun PermissionHealthRing(percentage: Int, compact: Boolean = false) {
+    // Diameter of the progress ring: scaled down on compact-height layouts so the Overview card stays slim.
     val ringSize = if (compact) 54.dp else 80.dp
     Row(
         modifier = Modifier.fillMaxWidth().padding(if (compact) 2.dp else 4.dp),
@@ -443,8 +515,13 @@ private fun PermissionHealthRing(percentage: Int, compact: Boolean = false) {
     }
 }
 
+/**
+ * Interactive OneUI permission list row showing an encircled icon, title, rationale, and
+ * `"Ready"` / `"Set Up"` status pill with merged TalkBack semantics.
+ */
 @Composable
 private fun PermissionRow(row: PermissionRowModel) {
+    // Shared press-interaction stream driving OneUI's subtle squeeze effect without Material ripple.
     val interactionSource = remember { MutableInteractionSource() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -458,6 +535,7 @@ private fun PermissionRow(row: PermissionRowModel) {
             )
             .oneUIPressable(interactionSource = interactionSource)
             .padding(vertical = 10.dp)
+            // Merge child text into one accessible node announcing title and grant status together.
             .semantics(mergeDescendants = true) {
                 stateDescription = "${row.title} -- ${if (row.granted) "granted" else "denied"} -- tap to change"
             }
@@ -513,6 +591,9 @@ private fun PermissionRow(row: PermissionRowModel) {
     }
 }
 
+/**
+ * Light and OLED Dark Mode Compose previews for [PermissionsContent] with mixed grant states.
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable

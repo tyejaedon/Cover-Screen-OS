@@ -2,7 +2,6 @@ package com.tyejaedon.coverscreenos.ui
 
 import android.graphics.Bitmap
 import androidx.compose.ui.unit.dp
-import com.tyejaedon.coverscreenos.models.CoverMediaModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -15,19 +14,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class OverlayMediaPanelTest {
-    @Test
-    fun `unrelated action is not used as play pause`() {
-        assertNull(resolveMediaPlayPauseAction(media(listOf("Favorite", "Next"))))
-        assertNull(resolveMediaPlayPauseAction(null))
-    }
-
-    @Test
-    fun `semantic action label takes priority and blank labels fall back`() {
-        assertEquals("Suspend", resolveMediaPlayPauseAction(media(listOf("Play"), " Suspend ")))
-        assertEquals("Pause", resolveMediaPlayPauseAction(media(listOf("Previous", "Pause", "Next"), " ")))
-        assertEquals("Resume", resolveMediaPlayPauseAction(media(listOf("Resume"))))
-    }
-
     @Test
     fun `artwork supports small images and rejects recycled images`() {
         assertNull(usableMediaArtwork(null))
@@ -49,7 +35,4 @@ class OverlayMediaPanelTest {
             assertTrue(layout.primaryControlSize >= 48.dp)
         }
     }
-
-    private fun media(actions: List<String>, playPause: String? = null) =
-        CoverMediaModel("Song", "Artist", actions, playPause, null)
 }

@@ -235,4 +235,37 @@ class CoverKeyboardNlpManagerTest {
         permitted = true
         assertEquals("zelda", CoverKeyboardNlpManager.getQwertySuggestions("zeld").first())
     }
+
+    @Test
+    fun `learnWord and suppressWord override stale mapped binary trie in QWERTY and T9`() {
+        val baseCorpus = mapOf(
+            "hello" to 1000L,
+            "flip" to 500L,
+            "flick" to 400L
+        )
+        val trie = CompactTrieDictionary(baseCorpus)
+        val symSpell = SymSpellAutocorrect(baseCorpus)
+        val t9 = T9PredictiveEngine(trie)
+        val compiledBinary = BinaryTrieDictionary(BinaryTrieDictionary.compile(trie))
+
+        CoverKeyboardNlpManager.setEnginesForTest(
+            trie = trie,
+            symSpell = symSpell,
+            t9 = t9,
+            binary = compiledBinary
+        )
+
+        // Initially compiled binary trie knows "flip", not "fliptastic".
+        assertFalse(CoverKeyboardNlpManager.getQwertySuggestions("flip", limit = 3).contains("fliptastic"))
+
+        // Learning a word while binaryTrie is mapped must immediately surface it in QWERTY and T9.
+        CoverKeyboardNlpManager.learnWord("fliptastic")
+        assertTrue(CoverKeyboardNlpManager.getQwertySuggestions("flip", limit = 3).contains("fliptastic"))
+        assertEquals("fliptastic", CoverKeyboardNlpManager.getT9Suggestions("3547827842", limit = 3).first())
+
+        // Suppressing a word still blocks it even though it remains inside the compiled binary trie.
+        CoverKeyboardNlpManager.suppressWord("flick")
+        assertFalse(CoverKeyboardNlpManager.getQwertySuggestions("flic", limit = 3).contains("flick"))
+        assertFalse(CoverKeyboardNlpManager.getT9Suggestions("35425", limit = 3).contains("flick"))
+    }
 }

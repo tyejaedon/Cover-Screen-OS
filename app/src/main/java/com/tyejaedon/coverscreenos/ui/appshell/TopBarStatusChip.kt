@@ -25,12 +25,20 @@ import com.tyejaedon.coverscreenos.ui.dashboard.DashboardState
 import com.tyejaedon.coverscreenos.ui.dashboard.DashboardStatus
 import com.tyejaedon.coverscreenos.ui.dashboard.DashboardStatusDetails
 
+/**
+ * Compact Material3 [AssistChip] rendered in the top app bar to summarize [DashboardState.status].
+ *
+ * Tapping the chip opens a [ModalBottomSheet] displaying full [DashboardStatusDetails] without
+ * permanently crowding the top bar.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TopBarStatusChip(state: DashboardState) {
+    // Controls whether the tap-to-open bottom sheet with full runtime details is visible.
     var showDetails by remember { mutableStateOf(false) }
     AssistChip(
         onClick = { showDetails = true },
+        // Combine concise chip state with the full status title for screen readers and UI tests.
         modifier = Modifier.semantics { contentDescription = "Runtime status: ${state.title}" },
         label = {
             Text(

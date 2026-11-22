@@ -74,63 +74,113 @@ import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
 import com.tyejaedon.coverscreenos.keyboard.floris.FlorisKeyboardCustomization
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
+import com.tyejaedon.coverscreenos.keyboard.voice.formatDictatedPhrase
+import com.tyejaedon.coverscreenos.keyboard.voice.rememberVoiceDictationController
+import com.tyejaedon.coverscreenos.ui.keyboard.rememberContactSuggestionRevision
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import kotlinx.coroutines.launch
 
+/**
+ * Cover-screen software keyboard hosted via Android's [InputMethodService].
+ *
+ * Bridges the legacy IME view/input lifecycle to a Jetpack Compose surface
+ * ([CoverFlorisKeyboardSurface]) and drives [CoverEditorBridge] + [CoverKeyboardNlpManager]
+ * for T9 predictive, QWERTY, numeric, and symbol input on compact clamshell cover displays.
+ */
 class CoverT9InputMethodService : InputMethodService() {
 
+    // Synthetic Lifecycle/SavedState/ViewModel owner because Android's InputMethodService is a Service, not an Activity.
     private val composeOwner = ImeComposeOwner()
+    // Cached privacy/numeric classification of the active text box; prevents suggestions from leaking passwords.
     private var fieldProfile = EditorFieldProfile(isNumeric = false, isSensitive = false)
+    // Target app's EditorInfo metadata (input type flags and requested Enter button action like Search or Send).
     private var activeEditorInfo: EditorInfo? = null
+    // Compose-observed UI snapshot controlling active layout mode, numeric/sensitive behavior, and action label.
     private var uiState by mutableStateOf(CoverImeUiState())
+    // Handle to the live CoverEditorBridge so cursor-selection callbacks can trigger fresh candidate lookups.
     private var activeBridge: CoverEditorBridge? = null
 
+    /**
+     * Advances the Compose lifecycle to `CREATED` and warms up the NLP dictionaries asynchronously.
+     */
     override fun onCreate() {
         super.onCreate()
         composeOwner.create()
         CoverKeyboardNlpManager.initializeFromContext(applicationContext)
     }
 
+    /**
+     * Builds the [ComposeView] input window, wires ViewTree lifecycle/saved-state/store owners,
+     * and binds editor text mutations to candidate predictions and DataStore-backed preferences.
+     */
     override fun onCreateInputView(): View =
         ComposeView(this).apply {
+            // Dispose composition if the IME window detaches rather than waiting for process death.
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setViewTreeLifecycleOwner(composeOwner)
             setViewTreeSavedStateRegistryOwner(composeOwner)
             setViewTreeViewModelStoreOwner(composeOwner)
             setContent {
                 CoverOSTheme {
+                    // DataStore wrapper and reactive snapshot for keyboard height, one-handed dock, and autocorrect toggles.
                     val settingsStore = remember { LauncherSettingsStore(applicationContext) }
                     val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
+                    // Composition-scoped coroutine launcher used to persist keyboard setting toggles asynchronously.
                     val coroutineScope = rememberCoroutineScope()
 
+                    // Bridge wrapping currentInputConnection lazily because Android swaps the connection per focused field.
                     val bridge = remember {
                         CoverEditorBridge(
                             inputConnectionProvider = { currentInputConnection },
                             editorActionHandler = ::handleEnterPressed
                         ).also { activeBridge = it }
                     }
+                    // Monotonic counter bumped after key presses or cursor moves so suggestions recompute automatically.
                     val mutationRevision by bridge.mutationRevision.collectAsState()
 
+                    // Active keyboard sub-mode (QWERTY, T9, numeric, symbols) synced with field defaults and mode switches.
                     var activeLayoutMode by remember(uiState.layout) {
                         mutableStateOf(uiState.layout.toCoverLayoutMode())
                     }
+                    // Ranked word suggestions shown in the strip above the keys.
                     var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
+                    // Up to 50 characters before the cursor, used to extract the active word or previous word for bigrams.
                     var textBeforeCursor by remember { mutableStateOf("") }
 
                     LaunchedEffect(uiState.layout) {
                         activeLayoutMode = uiState.layout.toCoverLayoutMode()
                     }
 
-                    LaunchedEffect(uiState.layout, activeLayoutMode, mutationRevision, uiState.isSensitive) {
+                    // Watch contact opt-in and READ_CONTACTS permission changes while the IME is visible.
+                    val contactRevision = rememberContactSuggestionRevision(
+                        enabled = !uiState.isSensitive && !uiState.isNumeric
+                    )
+                    LaunchedEffect(contactRevision) {
+                        if (contactRevision > 0 && !uiState.isSensitive && !uiState.isNumeric) {
+                            runCatching { CoverKeyboardNlpManager.refreshContactWords(applicationContext) }
+                        }
+                    }
+
+                    // Recompute prefix/T9 or bigram next-word candidates whenever text, mode, or contacts change.
+                    LaunchedEffect(
+                        uiState.layout,
+                        activeLayoutMode,
+                        mutationRevision,
+                        uiState.isSensitive,
+                        contactRevision
+                    ) {
                         val surrounding = bridge.getSurroundingText(50, 0)
                         textBeforeCursor = surrounding.textBefore
                         if (uiState.isSensitive || uiState.isNumeric) {
+                            // Never surface or learn dictionary suggestions for passwords or numeric/PIN inputs.
                             candidates = emptyList()
                         } else {
+                            // Trailing alphanumeric token currently being typed by the user.
                             val word = surrounding.textBefore.takeLastWhile { it.isLetterOrDigit() }
                             candidates = when {
                                 word.isNotBlank() -> CoverKeyboardNlpManager.getCandidates(activeLayoutMode, word)
                                 surrounding.textBefore.isNotBlank() -> {
+                                    // Completed previous word before trailing whitespace, used for bigram next-word prediction.
                                     val prev = surrounding.textBefore.trimEnd().takeLastWhile { it.isLetter() }
                                     if (prev.isNotEmpty()) {
                                         CoverKeyboardNlpManager.getNextWordSuggestions(prev)
@@ -141,6 +191,21 @@ class CoverT9InputMethodService : InputMethodService() {
                         }
                     }
 
+                    // Speech-to-text dictation controller hidden automatically on password/numeric inputs.
+                    val voiceDictation = rememberVoiceDictationController(
+                        enabled = !uiState.isSensitive && !uiState.isNumeric,
+                        onPhraseRecognized = { phrase ->
+                            val formatted = formatDictatedPhrase(
+                                existingBeforeCursor = bridge.getSurroundingText(1, 0).textBefore,
+                                rawPhrase = phrase
+                            )
+                            if (formatted.isNotEmpty()) {
+                                bridge.insertText(formatted)
+                            }
+                        }
+                    )
+
+                    // Maps persisted left/right preference to the Floris one-handed dock side on the cover screen.
                     val dockAnchor = if (settings.keyboardOneHandedAnchor == KeyboardAnchor.Right) {
                         ClamshellDockAnchor.RIGHT
                     } else {
@@ -183,7 +248,9 @@ class CoverT9InputMethodService : InputMethodService() {
                             suggestionsEnabled = !uiState.isSensitive && !uiState.isNumeric,
                             autocorrectEnabled = settings.autocorrectEnabled,
                             popupKeyPreviewEnabled = settings.popupKeyPreviewEnabled && !uiState.isSensitive,
-                            imeOptions = activeEditorInfo?.imeOptions ?: EditorInfo.IME_ACTION_DONE
+                            imeOptions = activeEditorInfo?.imeOptions ?: EditorInfo.IME_ACTION_DONE,
+                            isVoiceInputActive = voiceDictation.isListening,
+                            onVoiceInputToggle = voiceDictation.onToggle
                         ),
                         textBeforeCursor = textBeforeCursor,
                         selectedCandidateIndex = if (textBeforeCursor.takeLastWhile { it.isLetter() }.isNotEmpty()) 0 else -1,
@@ -203,6 +270,10 @@ class CoverT9InputMethodService : InputMethodService() {
             }
         }
 
+    /**
+     * Notifies [CoverEditorBridge] when cursor/selection changes originate outside the IME
+     * (e.g., tapping a different position in the target text field) so suggestions stay in sync.
+     */
     override fun onUpdateSelection(
         oldSelStart: Int,
         oldSelEnd: Int,
@@ -218,21 +289,28 @@ class CoverT9InputMethodService : InputMethodService() {
     // Cover displays have limited vertical space; never switch into extract/fullscreen mode.
     override fun onEvaluateFullscreenMode(): Boolean = false
 
+    /** Resumes the synthetic Compose lifecycle when the soft keyboard window becomes visible. */
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         composeOwner.resume()
     }
 
+    /** Pauses Compose animations and effects when the soft keyboard window hides. */
     override fun onFinishInputView(finishingInput: Boolean) {
         composeOwner.pause()
         super.onFinishInputView(finishingInput)
     }
 
+    /** Tears down the synthetic Compose lifecycle and clears the [ViewModelStore] on service destroy. */
     override fun onDestroy() {
         composeOwner.destroy()
         super.onDestroy()
     }
 
+    /**
+     * Inspects the newly focused editor's [EditorInfo] to configure layout, sensitivity flags,
+     * and the Enter/action key label before input begins.
+     */
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         activeEditorInfo = attribute
@@ -245,6 +323,7 @@ class CoverT9InputMethodService : InputMethodService() {
         )
     }
 
+    /** Resets editor-scoped state when focus leaves the target input field. */
     override fun onFinishInput() {
         super.onFinishInput()
         activeEditorInfo = null
@@ -252,26 +331,46 @@ class CoverT9InputMethodService : InputMethodService() {
         uiState = CoverImeUiState()
     }
 
+    /**
+     * Triggers the editor's requested IME action (Go/Search/Send/Next/Done) via
+     * [android.view.inputmethod.InputConnection.performEditorAction], falling back to a hardware
+     * `KEYCODE_ENTER` key event sequence when no explicit action is active or handled.
+     */
     private fun handleEnterPressed() {
+        // Active InputConnection to the target app's editor; null if the editor detached.
         val connection = currentInputConnection ?: return
+        // Action code (Go, Search, Send, Next, Done) masked from the low bits of imeOptions.
         val imeAction = activeEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
             ?: EditorInfo.IME_ACTION_UNSPECIFIED
+        // Multiline fields set IME_FLAG_NO_ENTER_ACTION so Enter inserts a newline instead of submitting.
         val allowsAction = activeEditorInfo?.imeOptions?.and(EditorInfo.IME_FLAG_NO_ENTER_ACTION) == 0
+        // Tracks whether the host app accepted the semantic IME action before falling back to a raw Enter key.
         val performed = allowsAction && imeAction != EditorInfo.IME_ACTION_NONE &&
             imeAction != EditorInfo.IME_ACTION_UNSPECIFIED &&
             connection.performEditorAction(imeAction)
         if (!performed) sendKey(connection)
     }
 
+    /** Dispatches a synthetic `ACTION_DOWN` + `ACTION_UP` pair for [KeyEvent.KEYCODE_ENTER]. */
     private fun sendKey(connection: android.view.inputmethod.InputConnection) {
         connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
         connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
     }
 }
 
+/**
+ * Synthetic Jetpack Compose host owner for [CoverT9InputMethodService].
+ *
+ * Android `InputMethodService` instances are `Service` subclasses rather than Activities, so this
+ * class manually drives [LifecycleRegistry], [SavedStateRegistryController], and [ViewModelStore]
+ * across IME input-view visibility transitions.
+ */
 private class ImeComposeOwner : LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
+    // Lifecycle state machine stepped manually through ON_CREATE -> ON_START/ON_RESUME -> ON_PAUSE/ON_STOP -> ON_DESTROY.
     private val registry = LifecycleRegistry(this)
+    // Required by Compose's rememberSaveable and UI state restoration inside a non-Activity Service window.
     private val stateController = SavedStateRegistryController.create(this)
+    // ViewModel backing store retained for the lifetime of the IME service and cleared in onDestroy.
     private val store = ViewModelStore()
 
     init {
@@ -293,6 +392,7 @@ private class ImeComposeOwner : LifecycleOwner, SavedStateRegistryOwner, ViewMod
     }
 
     fun pause() {
+        // Guard against repeated onFinishInputView callbacks before ON_START runs.
         if (registry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
             registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
@@ -305,10 +405,15 @@ private class ImeComposeOwner : LifecycleOwner, SavedStateRegistryOwner, ViewMod
     }
 }
 
+/** User-selectable keyboard layout modes exposed in IME settings and the keyboard switcher. */
 internal enum class CoverImeLayout(val label: String) {
     QWERTY("ABC"), T9("T9"), NUMBER("123"), SYMBOLS("#+=")
 }
 
+/**
+ * Coarse input-field categories mapped from [InputType.TYPE_MASK_CLASS] so users can configure
+ * distinct default layouts per field type.
+ */
 internal enum class CoverImeFieldClass(val preferenceKey: String, val defaultLayout: CoverImeLayout) {
     TEXT("ime_default_text", CoverImeLayout.QWERTY),
     NUMBER("ime_default_number", CoverImeLayout.NUMBER),
@@ -340,6 +445,7 @@ internal fun CoverLayoutMode.toCoverImeLayout(): CoverImeLayout = when (this) {
     CoverLayoutMode.SYMBOLS, CoverLayoutMode.SYMBOLS_SECONDARY -> CoverImeLayout.SYMBOLS
 }
 
+/** Resolves per-field-class default keyboard layouts stored in default app SharedPreferences. */
 internal object CoverImePreferences {
     fun getSharedPreferences(context: Context): SharedPreferences {
         return context.getSharedPreferences("${context.packageName}_preferences", Context.MODE_PRIVATE)
@@ -367,15 +473,22 @@ class CoverImeSettingsActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Settings screen allowing users to customize default layouts per input class and opt in to
+ * on-device contact-name suggestions via runtime `READ_CONTACTS` permission.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CoverImeSettingsScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    // Default app SharedPreferences holding per-field-class layout selections.
     val sharedPrefs = remember(context) { CoverImePreferences.getSharedPreferences(context) }
 
+    // UI switch state reflecting both user opt-in consent and live READ_CONTACTS permission.
     var contactsEnabled by remember { mutableStateOf(ContactsSuggestionConsent.isEnabled(context)) }
+    // Request READ_CONTACTS only when the user explicitly opts into contact-name predictions.
     val contactsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -497,6 +610,10 @@ internal fun CoverImeSettingsScreen(
     }
 }
 
+/**
+ * Coordinates persisted user consent in `keyboard_words` with runtime [Manifest.permission.READ_CONTACTS]
+ * permission, automatically clearing stale consent if the user revokes permission in system settings.
+ */
 internal object ContactsSuggestionConsent {
     const val PREF_FILE = "keyboard_words"
     const val KEY = "include_contact_names"
@@ -508,6 +625,7 @@ internal object ContactsSuggestionConsent {
         val preferences = context.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
         if (!preferences.getBoolean(KEY, false)) return false
         if (hasPermission(context)) return true
+        // Clear persisted opt-in if permission was later revoked externally.
         preferences.edit().remove(KEY).apply()
         return false
     }
@@ -521,6 +639,7 @@ internal object ContactsSuggestionConsent {
     }
 }
 
+/** UI state derived from the focused editor's [EditorInfo] and user layout overrides. */
 internal data class CoverImeUiState(
     val layout: CoverImeLayout = CoverImeLayout.QWERTY,
     val isNumeric: Boolean = false,
@@ -529,6 +648,7 @@ internal data class CoverImeUiState(
     val actionLabel: String = "ENTER"
 )
 
+/** Decodes [EditorInfo.imeOptions] action flags into a short label for the keyboard's action key. */
 internal fun imeActionLabel(editorInfo: EditorInfo?): String {
     val options = editorInfo?.imeOptions ?: return "ENTER"
     if (options and EditorInfo.IME_FLAG_NO_ENTER_ACTION != 0) return "ENTER"

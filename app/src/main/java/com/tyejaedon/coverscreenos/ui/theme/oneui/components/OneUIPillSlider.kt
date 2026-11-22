@@ -55,11 +55,15 @@ fun OneUIPillSlider(
     leadingIcon: ImageVector? = null,
     enabled: Boolean = true
 ) {
+    // Total numeric span (`end - start`), guarded against zero so progress math never divides by zero.
     val rangeSpan = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.0001f)
+    // Current slider progress normalized into `0f..1f` so track fill and thumb placement scale cleanly.
     val normalizedFraction = ((value - valueRange.start) / rangeSpan).coerceIn(0f, 1f)
 
+    // Tracks whether the user's finger is currently scrubbing along the pill slider.
     var isDragging by remember { mutableStateOf(false) }
 
+    // Spring-animated scale state (`1.15f` while dragging, `1f` at rest) representing drag expansion state.
     val animatedThumbScale by animateFloatAsState(
         targetValue = if (isDragging) 1.15f else 1f,
         animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f),
@@ -72,6 +76,7 @@ fun OneUIPillSlider(
             .height(OneUITheme.dimensions.sliderHeight)
             .clip(CircleShape)
             .background(OneUITheme.colors.cardSurfaceVariant)
+            // Handle discrete taps anywhere along the slider track; re-key pointerInput if enabled/range changes.
             .pointerInput(enabled, valueRange) {
                 if (!enabled) return@pointerInput
                 detectTapGestures { offset ->
@@ -80,6 +85,7 @@ fun OneUIPillSlider(
                     onValueChange(newValue)
                 }
             }
+            // Handle continuous horizontal scrubbing; consume events so outer scroll containers do not steal drags.
             .pointerInput(enabled, valueRange) {
                 if (!enabled) return@pointerInput
                 detectDragGestures(
@@ -95,7 +101,9 @@ fun OneUIPillSlider(
                 )
             }
     ) {
+        // Full measured width of the slider track available inside BoxWithConstraints.
         val totalWidth = maxWidth
+        // Filled width of the accent track proportional to normalizedFraction.
         val activeWidth = totalWidth * normalizedFraction
 
         // Active Track (Accent)
@@ -124,6 +132,7 @@ fun OneUIPillSlider(
         }
 
         // Tactile Thumb Indicator (Flush pill handle)
+        // Horizontal Dp offset keeping the 24dp thumb nestled cleanly inside the track bounds from 0% to 100%.
         val thumbOffset = ((totalWidth - 20.dp) * normalizedFraction)
         Box(
             modifier = Modifier
@@ -137,10 +146,14 @@ fun OneUIPillSlider(
     }
 }
 
+/**
+ * Interactive dual-mode `@Preview` for [OneUIPillSlider] in Light and OLED Dark themes.
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable
 fun OneUIPillSliderPreview() {
+    // Preview state holding the simulated slider value so the interactive preview can drag live.
     var sliderVal by remember { mutableFloatStateOf(0.65f) }
     OneUITheme {
         Box(modifier = Modifier.padding(24.dp)) {

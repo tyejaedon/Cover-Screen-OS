@@ -42,15 +42,23 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme
 import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUICardGroup
 import com.tyejaedon.coverscreenos.ui.theme.oneui.components.OneUIScaffold
 
+/**
+ * Displays application version metadata, a high-level "How It Works" walkthrough, live
+ * [ForegroundService.runtime] diagnostics, bundled dictionary licensing, and debug-only shortcuts.
+ */
 @Composable
 fun AboutScreen(
     modifier: Modifier = Modifier,
     onDashboard: () -> Unit = {},
     onCustomize: () -> Unit = {}
 ) {
+    // Android Context needed to open app-bundled files inside the assets folder.
     val context = LocalContext.current
+    // Live service status snapshot (running state, host connection, cover surface visibility, latest event).
     val runtime by ForegroundService.runtime.collectAsState()
+    // Controls whether the full open-source dictionary license is expanded; survives screen folds/rotations.
     var showLicense by rememberSaveable { mutableStateOf(false) }
+    // Cached license text read once from assets so redrawing the UI does not reopen the file.
     val license = remember(context) {
         context.assets.open("DICTIONARY_LICENSE.txt").bufferedReader().use { it.readText() }
     }
@@ -154,6 +162,7 @@ fun AboutScreen(
                 }
             }
 
+            // Expose quick navigation shortcuts to developer-oriented sections only in debug builds.
             if (BuildConfig.DEBUG) {
                 item {
                     OneUICardGroup(header = "Developer Tools") {
@@ -180,6 +189,9 @@ fun AboutScreen(
     }
 }
 
+/**
+ * Fixed-width horizontal step card summarizing one stage of Cover Screen OS setup.
+ */
 @Composable
 private fun AboutStepCard(icon: ImageVector, title: String, description: String) {
     Surface(
@@ -202,6 +214,9 @@ private fun AboutStepCard(icon: ImageVector, title: String, description: String)
     }
 }
 
+/**
+ * Light and OLED Dark Mode Compose previews for [AboutScreen].
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable

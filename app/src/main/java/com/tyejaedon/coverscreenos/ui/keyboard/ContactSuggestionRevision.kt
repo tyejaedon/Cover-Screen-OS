@@ -14,16 +14,35 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 
+/**
+ * Tracks a monotonically increasing revision key that invalidates contact-based keyboard
+ * suggestions whenever the `"include_contact_names"` preference or `READ_CONTACTS` runtime
+ * permission state changes.
+ *
+ * Uses two Compose side-effect primitives while [enabled] is `true`:
+ * - [DisposableEffect] registers a [SharedPreferences.OnSharedPreferenceChangeListener] on
+ *   `"keyboard_words"` and cleanly unregisters it on disposal.
+ * - [LaunchedEffect] periodically re-checks [Manifest.permission.READ_CONTACTS] because
+ *   Android does not deliver a broadcast when the user revokes a permission in System Settings
+ *   while an overlay remains mounted.
+ *
+ * @return A revision integer suitable as a `remember` / `LaunchedEffect` key.
+ */
 @Composable
 internal fun rememberContactSuggestionRevision(enabled: Boolean): Int {
+    // Host context used to open keyboard preferences and check runtime contacts permission.
     val context = LocalContext.current
+    // Counter incremented on any contact-preference or permission change so callers re-query NLP words.
     var revision by remember(context) { mutableIntStateOf(0) }
+    // SharedPreferences file storing the user's "include_contact_names" toggle.
     val preferences = remember(context) {
         context.getSharedPreferences("keyboard_words", Context.MODE_PRIVATE)
     }
+    // React immediately when the user toggles contact-name suggestions in preferences.
     DisposableEffect(preferences, enabled) {
         if (!enabled) return@DisposableEffect onDispose {}
 
+        // Listener bumping revision only when the contact-names flag changes.
         val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == "include_contact_names") revision++
         }
@@ -34,11 +53,13 @@ internal fun rememberContactSuggestionRevision(enabled: Boolean): Int {
     }
     LaunchedEffect(context, enabled, revision) {
         if (!enabled || !preferences.getBoolean("include_contact_names", false)) return@LaunchedEffect
+        // Baseline READ_CONTACTS grant state when this effect started watching.
         val wasGranted = context.checkSelfPermission(Manifest.permission.READ_CONTACTS) ==
             PackageManager.PERMISSION_GRANTED
         // Permission can be revoked while this overlay remains mounted.
         while (true) {
             delay(5_000)
+            // Current permission status polled every 5s to catch System Settings changes.
             val isGranted = context.checkSelfPermission(Manifest.permission.READ_CONTACTS) ==
                 PackageManager.PERMISSION_GRANTED
             if (isGranted != wasGranted) {

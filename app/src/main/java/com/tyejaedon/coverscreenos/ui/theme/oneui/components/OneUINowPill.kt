@@ -48,7 +48,9 @@ fun OneUINowPill(
     iconTint: Color = OneUITheme.colors.accent,
     onClick: (() -> Unit)? = null
 ) {
+    // Active theme accent tinting the pill's luminous edge gradient.
     val accent = OneUITheme.colors.accent
+    // Cached 3-stop gradient Brush giving the pill a subtle glowing rim without reallocating every frame.
     val borderBrush = remember(accent) {
         Brush.linearGradient(
             colors = listOf(
@@ -59,6 +61,7 @@ fun OneUINowPill(
         )
     }
 
+    // Gesture state tracker used to drive tactile press feedback when onClick is supplied.
     val interactionSource = remember { MutableInteractionSource() }
 
     Surface(
@@ -70,6 +73,7 @@ fun OneUINowPill(
             .clip(CircleShape)
             .border(1.5.dp, borderBrush, CircleShape)
             .then(
+                // Attach One UI press feedback + ripple-free click handling only when an action callback is provided.
                 if (onClick != null) {
                     Modifier
                         .oneUIPressable(interactionSource = interactionSource)
@@ -88,6 +92,7 @@ fun OneUINowPill(
             horizontalArrangement = Arrangement.Center
         ) {
             if (icon != null) {
+                // Decorative status indicator; adjacent Text conveys full semantics to accessibility services.
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
@@ -118,12 +123,14 @@ fun OneUIEncircledActionIcon(
     containerColor: Color = OneUITheme.colors.cardSurfaceVariant.copy(alpha = 0.7f),
     onClick: () -> Unit
 ) {
+    // Tracks finger presses on this circular button so oneUIPressable shrinks it smoothly on tap.
     val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
             .size(OneUITheme.dimensions.encircledIconSize)
             .clip(CircleShape)
             .background(containerColor)
+            // Replace default Material ripple with One UI scale/luminance press feedback.
             .oneUIPressable(interactionSource = interactionSource)
             .clickable(
                 interactionSource = interactionSource,
@@ -141,6 +148,9 @@ fun OneUIEncircledActionIcon(
     }
 }
 
+/**
+ * Dual-mode `@Preview` showing [OneUINowPill] in Light and OLED Dark themes.
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable

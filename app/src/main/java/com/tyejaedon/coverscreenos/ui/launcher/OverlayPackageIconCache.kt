@@ -16,30 +16,51 @@ import com.tyejaedon.coverscreenos.ui.OverlayIconThumbnailDiskCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+// Cap RAM icon storage at 6 MiB so app icons never crowd out wallpapers or overlay textures.
 private const val ICON_CACHE_MAX_BYTES = 6L * 1024L * 1024L
+// Divisor converting raw bytes into 1 KiB units because Android's LruCache capacity is an Int.
 private const val ICON_CACHE_SIZE_UNIT_BYTES = 1024
+// Square target size (128x128 px) for rasterized icons: sharp on cover screens without excess RAM.
 private const val ICON_BITMAP_EDGE_PX = 128
 
 // Global LRU Bitmap Cache for hardware-accelerated Compose Image rendering
+/**
+ * Process-wide in-memory [LruCache] mapping app `packageName` keys to rasterized [ImageBitmap]
+ * icons, bounded by [ICON_CACHE_MAX_BYTES] (6 MiB, tracked in 1 KiB units).
+ *
+ * Accesses are synchronized because background `Dispatchers.IO` resolvers populate the cache
+ * concurrently while Compose UI threads perform synchronous cache lookups during composition.
+ */
 internal object OverlayBitmapIconCache {
+    /** Backing LRU store that keeps recently drawn icons in RAM and evicts the oldest entries when full. */
     private val cache = object : LruCache<String, ImageBitmap>(
         (ICON_CACHE_MAX_BYTES / ICON_CACHE_SIZE_UNIT_BYTES).toInt()
     ) {
+        // Approximate ARGB_8888 memory footprint (4 bytes per pixel) converted to KiB units.
         override fun sizeOf(key: String, bitmap: ImageBitmap): Int =
             (bitmap.width.toLong() * bitmap.height * 4 / ICON_CACHE_SIZE_UNIT_BYTES)
                 .toInt()
                 .coerceAtLeast(1)
     }
 
+    /** Returns the cached icon for [packageName], or `null` if not currently resident in memory. */
     fun get(packageName: String): ImageBitmap? {
         return synchronized(cache) { cache.get(packageName) }
     }
 
+    /** Caches the rasterized [bitmap] for [packageName] in memory. */
     fun put(packageName: String, bitmap: ImageBitmap) {
         synchronized(cache) { cache.put(packageName, bitmap) }
     }
 }
 
+/**
+ * Rasterizes an arbitrary Android [Drawable] (such as an `AdaptiveIconDrawable`, vector, or
+ * legacy bitmap drawable) into a centered, aspect-fit square [ImageBitmap] of [sizePx] pixels.
+ *
+ * Restores the drawable's original bounds in a `finally` block so shared system drawables are
+ * not mutated for other callers.
+ */
 private fun drawableToImageBitmap(drawable: Drawable, sizePx: Int = ICON_BITMAP_EDGE_PX): ImageBitmap {
     val bitmap = createBitmap(sizePx, sizePx)
     val canvas = Canvas(bitmap)
@@ -52,6 +73,7 @@ private fun drawableToImageBitmap(drawable: Drawable, sizePx: Int = ICON_BITMAP_
     val top = (sizePx - drawHeight) / 2
     val previousBounds = android.graphics.Rect(drawable.bounds)
     try {
+        // Render into centered, aspect-preserving bounds, then restore original bounds for shared drawables.
         drawable.setBounds(left, top, left + drawWidth, top + drawHeight)
         drawable.draw(canvas)
     } finally {
@@ -60,6 +82,13 @@ private fun drawableToImageBitmap(drawable: Drawable, sizePx: Int = ICON_BITMAP_
     return bitmap.asImageBitmap()
 }
 
+/**
+ * Resolves an app's icon as an [ImageBitmap] using a two-tier cache:
+ * 1. Synchronous in-memory lookup in [OverlayBitmapIconCache].
+ * 2. Off-thread (`Dispatchers.IO`) check of `OverlayIconThumbnailDiskCache` keyed by a package
+ *    version token, falling back to `PackageManager.getApplicationIcon` and rasterizing via
+ *    [drawableToImageBitmap] on a disk miss.
+ */
 internal suspend fun resolvePackageIconBitmap(
     context: Context,
     packageManager: PackageManager,
@@ -68,6 +97,7 @@ internal suspend fun resolvePackageIconBitmap(
     OverlayBitmapIconCache.get(packageName)?.let { return it }
 
     val resolved = withContext(Dispatchers.IO) {
+        // Cache-busting key incorporating app versionCode + update timestamp so app updates reload fresh icons.
         val versionToken = resolvePackageIconVersionToken(packageManager, packageName)
         OverlayIconThumbnailDiskCache.getBitmap(
             context = context,
@@ -93,11 +123,17 @@ internal suspend fun resolvePackageIconBitmap(
     return resolved
 }
 
+/**
+ * Composable helper that returns the [ImageBitmap] for [packageName], seeded synchronously from
+ * [OverlayBitmapIconCache] to avoid empty placeholder flashes and resolved via
+ * [resolvePackageIconBitmap] on cache misses.
+ */
 @Composable
 internal fun rememberPackageIconBitmap(packageName: String): ImageBitmap? {
     val context = LocalContext.current
     val packageManager = remember(context) { context.packageManager }
 
+    // Held Compose state: seeded immediately from RAM LRU cache, then filled off-thread if missing.
     val iconState = produceState<ImageBitmap?>(
         initialValue = OverlayBitmapIconCache.get(packageName),
         key1 = packageName
@@ -110,11 +146,17 @@ internal fun rememberPackageIconBitmap(packageName: String): ImageBitmap? {
     return iconState.value
 }
 
+/**
+ * Composable helper that resolves the user-visible app name for [packageName] on
+ * `Dispatchers.IO` via `PackageManager.getApplicationLabel`, initially displaying the package's
+ * trailing segment while loading.
+ */
 @Composable
 internal fun rememberPackageLabel(packageName: String): String {
     val context = LocalContext.current
     val packageManager = remember(context) { context.packageManager }
 
+    // Starts with the trailing package segment as an instant placeholder until PackageManager responds.
     val labelState = produceState(
         initialValue = packageName.substringAfterLast('.'),
         key1 = packageName
@@ -131,6 +173,10 @@ internal fun rememberPackageLabel(packageName: String): String {
     return labelState.value
 }
 
+/**
+ * Builds a cache-busting version token (`packageName|longVersionCode|lastUpdateTime`) using
+ * `PackageManager.PackageInfoFlags` so updated apps automatically invalidate stale disk icons.
+ */
 private fun resolvePackageIconVersionToken(packageManager: PackageManager, packageName: String): String? {
     val packageInfo = runCatching {
         packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))

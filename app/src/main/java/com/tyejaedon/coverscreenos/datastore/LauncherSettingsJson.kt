@@ -4,7 +4,20 @@ import com.tyejaedon.coverscreenos.overlay.input.CoverKeyboardMode
 import org.json.JSONArray
 import org.json.JSONObject
 
+/**
+ * Versioned JSON serializer and strict validator for exporting and importing [LauncherSettings].
+ *
+ * Uses Android's built-in `org.json` ([JSONObject] and [JSONArray]) to avoid external serialization
+ * dependencies and enforces range/uniqueness/enum invariants during [decode] before settings are
+ * persisted back to DataStore.
+ */
 internal object LauncherSettingsJson {
+    /**
+     * Serializes [settings] into a human-readable, 2-space-indented v1 JSON document.
+     *
+     * Enum fields are encoded by `.name` and a `null` [LauncherSettings.wallpaperUri] is written
+     * explicitly as [JSONObject.NULL] so [decode] can verify the field's presence.
+     */
     fun encode(settings: LauncherSettings): String = JSONObject().apply {
         put("version", 1)
         put("dockPackages", JSONArray(settings.dockPackages))
@@ -26,12 +39,25 @@ internal object LauncherSettingsJson {
         put("widgetIds", JSONArray(settings.widgetIds))
     }.toString(2)
 
+    /**
+     * Parses and validates a JSON settings export produced by [encode].
+     *
+     * Enforces schema version `1`, exact [COVER_DOCK_SLOT_COUNT] dock entries with unique, trimmed,
+     * non-blank package names, finite/in-range numeric wallpaper and corner-radius fields, valid
+     * enum names, and backward-compatible defaults for newer optional v1 fields.
+     *
+     * @throws org.json.JSONException if the payload is malformed or missing required keys.
+     * @throws IllegalArgumentException if any field fails domain validation.
+     */
     fun decode(raw: String): LauncherSettings {
+        // Root parsed JSON backup object.
         val json = JSONObject(raw)
         require(json.getInt("version") == 1) { "Unsupported settings version" }
         require(json.has("wallpaperUri")) { "Missing wallpaper URI field" }
+        // Raw JSON array holding the 4 quick-launch dock slots.
         val slots = json.getJSONArray("dockPackages")
         require(slots.length() == COVER_DOCK_SLOT_COUNT) { "Expected four dock slots" }
+        // Normalized 4-element dock list (null = empty slot; whitespace/duplicates rejected).
         val dock = List(COVER_DOCK_SLOT_COUNT) { index ->
             if (slots.isNull(index)) null else slots.getString(index).also {
                 require(it.isNotBlank() && it == it.trim()) { "Invalid dock package" }
@@ -40,6 +66,7 @@ internal object LauncherSettingsJson {
         require(dock.filterNotNull().distinct().size == dock.count { it != null }) {
             "Duplicate dock package"
         }
+        // Wallpaper scrim opacity and blur radius validated against safe display limits.
         val dim = json.getDouble("wallpaperDimAmount").toFloat()
         val blur = json.getDouble("wallpaperBlurRadiusDp").toFloat()
         require(dim.isFinite() && dim in MIN_WALLPAPER_DIM_AMOUNT..MAX_WALLPAPER_DIM_AMOUNT) {
@@ -48,6 +75,7 @@ internal object LauncherSettingsJson {
         require(blur.isFinite() && blur in MIN_WALLPAPER_BLUR_RADIUS_DP..MAX_WALLPAPER_BLUR_RADIUS_DP) {
             "Invalid wallpaper blur"
         }
+        // Older v1 backups may omit crop/zoom/rotation, corner radius, accent, slot-4, or widgetIds.
         val cropX = if (json.has("wallpaperCropX")) json.getDouble("wallpaperCropX").toFloat()
             else DEFAULT_WALLPAPER_CROP_OFFSET
         val cropY = if (json.has("wallpaperCropY")) json.getDouble("wallpaperCropY").toFloat()
@@ -66,16 +94,19 @@ internal object LauncherSettingsJson {
             "Invalid wallpaper zoom"
         }
         require(rotation in 0..270 && rotation % 90 == 0) { "Invalid wallpaper rotation" }
+        // Corner rounding (dp) for cover UI cards/panels, falling back to default if missing.
         val radius = if (json.has("panelCornerRadiusDp")) json.getDouble("panelCornerRadiusDp").toFloat()
             else DEFAULT_PANEL_CORNER_RADIUS_DP
         require(radius.isFinite() && radius in MIN_PANEL_CORNER_RADIUS_DP..MAX_PANEL_CORNER_RADIUS_DP) {
             "Invalid panel corner radius"
         }
+        // Per-app remembered keyboard mode map (e.g. T9 vs QWERTY per package name).
         val modes = json.getJSONObject("keyboardModeByPackage")
         val savedModes = modes.keys().asSequence().associateWith { packageName ->
             require(packageName.isNotBlank()) { "Empty keyboard package" }
             enumValue<CoverKeyboardMode>(modes.getString(packageName))
         }
+        // Ordered AppWidget IDs restored onto the cover widget page (empty on older backups).
         val decodedWidgetIds = if (json.has("widgetIds")) {
             val arr = json.getJSONArray("widgetIds")
             List(arr.length()) { arr.getInt(it) }
@@ -101,6 +132,7 @@ internal object LauncherSettingsJson {
         )
     }
 
+    /** Resolves an enum constant strictly by [Enum.name], failing loudly on unknown values. */
     private inline fun <reified T : Enum<T>> enumValue(value: String): T =
         enumValues<T>().firstOrNull { it.name == value }
             ?: throw IllegalArgumentException("Unknown ${T::class.java.simpleName}: $value")

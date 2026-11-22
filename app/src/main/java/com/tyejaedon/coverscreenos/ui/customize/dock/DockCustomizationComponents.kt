@@ -57,6 +57,12 @@ import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusMedium
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
 
+/**
+ * Card presenting the cover dock's interactive drag-to-reorder strip alongside per-slot editors.
+ *
+ * Emits live preview reorders via [onPreviewReorder] while dragging and commits final slot changes
+ * through [onReorderCommitted], [onPickSlot], and [onClearSlot].
+ */
 @Composable
 internal fun DockCustomizationCard(
     dockPackages: List<String?>,
@@ -113,6 +119,12 @@ internal fun DockCustomizationCard(
     }
 }
 
+/**
+ * Editor row for a single cover dock slot displaying its app icon, slot index, label, and actions.
+ *
+ * When [longPressToClear] is enabled, long-pressing an occupied row clears the slot in addition
+ * to the explicit "Clear" button.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DockSlotEditorRow(
@@ -136,6 +148,7 @@ private fun DockSlotEditorRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
+            // Host legacy Android Drawable app icons inside Compose via ImageView.
             AndroidView(
                 factory = { viewContext -> ImageView(viewContext) },
                 update = { it.setImageDrawable(icon) },
@@ -166,6 +179,12 @@ private fun DockSlotEditorRow(
     }
 }
 
+/**
+ * Horizontal strip of dock slot tiles supporting long-press drag-and-drop reordering.
+ *
+ * Uses spring-animated scale, lift, shadow, and neighbor displacement to signal active slot swaps,
+ * triggering haptic feedback on pickup and slot transitions before committing on drop.
+ */
 @Composable
 private fun DockReorderStrip(
     dockPackages: List<String?>,
@@ -173,23 +192,34 @@ private fun DockReorderStrip(
     onPreviewReorder: (List<String?>) -> Unit,
     onReorderCommitted: (List<String?>) -> Unit
 ) {
+    // Triggers tactile vibrations when a dock tile is picked up and each time it crosses into a new slot.
     val hapticFeedback = LocalHapticFeedback.current
+    // Screen density helper to convert animated dp offsets into pixels for graphicsLayer translation.
     val density = LocalDensity.current
+    // Keep pointerInput closures observing the latest slot list without restarting active gestures.
     val latestDockPackages by rememberUpdatedState(newValue = dockPackages)
 
+    // Index (0..COVER_DOCK_SLOT_COUNT - 1) of the tile currently being dragged, or null when idle.
     var draggingSlotIndex by remember { mutableStateOf<Int?>(null) }
+    // Running horizontal pixel distance moved since the last slot swap; drains as slots shift.
     var dragDeltaX by remember { mutableFloatStateOf(0f) }
+    // Measured pixel width of one slot tile, used to decide when a drag crosses into the next slot.
     var slotWidthPx by remember { mutableFloatStateOf(1f) }
+    // Temporary slot order mutated live mid-drag so tiles shuffle smoothly before saving.
     var workingDockPackages by remember { mutableStateOf(normalizeDockPackageSlots(dockPackages)) }
+    // Slot order captured when a drag begins, used to skip saving if the tile ended up where it started.
     var dragStartDockSnapshot by remember { mutableStateOf<List<String?>?>(null) }
+    // Latest slot order produced during a drag, committed to DataStore when the finger lifts.
     var lastReorderedDockSnapshot by remember { mutableStateOf<List<String?>?>(null) }
 
+    // Sync external slot updates into working state only while no drag gesture is in progress.
     LaunchedEffect(dockPackages, draggingSlotIndex) {
         if (draggingSlotIndex == null) {
             workingDockPackages = normalizeDockPackageSlots(dockPackages)
         }
     }
 
+    // Persist to DataStore only when the final slot arrangement differs from the pre-drag snapshot.
     fun commitReorderIfChanged() {
         val startSnapshot = dragStartDockSnapshot
         val reorderedSnapshot = lastReorderedDockSnapshot
@@ -198,7 +228,9 @@ private fun DockReorderStrip(
         }
     }
 
+    // Maximum distance an adjacent tile nudges out of the way while another tile is dragged toward it.
     val neighborSnapDistance = 10.dp
+    // Normalized [-1f..1f] progress toward the left or right neighboring slot based on current drag pixels.
     val dragProgress = if (slotWidthPx > 0f) {
         (dragDeltaX / slotWidthPx).coerceIn(-1f, 1f)
     } else {
@@ -215,12 +247,14 @@ private fun DockReorderStrip(
             val label = resolveLabel(packageName)
             val isDragging = draggingSlotIndex == index
             val activeDragIndex = draggingSlotIndex
+            // Compute how far this slot should slide aside if a neighbor is being dragged toward it.
             val neighborSnapOffsetTarget = when {
                 activeDragIndex == null || isDragging -> 0.dp
                 dragProgress > 0f && index == activeDragIndex + 1 -> -(neighborSnapDistance * dragProgress)
                 dragProgress < 0f && index == activeDragIndex - 1 -> neighborSnapDistance * -dragProgress
                 else -> 0.dp
             }
+            // Spring-animated visual properties giving the dragged tile physical lift and smooth neighbor shifts.
             val neighborSnapOffset by animateDpAsState(
                 targetValue = neighborSnapOffsetTarget,
                 animationSpec = spring(stiffness = Spring.StiffnessMedium),
@@ -295,6 +329,7 @@ private fun DockReorderStrip(
                                 val activeIndex = draggingSlotIndex ?: return@detectDragGesturesAfterLongPress
                                 if (slotWidthPx <= 0f) return@detectDragGesturesAfterLongPress
 
+                                // Accumulate horizontal delta and swap whenever drag crosses a full slot width.
                                 dragDeltaX += dragAmount.x
                                 val slotShift = (dragDeltaX / slotWidthPx).toInt()
                                 if (slotShift == 0) return@detectDragGesturesAfterLongPress
@@ -312,6 +347,7 @@ private fun DockReorderStrip(
                                     onPreviewReorder(reorderedDock)
                                     hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     draggingSlotIndex = targetIndex
+                                    // Subtract the consumed distance so continued dragging stays aligned with the finger.
                                     val consumedShift = (targetIndex - activeIndex) * slotWidthPx
                                     dragDeltaX -= consumedShift
                                 }
@@ -357,13 +393,18 @@ private fun DockReorderStrip(
     }
 }
 
+/**
+ * Searchable dialog listing installed applications so the user can assign an app to a dock slot.
+ */
 @Composable
 internal fun DockAppPickerDialog(
     apps: List<AppModel>,
     onDismiss: () -> Unit,
     onAppSelected: (AppModel) -> Unit
 ) {
+    // Live text typed into the picker search box to narrow down installed apps.
     var query by remember { mutableStateOf("") }
+    // Cached subset of apps matching the search query by app label or package name.
     val filteredApps = remember(query, apps) {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isEmpty()) {
@@ -426,6 +467,7 @@ internal fun DockAppPickerDialog(
                                             val resolvedIcon = app.iconDrawable ?: runCatching {
                                                 imageView.context.packageManager.getApplicationIcon(app.packageName)
                                             }.getOrNull()
+                                            // Cache drawable identity in tag to skip redundant ImageView updates during scroll.
                                             if (imageView.tag !== resolvedIcon) {
                                                 imageView.setImageDrawable(resolvedIcon)
                                                 imageView.tag = resolvedIcon
@@ -455,6 +497,10 @@ internal fun DockAppPickerDialog(
     )
 }
 
+/**
+ * Normalizes [dockPackages] to exactly [COVER_DOCK_SLOT_COUNT] entries, trimming blanks and
+ * deduplicating package names while preserving each package's first slot position.
+ */
 internal fun normalizeDockPackageSlots(dockPackages: List<String?>): List<String?> {
     val normalized = MutableList<String?>(COVER_DOCK_SLOT_COUNT) { null }
     val seenPackages = linkedSetOf<String>()
@@ -469,6 +515,9 @@ internal fun normalizeDockPackageSlots(dockPackages: List<String?>): List<String
     return normalized
 }
 
+/**
+ * Moves a dock slot entry from [fromIndex] to [toIndex] and returns a normalized slot list.
+ */
 internal fun moveDockSlot(
     dockPackages: List<String?>,
     fromIndex: Int,
@@ -485,6 +534,10 @@ internal fun moveDockSlot(
     return normalizeDockPackageSlots(reordered)
 }
 
+/**
+ * Assigns [packageName] to [slotIndex], clearing any other slot that already held the same package
+ * so each app appears at most once in the dock.
+ */
 internal fun updateDockSlotSelection(
     dockPackages: List<String?>,
     slotIndex: Int,

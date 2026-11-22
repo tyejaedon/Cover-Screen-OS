@@ -23,6 +23,13 @@ import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
 
+/**
+ * Support card rendered in [PermissionsScreen] offering fallback shortcuts to Android's App Info
+ * settings screen ([onOpenAppSettings]) and manual permission re-polling ([onRefresh]).
+ *
+ * @param onOpenAppSettings Launches Android's App Details page (needed to unlock restricted settings or manually adjust grants).
+ * @param onRefresh Re-queries all permission checks in case a background toggle wasn't caught automatically.
+ */
 @Composable
 internal fun PermissionSupportActions(
     onOpenAppSettings: () -> Unit,

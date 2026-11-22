@@ -23,6 +23,8 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUILightColors
 import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUIShapes
 import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITypography
 
+// Holds the baseline dark Material 3 palette (true-black OLED backdrop + Galaxy indigo accents)
+// used whenever dark mode is active and before any user accent override is applied.
 private val CoverOSDarkColorScheme = darkColorScheme(
     primary = CoverOSPrimary,
     onPrimary = CoverOSOnPrimary,
@@ -45,6 +47,7 @@ private val CoverOSDarkColorScheme = darkColorScheme(
     outline = CoverOSDarkOutline
 )
 
+// Holds the baseline light Material 3 palette pairing a cool off-white canvas with crisp white cards.
 private val CoverOSLightColorScheme = lightColorScheme(
     primary = CoverOSLightPrimary,
     onPrimary = CoverOSLightOnPrimary,
@@ -68,9 +71,26 @@ private val CoverOSLightColorScheme = lightColorScheme(
 )
 
 /** Overlay panels use this token; outside the launcher theme it retains the original 16dp shape. */
+// staticCompositionLocalOf acts like a broadcast channel down the UI tree for rare settings changes
+// without paying snapshot-tracking overhead on every single widget read.
 val LocalCoverPanelCornerRadius = staticCompositionLocalOf { DEFAULT_PANEL_CORNER_RADIUS_DP.dp }
+
+/**
+ * Holds the active overlay accent color broadcast down the UI tree via [staticCompositionLocalOf].
+ * Controls and chips read `.current` so they automatically match the user's chosen [AccentColor].
+ */
 val LocalCoverOverlayAccent = staticCompositionLocalOf { CoverOSPrimary }
+
+/**
+ * Holds the readable foreground text/icon color paired with [LocalCoverOverlayAccent] so labels
+ * placed on solid accent buttons never become unreadable.
+ */
 val LocalCoverOverlayOnAccent = staticCompositionLocalOf { Color.Black }
+
+/**
+ * Holds an optional accent-tinted border color for overlay cards when a custom accent is chosen;
+ * stays `null` on the default theme so cards keep their neutral outline border.
+ */
 val LocalCoverOverlayPanelBorder = staticCompositionLocalOf<Color?> { null }
 
 /**
@@ -80,9 +100,15 @@ val LocalCoverOverlayPanelBorder = staticCompositionLocalOf<Color?> { null }
  */
 val LocalCoverAccentIsCustomized = staticCompositionLocalOf { false }
 
+/**
+ * Builds the Material 3 [ColorScheme][androidx.compose.material3.ColorScheme] for the requested
+ * [accent] and [dark] mode by swapping only the primary accent tokens onto the base canvas.
+ */
 internal fun coverAccentScheme(accent: AccentColor, dark: Boolean): androidx.compose.material3.ColorScheme {
+    // Base light/dark canvas colors that remain untouched regardless of accent choice.
     val base = if (dark) CoverOSDarkColorScheme else CoverOSLightColorScheme
     if (accent == AccentColor.DEFAULT) return base
+    // Four coordinated colors for the chosen accent: main color, soft card fill, and their two readable text colors.
     val (primary, container, onPrimary, onContainer) = when (accent) {
         AccentColor.MINT -> if (dark) listOf(CoverOSSecondary, CoverOSSecondaryContainer, CoverOSOnSecondary, Color(0xFFCBFFEA))
             else listOf(CoverOSLightSecondary, CoverOSLightSecondaryContainer, CoverOSLightOnSecondary, CoverOSLightOnSecondaryContainer)
@@ -97,6 +123,14 @@ internal fun coverAccentScheme(accent: AccentColor, dark: Boolean): androidx.com
     )
 }
 
+/**
+ * Root Compose theme for Cover-Screen-OS.
+ *
+ * Resolves [themePreference] (following [isSystemInDarkTheme] when set to [ThemePreference.SYSTEM]),
+ * builds the Material 3 color scheme for [accentColor], and binds both One UI design tokens and
+ * cover-overlay customization tokens into the tree via [CompositionLocalProvider] before rendering
+ * [MaterialTheme].
+ */
 @Composable
 fun CoverOSTheme(
     themePreference: ThemePreference = ThemePreference.SYSTEM,
@@ -104,20 +138,25 @@ fun CoverOSTheme(
     panelCornerRadiusDp: Float = DEFAULT_PANEL_CORNER_RADIUS_DP,
     content: @Composable () -> Unit
 ) {
+    // Final dark-mode switch resolved from user preference (System, Light, or Dark).
     val useDarkTheme = when (themePreference) {
         ThemePreference.SYSTEM -> isSystemInDarkTheme()
         ThemePreference.LIGHT -> false
         ThemePreference.DARK -> true
     }
 
+    // Complete Material 3 color scheme with any custom user accent baked in.
     val scheme = coverAccentScheme(accentColor, useDarkTheme)
+    // Baseline One UI surface/text palette matching the dark or light choice.
     val oneUiBaseColors = if (useDarkTheme) OneUIDarkColors else OneUILightColors
+    // Updated One UI palette carrying the custom accent color so One UI widgets stay visually unified with MaterialTheme.
     val effectiveOneUiColors = if (accentColor != AccentColor.DEFAULT) {
         oneUiBaseColors.copy(accent = scheme.primary)
     } else {
         oneUiBaseColors
     }
 
+    // Broadcast all One UI and cover-overlay theme values down to every composable inside `content`.
     CompositionLocalProvider(
         LocalOneUIColors provides effectiveOneUiColors,
         LocalOneUIDimensions provides OneUIDimensions(),
@@ -138,6 +177,10 @@ fun CoverOSTheme(
     }
 }
 
+/**
+ * Compatibility alias delegating directly to [CoverOSTheme] for older components that
+ * still reference `CoverScreenOSTheme`.
+ */
 // Alias maintained for backward compatibility with existing components
 @Composable
 fun CoverScreenOSTheme(

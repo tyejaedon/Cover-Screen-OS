@@ -23,25 +23,42 @@ import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * Dock customization category screen.
+ *
+ * Asynchronously scans installed applications via [PackageManagerAppScannerRepository], lets the
+ * user toggle dock visibility and the "Slot 4: All apps" override, and binds drag-to-reorder and
+ * slot-selection state to [LauncherSettingsStore].
+ */
 @Composable
 internal fun DockScreen(
     store: LauncherSettingsStore,
     settings: LauncherSettings,
     onAction: (String?, suspend () -> Unit) -> Unit
 ) {
+    // Application-scoped context so background package scanning never holds an Activity reference.
     val context = LocalContext.current.applicationContext
+    // Scanner repository queried once to discover launchable apps installed on the device.
     val repository = remember(context) { PackageManagerAppScannerRepository(context) }
+    // Scan installed launchable apps off the main thread when the repository instance initializes.
     val scan by produceState<Result<List<AppModel>>?>(initialValue = null, key1 = repository) {
         value = withContext(Dispatchers.Default) { runCatching { repository.scanInstalledApplications() } }
     }
+    // Extracted list of installed apps (empty while loading or if package scanning fails).
     val apps = scan?.getOrNull().orEmpty()
+    // Fast lookup table mapping package IDs to AppModel metadata (label & icon) for dock rows.
     val appsByPackage = remember(apps) { apps.associateBy { it.packageName } }
+    // Saved dock slot packages normalized to exact slot count with duplicates removed.
     val stored = remember(settings.dockPackages) { normalizeDockPackageSlots(settings.dockPackages) }
+    // Fallback initial dock layout populated from the first scanned apps when nothing is saved yet.
     val defaults = remember(apps) {
         normalizeDockPackageSlots(List(COVER_DOCK_SLOT_COUNT) { apps.getOrNull(it)?.packageName })
     }
+    // Seed the editor with the first scanned apps until the user has at least one persisted slot.
     val editorSlots = if (stored.any { it != null }) stored else defaults
+    // Local preview mirrors drag changes immediately and commits to DataStore when the gesture ends.
     var preview by remember(editorSlots) { mutableStateOf(editorSlots) }
+    // Zero-based index of the dock slot currently open in DockAppPickerDialog, or null when closed.
     var activeSlot by rememberSaveable { mutableStateOf<Int?>(null) }
 
     if (scan?.isFailure == true || (scan?.isSuccess == true && apps.isEmpty())) {
@@ -72,11 +89,13 @@ internal fun DockScreen(
     if (settings.dockSlotFourAllApps) {
         Text("Slot 4 opens the app grid. Your pinned app is saved and returns when this is turned off.")
     }
+    // Local Compose context used for fallback PackageManager icon lookups.
     val dockContext = androidx.compose.ui.platform.LocalContext.current
     DockCustomizationCard(
         dockPackages = preview,
         resolveLabel = { name -> name?.let { appsByPackage[it]?.name ?: it } ?: "Empty" },
         resolveIcon = { pkg ->
+            // Fall back to PackageManager directly if a persisted package is not in the scanned map.
             appsByPackage[pkg]?.iconDrawable ?: runCatching {
                 dockContext.packageManager.getApplicationIcon(pkg)
             }.getOrNull()

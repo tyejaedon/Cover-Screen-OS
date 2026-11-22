@@ -30,10 +30,15 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
+// Maximum snippet characters shown per history chip before appending an ellipsis.
 private const val HISTORY_CHIP_MAX_CHARS = 18
 
 /**
  * Clean, borderless One UI / Gboard-style copy/cut/paste action icons for the keyboard top bar.
+ *
+ * Callers bridge [onCopy], [onCut], [onPaste], and [canPaste] to Android's system
+ * `ClipboardManager` (or editor `InputConnection` / overlay selection state). Exposes stable
+ * Compose `testTag`s (`"clipboard_copy"`, `"clipboard_cut"`, `"clipboard_paste"`) for UI tests.
  */
 @Composable
 fun ClipboardActionIcons(
@@ -62,7 +67,10 @@ fun ClipboardActionIcons(
 
 /**
  * Horizontally-scrollable row of recent clipboard snippets for quick re-paste.
- * Renders nothing when [history] is empty so it takes no space.
+ *
+ * Uses a [LazyRow] keyed by snippet string (deduplicated upstream by [ClipboardHistory]) with
+ * test tag `"clipboard_history_row"`. Renders nothing when [history] is empty so it takes no
+ * vertical space.
  */
 @Composable
 fun ClipboardHistoryRow(
@@ -75,6 +83,7 @@ fun ClipboardHistoryRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp).testTag("clipboard_history_row")
     ) {
+        // Snippets in ClipboardHistory are unique, making each string a stable LazyRow item key.
         items(items = history, key = { it }) { snippet ->
             ClipboardHistoryChip(
                 snippet = snippet,
@@ -84,6 +93,12 @@ fun ClipboardHistoryRow(
     }
 }
 
+/**
+ * Circular icon action button used in [ClipboardActionIcons].
+ *
+ * Triggers [HapticTier.Light] on tap and omits the `clickable` modifier when [enabled] is
+ * `false` so accessibility services do not announce an interactive button while paste is empty.
+ */
 @Composable
 private fun ClipboardIconButton(
     icon: ImageVector,
@@ -92,12 +107,14 @@ private fun ClipboardIconButton(
     tag: String,
     enabled: Boolean = true
 ) {
+    // Light tap feedback fired when Copy, Cut, or enabled Paste is tapped.
     val performHaptic = rememberHapticPerformer(HapticTier.Light)
     Box(
         modifier = Modifier
             .size(28.dp)
             .clip(CircleShape)
             .then(
+                // Attach clickable semantics only when enabled so disabled Paste is non-focusable.
                 if (enabled) Modifier.clickable(role = Role.Button, onClickLabel = description) {
                     performHaptic()
                     onClick()
@@ -115,8 +132,12 @@ private fun ClipboardIconButton(
     }
 }
 
+/**
+ * Pill chip displaying a single truncated snippet inside [ClipboardHistoryRow].
+ */
 @Composable
 private fun ClipboardHistoryChip(snippet: String, onClick: () -> Unit) {
+    // Display label capped at 18 chars + ellipsis so long clips never crowd the narrow cover strip.
     val truncated = if (snippet.length > HISTORY_CHIP_MAX_CHARS) {
         snippet.take(HISTORY_CHIP_MAX_CHARS) + "…"
     } else {
