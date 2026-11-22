@@ -3,14 +3,36 @@ package com.tyejaedon.coverscreenos.models
 import android.graphics.Bitmap
 
 /** Playback control actions dispatched from cover-screen media cards to an active media session. */
-enum class CoverMediaTransportAction {
+sealed interface CoverMediaTransportAction {
     /** Toggle between play and pause via `MediaController.TransportControls`. */
-    PLAY_PAUSE,
+    data object PLAY_PAUSE : CoverMediaTransportAction
     /** Skip to the previous track in the active queue. */
-    PREVIOUS,
+    data object PREVIOUS : CoverMediaTransportAction
     /** Skip to the next track in the active queue. */
-    NEXT
+    data object NEXT : CoverMediaTransportAction
+    /** Seek to a specific playback position in milliseconds. */
+    data class SeekTo(val positionMs: Long) : CoverMediaTransportAction
+    /** Trigger a session-defined `PlaybackState.CustomAction` (e.g., shuffle, repeat, like). */
+    data class CustomAction(val action: String) : CoverMediaTransportAction
+    /** Invoke a `Notification.Action` button attached to the media notification. */
+    data class NotificationAction(val index: Int) : CoverMediaTransportAction
 }
+
+/**
+ * Extra playback control exposed by a media session's `PlaybackState.CustomAction` or
+ * `Notification.Action` (such as shuffle, repeat, or favorite).
+ *
+ * @property id Stable identifier for Compose keying.
+ * @property label Human-readable action label used for accessibility and text fallback.
+ * @property iconBitmap Optional icon bitmap decoded from the source app's resources.
+ * @property transportAction Command dispatched when the user taps this control.
+ */
+data class CoverMediaCustomAction(
+    val id: String,
+    val label: String,
+    val iconBitmap: Bitmap?,
+    val transportAction: CoverMediaTransportAction
+)
 
 /**
  * Snapshot of active media playback state and metadata rendered inside a cover media card.
@@ -22,6 +44,12 @@ enum class CoverMediaTransportAction {
  * @property canSkipPrevious Whether the session advertises skip-to-previous support.
  * @property canSkipNext Whether the session advertises skip-to-next support.
  * @property artworkBitmap Optional album art decoded from `MediaMetadata` for background/thumbnail UI.
+ * @property durationMs Total track duration in milliseconds, or `0L` if unknown.
+ * @property positionMs Last reported playback position in milliseconds, or `-1L` if unknown.
+ * @property playbackSpeed Playback speed multiplier reported by `PlaybackState`.
+ * @property positionUpdateTimeMs `SystemClock.elapsedRealtime()` timestamp of [positionMs].
+ * @property canSeek Whether the session advertises `PlaybackState.ACTION_SEEK_TO`.
+ * @property customActions Additional session/notification controls (e.g. shuffle, repeat, favorite).
  */
 data class CoverMediaModel(
     // Track or episode title shown as the primary line on the cover media card.
@@ -35,7 +63,15 @@ data class CoverMediaModel(
     val canSkipPrevious: Boolean,
     val canSkipNext: Boolean,
     // Decoded album/podcast cover bitmap displayed behind or beside the controls.
-    val artworkBitmap: Bitmap?
+    val artworkBitmap: Bitmap?,
+    // Track duration and position snapshot for progress bar and live seeking.
+    val durationMs: Long = 0L,
+    val positionMs: Long = -1L,
+    val playbackSpeed: Float = 0f,
+    val positionUpdateTimeMs: Long = 0L,
+    val canSeek: Boolean = false,
+    // Extra controls (shuffle, repeat, like, etc.) advertised by the media session/notification.
+    val customActions: List<CoverMediaCustomAction> = emptyList()
 )
 
 /**
