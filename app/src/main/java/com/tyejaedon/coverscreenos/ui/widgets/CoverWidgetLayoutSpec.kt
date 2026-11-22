@@ -57,6 +57,13 @@ internal data class PackedTwoColumnGrid(
     val totalHeightPx: Int
 )
 
+/** Unfilled vertical pocket left behind in a shorter column above a full-width 2-column row. */
+private data class OpenColumnGap(
+    val col: Int,
+    var startY: Int,
+    val maxBottomY: Int
+)
+
 /**
  * Converts [AppWidgetProviderInfo] pixel dimensions (`minWidth`, `maxResizeWidth`, etc.) into
  * dp-scaled [WidgetGridMetadata], falling back to a default 4x2 resizable footprint if null.
@@ -219,7 +226,9 @@ private fun fitWidgetViewport(
  * Packs a list of [WidgetPlacementSpec] entries into a two-column masonry grid.
  *
  * Full-width (`colSpan >= 2`) widgets synchronize both column Y cursors before spanning across
- * the container; single-column widgets are always placed into whichever column is currently shorter.
+ * the container and record any leftover vertical pocket in the shorter column; single-column
+ * widgets first check those open pockets for a fit before dropping into whichever active column
+ * is currently shorter.
  */
 internal fun packTwoColumnGrid(
     specs: List<WidgetPlacementSpec>,
@@ -237,12 +246,26 @@ internal fun packTwoColumnGrid(
     val colHeights = intArrayOf(0, 0)
     // Output pixel bounds for each widget in the same order as specs.
     val placements = ArrayList<GridItemPlacement>(specs.size)
+    // Open single-column pockets above earlier 2-column barriers that later 1-col widgets can backfill.
+    val openGaps = mutableListOf<OpenColumnGap>()
 
     for (spec in specs) {
         val heightPx = dpToPx(spec.slotHeightDp).coerceAtLeast(1)
         if (spec.colSpan >= 2) {
             // Full-width rows start below whichever column currently extends further down.
             val y = maxOf(colHeights[0], colHeights[1])
+            val shorterCol = if (colHeights[0] <= colHeights[1]) 0 else 1
+            val gapStartY = colHeights[shorterCol]
+            val gapMaxBottomY = y - rowGapPx
+            if (gapMaxBottomY > gapStartY) {
+                openGaps.add(
+                    OpenColumnGap(
+                        col = shorterCol,
+                        startY = gapStartY,
+                        maxBottomY = gapMaxBottomY
+                    )
+                )
+            }
             placements.add(
                 GridItemPlacement(
                     xPx = 0,
@@ -255,19 +278,41 @@ internal fun packTwoColumnGrid(
             colHeights[0] = nextY
             colHeights[1] = nextY
         } else {
-            // Drop single-column cards into the shorter column to keep the waterfall balanced.
-            val targetCol = if (colHeights[0] <= colHeights[1]) 0 else 1
-            val x = targetCol * (singleColWidthPx + columnGapPx)
-            val y = colHeights[targetCol]
-            placements.add(
-                GridItemPlacement(
-                    xPx = x,
-                    yPx = y,
-                    widthPx = singleColWidthPx,
-                    heightPx = heightPx
+            // First check earlier open single-column gaps above 2-col widgets before extending the grid.
+            val gapIndex = openGaps.indexOfFirst { gap ->
+                heightPx <= (gap.maxBottomY - gap.startY)
+            }
+            if (gapIndex >= 0) {
+                val gap = openGaps[gapIndex]
+                val x = gap.col * (singleColWidthPx + columnGapPx)
+                val y = gap.startY
+                placements.add(
+                    GridItemPlacement(
+                        xPx = x,
+                        yPx = y,
+                        widthPx = singleColWidthPx,
+                        heightPx = heightPx
+                    )
                 )
-            )
-            colHeights[targetCol] = y + heightPx + rowGapPx
+                gap.startY = y + heightPx + rowGapPx
+                if (gap.startY >= gap.maxBottomY) {
+                    openGaps.removeAt(gapIndex)
+                }
+            } else {
+                // Drop single-column cards into the shorter active column to keep the waterfall balanced.
+                val targetCol = if (colHeights[0] <= colHeights[1]) 0 else 1
+                val x = targetCol * (singleColWidthPx + columnGapPx)
+                val y = colHeights[targetCol]
+                placements.add(
+                    GridItemPlacement(
+                        xPx = x,
+                        yPx = y,
+                        widthPx = singleColWidthPx,
+                        heightPx = heightPx
+                    )
+                )
+                colHeights[targetCol] = y + heightPx + rowGapPx
+            }
         }
     }
 

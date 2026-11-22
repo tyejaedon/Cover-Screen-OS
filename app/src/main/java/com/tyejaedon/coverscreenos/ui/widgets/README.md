@@ -26,7 +26,7 @@ Because Cover Screen OS runs as an overlay launcher rather than replacing the st
 2. **Computing the 2-Column Layout (`CoverWidgetLayoutSpec.kt`)**:
    - Each pinned widget ID looks up `AppWidgetProviderInfo` and converts pixel dimensions to dp (`toWidgetGridMetadata`).
    - `computeWidgetPlacementSpec()` decides whether the widget spans 1 or 2 columns (`resolveColumnSpan`, keeping compact `<=2`-col widgets and tall `3x4+` portrait widgets in 1 column), computes a clamped aspect-ratio slot height (`82dp` to `maxSlotHeightDp`), and fits the inner viewport (`fitWidgetViewport`) around `resizeMode` limits—snapping cleanly to the edges when a resizable widget already fills `>= 85%`.
-   - `packTwoColumnGrid()` drops 1-column widgets into whichever column is shorter and starts 2-column widgets below both columns.
+   - `packTwoColumnGrid()` drops 1-column widgets into open vertical gaps above earlier 2-column barriers (if they fit) or into whichever active column is shorter, and starts 2-column widgets below both columns.
 3. **Rendering & Interacting (`CoverAppWidgetHostTile`)**:
    - While the overlay is visible, `CoverAppWidgetHostManager.startListening()` keeps widget content alive.
    - `CoverWidgetTwoColumnGrid` (a custom Compose `Layout`) measures each tile with exact `Constraints.fixed` pixel bounds.
@@ -66,7 +66,7 @@ Because Cover Screen OS runs as an overlay launcher rather than replacing the st
   - `WIDGET_MIN_HEIGHT_DP` (`82`), `WIDGET_DEFAULT_MAX_HEIGHT_DP` (`252`), `WIDGET_GRID_GAP_DP` (`10`): Baseline dp limits and grid gutter spacing.
   - `SNAP_TO_FILL_THRESHOLD` (`0.85f`): Resizable widgets filling at least 85% of both slot width and height snap flush to the tile edges.
   - `WidgetGridMetadata` & `WidgetPlacementSpec`: Density-normalized provider limits (`targetCell*`, `minWidthDp`, `maxResize*`, `resizeMode`) and computed slot/widget dp sizes.
-  - `colHeights` (`IntArray(2)`) & `placements`: Running left/right column Y cursors and output pixel rectangles in `packTwoColumnGrid`.
+  - `colHeights` (`IntArray(2)`), `openGaps`, & `placements`: Running left/right column Y cursors, unfilled shorter-column pockets above 2-column rows, and output pixel rectangles in `packTwoColumnGrid`.
 - **How it connects**: Consumed by `CoverAppWidgetHostTile` (`specs` and `CoverWidgetTwoColumnGrid`) and unit-tested directly without needing Android Views.
 
 ### `CoverWidgetPickerActivity.kt`

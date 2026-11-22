@@ -116,4 +116,56 @@ class CoverWidgetLayoutSpecTest {
         assertEquals(336, packed.placements[3].widthPx)
         assertTrue(packed.totalHeightPx == 227 + 168)
     }
+
+    @Test
+    fun `packTwoColumnGrid backfills fitting 1-col widget into open gap beside earlier 1-col widget`() {
+        val specs = listOf(
+            computeWidgetPlacementSpec(meta(2, 2), containerWidthDp = 336), // 1 col, 163dp
+            computeWidgetPlacementSpec(meta(4, 2), containerWidthDp = 336), // 2 cols, 168dp at y = 173
+            computeWidgetPlacementSpec(meta(2, 2), containerWidthDp = 336)  // 1 col, 163dp -> fits in col 1 at y = 0
+        )
+        val packed = packTwoColumnGrid(
+            specs = specs,
+            singleColWidthPx = 163,
+            fullWidthPx = 336,
+            columnGapPx = 10,
+            rowGapPx = 10,
+            dpToPx = { it }
+        )
+
+        assertEquals(3, packed.placements.size)
+        // Item 0 in col 0 at y = 0
+        assertEquals(0, packed.placements[0].xPx)
+        assertEquals(0, packed.placements[0].yPx)
+        // Item 1 spans 2 cols at y = 173
+        assertEquals(0, packed.placements[1].xPx)
+        assertEquals(173, packed.placements[1].yPx)
+        // Item 2 backfills col 1 side-by-side with Item 0 at y = 0
+        assertEquals(173, packed.placements[2].xPx)
+        assertEquals(0, packed.placements[2].yPx)
+        assertEquals(173 + 168, packed.totalHeightPx)
+    }
+
+    @Test
+    fun `packTwoColumnGrid does not backfill oversized 1-col widget into too-short open gap`() {
+        val specs = listOf(
+            computeWidgetPlacementSpec(meta(2, 2), containerWidthDp = 336), // 1 col, 163dp -> gap max height 163dp
+            computeWidgetPlacementSpec(meta(4, 2), containerWidthDp = 336), // 2 cols, 168dp at y = 173
+            computeWidgetPlacementSpec(meta(3, 4), containerWidthDp = 336)  // 1 col, 217dp -> too tall for 163dp gap
+        )
+        val packed = packTwoColumnGrid(
+            specs = specs,
+            singleColWidthPx = 163,
+            fullWidthPx = 336,
+            columnGapPx = 10,
+            rowGapPx = 10,
+            dpToPx = { it }
+        )
+
+        assertEquals(3, packed.placements.size)
+        // Item 2 cannot fit in the 163dp gap, so it places below Item 1 at y = 173 + 168 + 10 = 351
+        assertEquals(0, packed.placements[2].xPx)
+        assertEquals(351, packed.placements[2].yPx)
+        assertEquals(351 + 217, packed.totalHeightPx)
+    }
 }
