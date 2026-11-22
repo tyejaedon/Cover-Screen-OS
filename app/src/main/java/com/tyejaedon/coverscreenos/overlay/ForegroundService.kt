@@ -285,9 +285,7 @@ class ForegroundService : Service() {
         com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(this)
     }
     // Tracks recently opened cover apps (most-recent-first) and fallback Recents carousel visibility.
-    private val recentAppsTracker by lazy {
-        CoverRecentAppsTracker(selfPackageName = packageName)
-    }
+    private lateinit var recentAppsTracker: CoverRecentAppsTracker
     // Verifies shortly after dispatching GLOBAL_ACTION_RECENTS whether native Recents actually appeared.
     private var pendingNativeRecentsVerifyJob: Job? = null
 
@@ -493,6 +491,7 @@ class ForegroundService : Service() {
         )
         appRepository = PackageManagerAppScannerRepository(this)
         launcherSettingsStore = LauncherSettingsStore(this)
+        recentAppsTracker = CoverRecentAppsTracker(selfPackageName = packageName)
         overlayWindowController = OverlayWindowController()
         coverDisplayHelper = CoverDisplayHelper(this)
         displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
