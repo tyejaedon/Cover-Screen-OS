@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Thread-safe, most-recent-first ring history of user apps opened on the cover display,
- * paired with visibility state for the fallback Cover Recents Task Switcher carousel.
+ * paired with visibility state for the Cover Recents Task Switcher carousel.
  *
  * Filters out system chrome (`com.android.systemui`, `com.samsung.systemui`, AOD), stock
  * launchers, and Cover-Screen-OS itself so only launchable cover apps appear in Recents.
@@ -26,7 +26,7 @@ internal class CoverRecentAppsTracker(
     // Controls whether the in-overlay Cover Recents carousel is currently expanded.
     private val mutableIsRecentsSheetVisible = MutableStateFlow(false)
 
-    /** Observable visibility flag for the fallback Cover Recents sheet inside CoverAppGridOverlay. */
+    /** Observable visibility flag for the Cover Recents sheet inside CoverAppGridOverlay. */
     val isRecentsSheetVisible: StateFlow<Boolean> = mutableIsRecentsSheetVisible.asStateFlow()
 
     /**

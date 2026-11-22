@@ -52,7 +52,6 @@ import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.ui.CoverSearchUiTestTags
-import com.tyejaedon.coverscreenos.ui.theme.LocalCoverOverlayAccent
 import com.tyejaedon.coverscreenos.ui.theme.LocalCoverPanelCornerRadius
 import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiPanel
@@ -63,12 +62,10 @@ import kotlin.math.roundToInt
 private val RECENTS_CARD_DISMISS_THRESHOLD = 48.dp
 
 /**
- * Fallback Cover Recents Task Switcher carousel displayed inside the cover launcher overlay when
- * system `GLOBAL_ACTION_RECENTS` is unavailable or ignored on the OEM cover screen.
+ * Cover Recents Task Switcher carousel displayed inside the cover launcher overlay.
  *
  * Shows a horizontal carousel of recently active cover apps paired with their latest active
- * notification snippet, allowing tap-to-resume, swipe-up-to-dismiss, Clear All, and a quick
- * shortcut to re-attempt native system Recents.
+ * notification snippet, allowing tap-to-resume, swipe-up-to-dismiss, and Clear All.
  */
 @Composable
 internal fun CoverRecentsPanelTile(
@@ -77,13 +74,11 @@ internal fun CoverRecentsPanelTile(
     onAppSelected: (AppModel) -> Unit,
     onDismissApp: (String) -> Unit,
     onClearAll: () -> Unit,
-    onTriggerNativeRecents: () -> Unit,
     onDismissPanel: () -> Unit,
     hazeState: HazeState,
     modifier: Modifier = Modifier
 ) {
     val cardShape = RoundedCornerShape(LocalCoverPanelCornerRadius.current)
-    val accentColor = LocalCoverOverlayAccent.current
     val dismissThresholdPx = with(LocalDensity.current) { RECENTS_CARD_DISMISS_THRESHOLD.toPx() }
     val latestNotificationByPackage = remember(notifications) {
         notifications
@@ -139,20 +134,6 @@ internal fun CoverRecentsPanelTile(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(accentColor.copy(alpha = 0.18f))
-                            .clickable(onClick = onTriggerNativeRecents)
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
-                    ) {
-                        Text(
-                            text = "System",
-                            style = CoverOneUIType.chipLabel,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-
                     if (recentApps.isNotEmpty()) {
                         Box(
                             modifier = Modifier

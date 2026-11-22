@@ -45,7 +45,7 @@ private const val HOLD_FOR_RECENTS_DELAY_MS = 260L
  *
  * Supported gestures:
  * - **Swipe up + release quickly**: [onHomeGesture] (reclaim cover launcher home).
- * - **Swipe up + hold (>= 260 ms)**: [onRecentsGesture] (native-first Recents / Cover Recents fallback).
+ * - **Swipe up + hold (>= 260 ms)**: [onRecentsGesture] (Cover Recents overview).
  * - **Swipe right**: [onRecentsGesture].
  * - **Swipe left**: [onBackGesture].
  */
