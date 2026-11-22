@@ -708,7 +708,7 @@ class CoverAccessibilityService : AccessibilityService() {
         val attached = barSurface.attach(display = coverDisplay, windowConfig = config) {
             CoverBottomGestureBar(
                 onHomeGesture = { ForegroundService.requestOverlayReclaim(reason = "gesture_bar_home") },
-                onRecentsGesture = { ForegroundService.requestCoverRecents(preferNative = true) },
+                onRecentsGesture = { ForegroundService.requestCoverRecents() },
                 onBackGesture = {
                     if (!shouldThrottleGlobalAction()) {
                         performGlobalAction(GLOBAL_ACTION_BACK)
