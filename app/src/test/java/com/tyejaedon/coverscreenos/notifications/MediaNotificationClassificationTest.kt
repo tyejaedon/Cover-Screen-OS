@@ -116,6 +116,8 @@ class MediaNotificationClassificationTest {
         assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("Play"))
         assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("  pause "))
         assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("Previous"))
+        assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("Previous track"))
+        assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("Next track"))
         assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("Skip to next"))
         assertFalse(CoverNotificationListenerService.isStandardMediaTransportLabel("Shuffle"))
         assertFalse(CoverNotificationListenerService.isStandardMediaTransportLabel("Repeat"))

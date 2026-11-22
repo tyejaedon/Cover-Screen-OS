@@ -94,11 +94,18 @@ class CoverNotificationListenerService : NotificationListenerService() {
             "play",
             "pause",
             "play/pause",
+            "resume",
             "previous",
+            "previous track",
             "prev",
+            "skip previous",
             "skip to previous",
             "next",
+            "next track",
+            "skip next",
             "skip to next",
+            "fast forward",
+            "rewind",
             "stop"
         )
 
@@ -107,7 +114,13 @@ class CoverNotificationListenerService : NotificationListenerService() {
          * by the cover player (`PREVIOUS`, `PLAY_PAUSE`, `NEXT`, `STOP`).
          */
         internal fun isStandardMediaTransportLabel(label: String): Boolean {
-            return label.trim().lowercase() in STANDARD_MEDIA_TRANSPORT_LABELS
+            val normalized = label.trim().lowercase()
+            if (normalized in STANDARD_MEDIA_TRANSPORT_LABELS) return true
+            return normalized.startsWith("previous ") ||
+                normalized.startsWith("next ") ||
+                normalized.startsWith("skip ") ||
+                normalized.endsWith(" previous") ||
+                normalized.endsWith(" next")
         }
 
         /**
@@ -773,7 +786,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
             val iconBitmap = if (customAction.icon != 0) {
                 runCatching { Icon.createWithResource(packageName, customAction.icon) }
                     .getOrNull()
-                    ?.let { icon -> iconToBitmap(icon) }
+                    ?.let { icon -> iconToBitmap(icon, packageName) }
             } else {
                 null
             }
@@ -785,23 +798,25 @@ class CoverNotificationListenerService : NotificationListenerService() {
             )
         }
 
-        notification.actions.orEmpty().forEachIndexed { index, notifAction ->
-            if (notifAction.actionIntent == null) return@forEachIndexed
-            val label = notifAction.title?.toString()?.trim().orEmpty()
-            if (label.isEmpty()) return@forEachIndexed
-            val normalizedLabel = label.lowercase()
-            if (isStandardMediaTransportLabel(normalizedLabel) || !seenLabels.add(normalizedLabel)) {
-                return@forEachIndexed
+        if (result.isEmpty()) {
+            notification.actions.orEmpty().forEachIndexed { index, notifAction ->
+                if (notifAction.actionIntent == null) return@forEachIndexed
+                val label = notifAction.title?.toString()?.trim().orEmpty()
+                if (label.isEmpty()) return@forEachIndexed
+                val normalizedLabel = label.lowercase()
+                if (isStandardMediaTransportLabel(normalizedLabel) || !seenLabels.add(normalizedLabel)) {
+                    return@forEachIndexed
+                }
+                val iconBitmap = runCatching { notifAction.getIcon() }
+                    .getOrNull()
+                    ?.let { icon -> iconToBitmap(icon, packageName) }
+                result += CoverMediaCustomAction(
+                    id = "notif:$index:$normalizedLabel",
+                    label = label,
+                    iconBitmap = iconBitmap,
+                    transportAction = CoverMediaTransportAction.NotificationAction(index)
+                )
             }
-            val iconBitmap = runCatching { notifAction.getIcon() }
-                .getOrNull()
-                ?.let { icon -> iconToBitmap(icon) }
-            result += CoverMediaCustomAction(
-                id = "notif:$index:$normalizedLabel",
-                label = label,
-                iconBitmap = iconBitmap,
-                transportAction = CoverMediaTransportAction.NotificationAction(index)
-            )
         }
 
         return result
@@ -866,8 +881,17 @@ class CoverNotificationListenerService : NotificationListenerService() {
         return iconToBitmap(iconValue)?.let { bitmap -> toArgb8888Bitmap(bitmap) }
     }
 
-    private fun iconToBitmap(icon: Icon): Bitmap? {
-        val drawable = runCatching { icon.loadDrawable(this) }
+    private fun iconToBitmap(icon: Icon, packageName: String? = null): Bitmap? {
+        val resolvedIcon = if (
+            !packageName.isNullOrBlank() &&
+            icon.type == Icon.TYPE_RESOURCE &&
+            icon.resPackage.isNullOrBlank()
+        ) {
+            runCatching { Icon.createWithResource(packageName, icon.resId) }.getOrDefault(icon)
+        } else {
+            icon
+        }
+        val drawable = runCatching { resolvedIcon.loadDrawable(this) }
             .getOrElse { error ->
                 Log.w(NOTIFICATION_LOG_TAG, "Unable to load Icon drawable for media artwork: ${error.message}")
                 null

@@ -303,6 +303,24 @@ class ForegroundServiceSuppressionTest {
         }
     }
 
+    @Test
+    fun `gesture_bar_home reclaim immediately clears app launch suppression even while user app window is on top`() {
+        mockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        try {
+            every { com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper.hasCoreOverlayPermissions(any()) } returns true
+            startSuppression(packageName = "com.example.userapp")
+            foregroundPackage = "com.example.userapp"
+            assertTrue(state.isOverlaySuppressedForAppLaunch)
+
+            invoke("requestOverlayReclaimInternal", "gesture_bar_home")
+
+            assertFalse(state.isOverlaySuppressedForAppLaunch)
+            assertEquals(null, state.launchSuppressedPackageName)
+        } finally {
+            unmockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        }
+    }
+
     private fun startSuppression(packageName: String, elapsedMs: Long = 1_000L) {
         state.markSuppressionStarted(
             packageName,

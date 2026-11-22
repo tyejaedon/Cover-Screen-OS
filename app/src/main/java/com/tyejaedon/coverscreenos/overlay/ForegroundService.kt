@@ -220,6 +220,10 @@ class ForegroundService : Service() {
             activeServiceRef?.get()?.requestIncomingCallPassthroughInternal(packageName)
         }
 
+        /** Returns `true` while an active call notification is reported by [CoverNotificationListenerService]. */
+        fun isCallNotificationActive(): Boolean =
+            activeServiceRef?.get()?.callNotificationActive == true
+
         /**
          * Updates active call notification state from [CoverNotificationListenerService],
          * suppressing during active calls and evaluating resume once the call ends.
@@ -729,6 +733,16 @@ class ForegroundService : Service() {
         publishRuntime("Overlay reclaim requested")
 
         logDebug { "request reason=$normalizedReason overlayActive=$isOverlayActive display=${overlayWindowController.getActiveDisplayId()} suppressed=$isOverlaySuppressedForAppLaunch" }
+
+        if (normalizedReason == "gesture_bar_home") {
+            recentAppsTracker.setRecentsSheetVisible(false)
+            if (isOverlaySuppressedForAppLaunch) {
+                completeSuppressionAndRetargetOnce(reason = "reclaim:$normalizedReason")
+            } else {
+                scheduleRetarget(reason = "foreground_reclaim:$normalizedReason")
+            }
+            return
+        }
 
         serviceScope.launch {
             if (isOverlaySuppressedForAppLaunch) {

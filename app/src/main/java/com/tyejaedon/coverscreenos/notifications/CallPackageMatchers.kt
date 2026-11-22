@@ -18,6 +18,7 @@ internal object CallPackageMatchers {
         "com.android.incallui",
         "com.android.server.telecom"
     )
+    private val CALL_ACTIVITY_CLASS_TOKENS = arrayOf("call", "voip", "incall", "ringing", "answer")
 
     /**
      * Returns `true` when [packageName] matches a known dialer, VoIP app, or telecom InCallUI
@@ -32,6 +33,28 @@ internal object CallPackageMatchers {
         return INCOMING_CALL_SURFACE_PREFIXES.any { prefix ->
             normalizedPackage == prefix || normalizedPackage.startsWith("$prefix.")
         }
+    }
+
+    /**
+     * Returns `true` when a foreground window belonging to [packageName]/[className] actually
+     * represents an incoming/active call UI rather than a general chat screen (e.g. WhatsApp Home).
+     */
+    fun isIncomingCallWindow(
+        packageName: String,
+        className: String?,
+        isCallNotificationActive: Boolean = false
+    ): Boolean {
+        if (!isIncomingCallPackage(packageName)) return false
+        val normalizedPackage = packageName.trim().lowercase()
+        if (INCOMING_CALL_SURFACE_PREFIXES.any { prefix ->
+                normalizedPackage == prefix || normalizedPackage.startsWith("$prefix.")
+            }
+        ) {
+            return true
+        }
+        if (isCallNotificationActive) return true
+        val normalizedClass = className?.trim()?.lowercase()?.takeUnless { it.isEmpty() } ?: return true
+        return CALL_ACTIVITY_CLASS_TOKENS.any { token -> normalizedClass.contains(token) }
     }
 }
 
