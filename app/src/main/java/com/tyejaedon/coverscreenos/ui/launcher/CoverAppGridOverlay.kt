@@ -89,6 +89,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
+import com.tyejaedon.coverscreenos.overlay.CoverBottomGestureBar
 import com.tyejaedon.coverscreenos.ui.launcher.WidgetGridPageTile
 import com.tyejaedon.coverscreenos.ui.launcher.rememberVoiceInputHandle
 import dev.chrisbanes.haze.HazeState
@@ -186,7 +187,13 @@ fun CoverAppGridOverlay(
     onRequestUnlock: () -> Unit = {},
     onRequestScreenOff: () -> Unit = {},
     onRequestSystemShade: () -> Unit = {},
-    onOpenCustomize: () -> Unit = {}
+    onOpenCustomize: () -> Unit = {},
+    recentAppPackages: List<String> = emptyList(),
+    isRecentsVisible: Boolean = false,
+    onRequestRecents: () -> Unit = {},
+    onDismissRecentApp: (String) -> Unit = {},
+    onClearAllRecentApps: () -> Unit = {},
+    onDismissRecents: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -351,6 +358,15 @@ fun CoverAppGridOverlay(
                         }
                     )
             ) {
+                val recentApps = remember(apps, recentAppPackages) {
+                    val appByPkg = apps.associateBy { it.packageName }
+                    recentAppPackages.map { pkg ->
+                        appByPkg[pkg] ?: AppModel(
+                            name = pkg.substringAfterLast('.').ifBlank { pkg },
+                            packageName = pkg
+                        )
+                    }
+                }
                 Column(modifier = Modifier.fillMaxSize()) {
                     InteractiveSection(
                         notifications = notifications,
@@ -384,6 +400,12 @@ fun CoverAppGridOverlay(
                         onRequestScreenOff = onRequestScreenOff,
                         onRequestSystemShade = onRequestSystemShade,
                         onOpenCustomize = onOpenCustomize,
+                        recentApps = recentApps,
+                        isRecentsVisible = isRecentsVisible,
+                        onRequestRecents = onRequestRecents,
+                        onDismissRecentApp = onDismissRecentApp,
+                        onClearAllRecentApps = onClearAllRecentApps,
+                        onDismissRecents = onDismissRecents,
                         pagerState = pagerState,
                         hazeState = hazeState,
                         modifier = Modifier
@@ -435,6 +457,12 @@ private fun InteractiveSection(
     onRequestScreenOff: () -> Unit,
     onRequestSystemShade: () -> Unit,
     onOpenCustomize: () -> Unit,
+    recentApps: List<AppModel>,
+    isRecentsVisible: Boolean,
+    onRequestRecents: () -> Unit,
+    onDismissRecentApp: (String) -> Unit,
+    onClearAllRecentApps: () -> Unit,
+    onDismissRecents: () -> Unit,
     pagerState: PagerState,
     hazeState: HazeState,
     modifier: Modifier = Modifier
@@ -515,7 +543,7 @@ private fun InteractiveSection(
     }
 
     fun openWidgetTileFromLockscreen() {
-        if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX || isWidgetTileVisible || isQuickSettingsVisible) return
+        if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX || isWidgetTileVisible || isQuickSettingsVisible || isRecentsVisible) return
         if (latestIsDeviceLocked) {
             dismissSearchInput()
             latestOnRequestUnlock()
@@ -525,7 +553,7 @@ private fun InteractiveSection(
     }
 
     fun openQuickSettingsFromLockscreen() {
-        if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX || isQuickSettingsVisible || isWidgetTileVisible) return
+        if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX || isQuickSettingsVisible || isWidgetTileVisible || isRecentsVisible) return
         isQuickSettingsVisible = true
     }
 
@@ -543,9 +571,10 @@ private fun InteractiveSection(
         }
     }
 
-    // Collapse unlocked-only search/widget overlays and snap back to the lock page when locked.
+    // Collapse unlocked-only search/widget/recents overlays and snap back to the lock page when locked.
     LaunchedEffect(isDeviceLocked) {
         if (!isDeviceLocked) return@LaunchedEffect
+        onDismissRecents()
         if (isWidgetTileVisible) {
             dismissSearchInput()
             isWidgetTileVisible = false
@@ -626,7 +655,7 @@ private fun InteractiveSection(
             private var pendingUnlockOnRelease = false
 
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (source != NestedScrollSource.UserInput || isWidgetTileVisible || isQuickSettingsVisible) {
+                if (source != NestedScrollSource.UserInput || isWidgetTileVisible || isQuickSettingsVisible || isRecentsVisible) {
                     return Offset.Zero
                 }
                 if (!latestIsDeviceLocked) {
@@ -660,7 +689,7 @@ private fun InteractiveSection(
                 available: Offset,
                 source: NestedScrollSource
             ): Offset {
-                if (source != NestedScrollSource.UserInput || isWidgetTileVisible || isQuickSettingsVisible) {
+                if (source != NestedScrollSource.UserInput || isWidgetTileVisible || isQuickSettingsVisible || isRecentsVisible) {
                     return Offset.Zero
                 }
                 if (available.y > 0f) {
@@ -680,6 +709,7 @@ private fun InteractiveSection(
                     latestIsDeviceLocked &&
                     !isWidgetTileVisible &&
                     !isQuickSettingsVisible &&
+                    !isRecentsVisible &&
                     pagerState.currentPage == LOCK_PAGER_PAGE_INDEX
                 ) {
                     pendingUnlockOnRelease = false
@@ -720,13 +750,13 @@ private fun InteractiveSection(
                     .nestedScroll(systemShadeNestedScrollConnection)
             ) {
                 // beyondViewportPageCount = 0 avoids composing offscreen pages on the compact cover display;
-                // horizontal paging freezes while search/quick-settings modal overlays are visible.
+                // horizontal paging freezes while search/quick-settings/recents modal overlays are visible.
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag(CoverSearchUiTestTags.OVERLAY_PAGER),
-                    userScrollEnabled = !isWidgetTileVisible && !isQuickSettingsVisible,
+                    userScrollEnabled = !isWidgetTileVisible && !isQuickSettingsVisible && !isRecentsVisible,
                     pageSpacing = 10.dp,
                     beyondViewportPageCount = 0
                 ) { pageIndex ->
@@ -951,22 +981,63 @@ private fun InteractiveSection(
                     )
                 }
 
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isRecentsVisible && !isDeviceLocked,
+                    enter = slideInVertically(initialOffsetY = { fullHeight -> fullHeight }) + fadeIn(),
+                    exit = slideOutVertically(targetOffsetY = { fullHeight -> fullHeight }) + fadeOut(),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    CoverRecentsPanelTile(
+                        recentApps = recentApps,
+                        notifications = notifications,
+                        onAppSelected = { app ->
+                            onDismissRecents()
+                            dismissSearchInput()
+                            onAppSelected(app)
+                        },
+                        onDismissApp = onDismissRecentApp,
+                        onClearAll = onClearAllRecentApps,
+                        onTriggerNativeRecents = onRequestRecents,
+                        onDismissPanel = onDismissRecents,
+                        hazeState = hazeState,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
                 GridPageLetterTooltip(
                     letter = hintedGridLetter,
-                    visible = !isWidgetTileVisible && !isQuickSettingsVisible && showPageLetterTooltip && hintedGridLetter != null,
+                    visible = !isWidgetTileVisible && !isQuickSettingsVisible && !isRecentsVisible && showPageLetterTooltip && hintedGridLetter != null,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = 6.dp)
                 )
             }
 
-            if (!isWidgetTileVisible && !isQuickSettingsVisible) {
+            if (!isWidgetTileVisible && !isQuickSettingsVisible && !isRecentsVisible) {
                 PageIndicator(
                     pagerState = pagerState,
                     pageCount = totalPageCount,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = if (isDeviceLocked) 32.dp else 12.dp),
                     onScrubActiveChanged = { active -> isIndicatorScrubbing = active }
                 )
+                if (!isDeviceLocked) {
+                    CoverBottomGestureBar(
+                        onHomeGesture = {
+                            uiScope.launch {
+                                pagerState.animateScrollToPage(LOCK_PAGER_PAGE_INDEX)
+                            }
+                        },
+                        onRecentsGesture = onRequestRecents,
+                        onBackGesture = {
+                            if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX) {
+                                uiScope.launch {
+                                    pagerState.animateScrollToPage(LOCK_PAGER_PAGE_INDEX)
+                                }
+                            }
+                        },
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
             }
         }
     }

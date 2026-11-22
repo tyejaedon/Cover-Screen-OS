@@ -134,4 +134,27 @@ class CoverHomeSurfaceMatcherTest {
             )
         )
     }
+
+    @Test
+    fun `native Recents and Overview surfaces never match cover home or trigger reclaim`() {
+        val samsungRecentsPkg = "com.sec.android.app.launcher"
+        val samsungRecentsCls = "com.sec.android.app.launcher.recents.RecentsActivity"
+        val systemRecentsPkg = "com.android.systemui"
+        val systemRecentsCls = "com.android.systemui.recents.OverviewProxyService"
+
+        assertTrue(CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(samsungRecentsCls))
+        assertTrue(CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(systemRecentsCls))
+        assertFalse(CoverHomeSurfaceMatcher.isCoverHomeDestination(samsungRecentsPkg, samsungRecentsCls))
+        assertFalse(CoverHomeSurfaceMatcher.isCoverHomeDestination(systemRecentsPkg, systemRecentsCls))
+        assertFalse(transientPolicy.isLauncherPackageForResume(samsungRecentsPkg, samsungRecentsCls))
+        assertFalse(
+            transientPolicy.shouldResumeOverlayForPackage(
+                packageName = samsungRecentsPkg,
+                className = samsungRecentsCls,
+                launchedPackage = "com.android.chrome",
+                appPackageName = "com.tyejaedon.coverscreenos"
+            )
+        )
+        assertTrue(CoverAccessibilityService.isUserForegroundApplicationPackage(samsungRecentsPkg, samsungRecentsCls))
+    }
 }

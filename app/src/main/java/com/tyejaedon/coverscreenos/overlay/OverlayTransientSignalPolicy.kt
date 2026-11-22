@@ -32,12 +32,31 @@ object CoverHomeSurfaceMatcher {
         "NavigationBar",
         "SystemBars"
     )
+    // Native Recents / Overview activity or window class tokens that must never be mistaken for cover Home.
+    private val RECENTS_SURFACE_CLASS_TOKENS = arrayOf(
+        "Recents",
+        "Overview",
+        "TaskSwitcher",
+        "Quickstep",
+        "RecentsActivity"
+    )
+
+    /** Returns `true` when [className] identifies a native system Recents / Overview task switcher surface. */
+    fun isRecentsSurfaceClassName(className: String?): Boolean {
+        if (className.isNullOrBlank()) return false
+        return RECENTS_SURFACE_CLASS_TOKENS.any { token ->
+            className.contains(token, ignoreCase = true)
+        }
+    }
 
     /**
      * Returns `true` when [packageName] and optional [className] identify a native
-     * home/cover-home activity rather than a user application.
+     * home/cover-home activity rather than a user application or Recents Overview surface.
      */
     fun isCoverHomeDestination(packageName: String, className: String? = null): Boolean {
+        if (isRecentsSurfaceClassName(className)) {
+            return false
+        }
         if (LAUNCHER_HOME_PREFIXES.any { packageName.startsWith(it) }) {
             return true
         }
@@ -54,9 +73,10 @@ object CoverHomeSurfaceMatcher {
             trimmed.endsWith(".SubHomeActivity")
     }
 
-    /** Returns `true` if [className] identifies a transient SystemUI overlay (shade, volume, status bar, etc.). */
+    /** Returns `true` if [className] identifies a transient SystemUI overlay (shade, volume, status bar, recents). */
     fun isKnownTransientSystemUiOverlayClass(className: String?): Boolean {
         if (className.isNullOrBlank()) return false
+        if (isRecentsSurfaceClassName(className)) return true
         return TRANSIENT_SYSTEM_UI_CLASS_TOKENS.any { token ->
             className.contains(token, ignoreCase = true)
         }
@@ -125,8 +145,11 @@ internal class OverlayTransientSignalPolicy(
         return transientSystemUiResumeSafePrefixes.any { packageName.startsWith(it) }
     }
 
-    /** Returns `true` if [packageName]/[className] represents a system launcher or cover home. */
+    /** Returns `true` if [packageName]/[className] represents a system launcher or cover home (excluding Recents/Overview). */
     fun isLauncherPackageForResume(packageName: String, className: String? = null): Boolean {
+        if (CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(className)) {
+            return false
+        }
         if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
             return true
         }
@@ -143,6 +166,7 @@ internal class OverlayTransientSignalPolicy(
         launchedPackage: String?,
         appPackageName: String
     ): Boolean {
+        if (CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(className)) return false
         if (launchedPackage != null && packageName == launchedPackage) return false
         // Do NOT treat our own package as a "user is back on our launcher" signal.
         // Our launcher/keyboard/media panels are accessibility overlay windows

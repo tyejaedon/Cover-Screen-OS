@@ -131,6 +131,10 @@ class ForegroundService : Service() {
         private const val INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS = 5_000L
         // Cooldown between identical reclaim requests so bursts of accessibility events don't spam retargets.
         private const val OVERLAY_RECLAIM_MIN_INTERVAL_MS = 80L
+        // Virtual package token marking transient suppression while native system Recents attempts to open.
+        private const val NATIVE_RECENTS_SENTINEL_PACKAGE = "com.android.systemui.recents"
+        // Delay before verifying whether native GLOBAL_ACTION_RECENTS actually opened on the cover display.
+        private const val NATIVE_RECENTS_VERIFY_DELAY_MS = 450L
         private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
         private const val OVERLAY_TRANSITION_LOG_TAG = "CoverOverlayTransition"
         private const val OVERLAY_MARKER_HELD_HIDDEN = "marker=held_hidden"
@@ -188,6 +192,19 @@ class ForegroundService : Service() {
          */
         fun requestOverlayReclaim(reason: String = "external") {
             activeServiceRef?.get()?.requestOverlayReclaimInternal(reason)
+        }
+
+        /** Records [packageName] in the cover-screen recent-apps history ring buffer. */
+        fun recordRecentCoverApp(packageName: String) {
+            activeServiceRef?.get()?.recordRecentCoverAppInternal(packageName)
+        }
+
+        /**
+         * Opens cover Recents, prioritizing Android's native `GLOBAL_ACTION_RECENTS` when [preferNative]
+         * is `true` and falling back to the in-overlay Cover Recents carousel when rejected or ignored.
+         */
+        fun requestCoverRecents(preferNative: Boolean = true): Boolean {
+            return activeServiceRef?.get()?.requestCoverRecentsInternal(preferNative) ?: false
         }
 
         /** Notifies the running service that [CoverAccessibilityService] connected with a host. */
@@ -267,6 +284,12 @@ class ForegroundService : Service() {
     private val widgetHostManager by lazy {
         com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(this)
     }
+    // Tracks recently opened cover apps (most-recent-first) and fallback Recents carousel visibility.
+    private val recentAppsTracker by lazy {
+        CoverRecentAppsTracker(selfPackageName = packageName)
+    }
+    // Verifies shortly after dispatching GLOBAL_ACTION_RECENTS whether native Recents actually appeared.
+    private var pendingNativeRecentsVerifyJob: Job? = null
 
     // Mutable state holder for suppression session IDs, resume stability counts, reclaim cooldown, and call passthrough.
     private val suppressionState = OverlaySuppressionState()
@@ -483,18 +506,21 @@ class ForegroundService : Service() {
             deviceLockState = coverDisplayHelper.isDeviceLocked,
             onAppSelected = { appModel ->
                 val packageName = appModel.packageName
-                val coverDisplayId = overlayWindowController.getActiveDisplayId()
-                    ?: coverDisplayHelper.getCoverDisplayId()
+                val coverDisplayId = resolveCoverDisplayId()
                 val ready = launchCoordinator.beginLaunch(packageName)
                 if (!ready) {
                     Log.w(LOG_TAG, "LauncherOverlayHost.onAppSelected rejected package=$packageName")
                     false
                 } else {
+                    recentAppsTracker.setRecentsSheetVisible(false)
                     val launched = CoverAppLauncher.launchPackageOnDisplay(
                         context = appContext,
                         packageName = packageName,
                         displayId = coverDisplayId
                     )
+                    if (launched) {
+                        recentAppsTracker.recordAppActive(packageName)
+                    }
                     launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
                     launched
                 }
@@ -541,8 +567,7 @@ class ForegroundService : Service() {
                     Log.w(LOG_TAG, "LauncherOverlayHost.onAddWidgetRequest rejected")
                     false
                 } else {
-                    val coverDisplayId = overlayWindowController.getActiveDisplayId()
-                        ?: coverDisplayHelper.getCoverDisplayId()
+                    val coverDisplayId = resolveCoverDisplayId()
                     val pickerIntent = Intent(
                         appContext,
                         com.tyejaedon.coverscreenos.ui.widgets.CoverWidgetPickerActivity::class.java
@@ -557,10 +582,67 @@ class ForegroundService : Service() {
                     launchCoordinator.completeLaunch(packageName = packageName, launchDispatched = launched)
                     launched
                 }
-            }
+            },
+            recentAppPackages = recentAppsTracker.recentPackages,
+            isRecentsSheetVisible = recentAppsTracker.isRecentsSheetVisible,
+            onRequestRecents = { requestCoverRecentsInternal(preferNative = true) },
+            onDismissRecentApp = { pkg -> recentAppsTracker.removeApp(pkg) },
+            onClearAllRecentApps = { recentAppsTracker.clearAll() },
+            onSetRecentsSheetVisible = { visible -> recentAppsTracker.setRecentsSheetVisible(visible) }
         )
         launcherOverlayHost = host
         CoverAccessibilityService.attachLauncherHost(host)
+    }
+
+    private fun recordRecentCoverAppInternal(packageName: String) {
+        recentAppsTracker.recordAppActive(packageName)
+    }
+
+    /**
+     * Triggers Recents on the cover screen, attempting Android/One UI's native system Recents
+     * (`GLOBAL_ACTION_RECENTS`) first when [preferNative] is `true` and falling back to the
+     * in-overlay Cover Recents carousel when native Recents is rejected or ignored on the cover display.
+     */
+    private fun requestCoverRecentsInternal(preferNative: Boolean = true): Boolean {
+        if (!overlayRequested || !hasRuntimePrerequisites() || isDeviceUnfolded()) return false
+
+        pendingNativeRecentsVerifyJob?.cancel()
+        pendingNativeRecentsVerifyJob = null
+
+        if (preferNative) {
+            recentAppsTracker.setRecentsSheetVisible(false)
+            suppressOverlayForReason(
+                packageName = NATIVE_RECENTS_SENTINEL_PACKAGE,
+                reason = OverlaySuppressionReason.APP_LAUNCH
+            )
+
+            val dispatched = CoverAccessibilityService.performGlobalRecentsOnActiveService()
+            if (dispatched) {
+                pendingNativeRecentsVerifyJob = serviceScope.launch {
+                    delay(NATIVE_RECENTS_VERIFY_DELAY_MS.milliseconds)
+                    if (!isOverlaySuppressedForAppLaunch ||
+                        launchSuppressedPackageName != NATIVE_RECENTS_SENTINEL_PACKAGE
+                    ) {
+                        return@launch
+                    }
+                    val latestClass = CoverAccessibilityService.currentForegroundClassName()
+                    if (CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(latestClass)) {
+                        return@launch
+                    }
+                    recentAppsTracker.setRecentsSheetVisible(true)
+                    completeSuppressionAndRetargetOnce(reason = "native_recents_no_op_fallback")
+                }
+                return true
+            }
+        }
+
+        recentAppsTracker.setRecentsSheetVisible(true)
+        if (isOverlaySuppressedForAppLaunch) {
+            completeSuppressionAndRetargetOnce(reason = "fallback_cover_recents")
+        } else {
+            scheduleRetarget(reason = "fallback_cover_recents")
+        }
+        return true
     }
 
     /**
@@ -966,6 +1048,8 @@ class ForegroundService : Service() {
 
     private fun clearPendingDisplayWork() {
         pendingDisplayRetargetJob?.cancel()
+        pendingNativeRecentsVerifyJob?.cancel()
+        pendingNativeRecentsVerifyJob = null
     }
 
     /**

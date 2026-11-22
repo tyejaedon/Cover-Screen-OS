@@ -261,6 +261,59 @@ class ForegroundServiceSuppressionTest {
         assertFalse(state.isOverlaySuppressedForAppLaunch)
     }
 
+    @Test
+    fun `requestCoverRecents prioritizes native Recents and opens fallback carousel when rejected`() {
+        mockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        try {
+            every { com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper.hasCoreOverlayPermissions(any()) } returns true
+            every { CoverAccessibilityService.performGlobalRecentsOnActiveService() } returns false
+
+            val tracker = getField<CoverRecentAppsTracker>("recentAppsTracker")
+            val requestMethod = ForegroundService::class.java.getDeclaredMethod(
+                "requestCoverRecentsInternal",
+                Boolean::class.javaPrimitiveType
+            ).apply { isAccessible = true }
+
+            val handled = requestMethod.invoke(service, true) as Boolean
+            assertTrue(handled)
+            assertTrue(tracker.isRecentsSheetVisible.value)
+            assertFalse(state.isOverlaySuppressedForAppLaunch)
+        } finally {
+            unmockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        }
+    }
+
+    @Test
+    fun `requestCoverRecents stays suppressed when native Recents opens and falls back on no-op`() {
+        mockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        try {
+            every { com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper.hasCoreOverlayPermissions(any()) } returns true
+            every { CoverAccessibilityService.performGlobalRecentsOnActiveService() } returns true
+            val tracker = getField<CoverRecentAppsTracker>("recentAppsTracker")
+            val requestMethod = ForegroundService::class.java.getDeclaredMethod(
+                "requestCoverRecentsInternal",
+                Boolean::class.javaPrimitiveType
+            ).apply { isAccessible = true }
+
+            // Native Recents opened cleanly -> overlay stays suppressed and fallback carousel stays closed.
+            every { CoverAccessibilityService.currentForegroundClassName() } returns "com.sec.android.app.launcher.recents.RecentsActivity"
+            requestMethod.invoke(service, true)
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500L))
+            assertTrue(state.isOverlaySuppressedForAppLaunch)
+            assertFalse(tracker.isRecentsSheetVisible.value)
+
+            // Reset suppression, then simulate OEM cover firmware ignoring GLOBAL_ACTION_RECENTS (stuck on SubHomeActivity).
+            state.clearSuppressionState()
+            every { CoverAccessibilityService.currentForegroundClassName() } returns "com.android.systemui.subscreen.SubHomeActivity"
+            requestMethod.invoke(service, true)
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500L))
+            assertFalse(state.isOverlaySuppressedForAppLaunch)
+            assertTrue(tracker.isRecentsSheetVisible.value)
+        } finally {
+            unmockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        }
+    }
+
     private fun startSuppression(packageName: String, elapsedMs: Long = 1_000L) {
         state.markSuppressionStarted(
             packageName,

@@ -7,6 +7,7 @@ import com.tyejaedon.coverscreenos.models.AppModel
 import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -60,7 +61,13 @@ class LauncherOverlayHost internal constructor(
     val onRequestUnlock: () -> Unit = {},
     val onOpenCustomize: () -> Boolean = { false },
     val widgetHostManager: CoverAppWidgetHostManager? = null,
-    val onAddWidgetRequest: () -> Boolean = { false }
+    val onAddWidgetRequest: () -> Boolean = { false },
+    val recentAppPackages: StateFlow<List<String>> = MutableStateFlow(emptyList()),
+    val isRecentsSheetVisible: StateFlow<Boolean> = MutableStateFlow(false),
+    val onRequestRecents: () -> Boolean = { false },
+    val onDismissRecentApp: (String) -> Unit = {},
+    val onClearAllRecentApps: () -> Unit = {},
+    val onSetRecentsSheetVisible: (Boolean) -> Unit = {}
 ) {
     /** Convenience alias for `launcherSettingsStore.settings`. */
     val settings: Flow<LauncherSettings> get() = launcherSettingsStore.settings

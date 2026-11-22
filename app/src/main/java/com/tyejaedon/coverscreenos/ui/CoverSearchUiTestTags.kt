@@ -36,5 +36,8 @@ object CoverSearchUiTestTags {
 
     // Quick settings overlay panel
     const val QUICK_SETTINGS_PANEL = "cover_quick_settings_panel"
+
+    // Cover recents task switcher panel
+    const val RECENTS_PANEL = "cover_recents_panel"
 }
 

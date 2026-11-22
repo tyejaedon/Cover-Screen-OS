@@ -5,6 +5,7 @@ import android.accessibilityservice.AccessibilityGestureEvent
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -12,6 +13,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Display
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -105,8 +107,11 @@ class CoverAccessibilityService : AccessibilityService() {
             val coverHomeClassName: String?
         )
 
-        /** Returns `true` for third-party / user-launched apps (excluding SystemUI, AOD, launcher, and self). */
+        /** Returns `true` for third-party / user-launched apps and active Recents/Overview surfaces. */
         internal fun isUserForegroundApplicationPackage(packageName: String, className: String? = null): Boolean {
+            if (CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(className)) {
+                return true
+            }
             if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
                 return false
             }
@@ -312,6 +317,10 @@ class CoverAccessibilityService : AccessibilityService() {
         fun isLauncherAttachedOnActiveService(): Boolean =
             activeServiceRef?.get()?.isLauncherAttached() == true
 
+        /** Attempts to open native Android/One UI Recents via `GLOBAL_ACTION_RECENTS`. */
+        fun performGlobalRecentsOnActiveService(): Boolean =
+            activeServiceRef?.get()?.performGlobalRecents() == true
+
         /**
          * Launches [launchIntent] with optional [launchOptions] (such as target display ID)
          * from the bound [AccessibilityService] context, catching missing or restricted targets.
@@ -382,6 +391,13 @@ class CoverAccessibilityService : AccessibilityService() {
      */
     @Volatile
     private var monitoredCoverDisplayId: Int? = null
+
+    /**
+     * Narrow bottom-edge gesture strip (`TYPE_ACCESSIBILITY_OVERLAY`) mounted on the cover
+     * display while a launched app owns the foreground, giving the user Swipe-Up Home,
+     * Swipe-Up-Hold / Right Recents, and Swipe-Left Back navigation.
+     */
+    private var gestureBarSurface: CoverComposeSurface? = null
 
     /**
      * Called by Android when the accessibility service binds and receives its system window token.
@@ -516,6 +532,10 @@ class CoverAccessibilityService : AccessibilityService() {
                 .collectAsStateWithLifecycle(initialValue = false)
             val launcherSettings by host.settings
                 .collectAsStateWithLifecycle(initialValue = LauncherSettings())
+            val recentAppPackages by host.recentAppPackages
+                .collectAsStateWithLifecycle(initialValue = emptyList())
+            val isRecentsVisible by host.isRecentsSheetVisible
+                .collectAsStateWithLifecycle(initialValue = false)
 
             CoverOSTheme(
                 themePreference = launcherSettings.themePreference,
@@ -553,6 +573,12 @@ class CoverAccessibilityService : AccessibilityService() {
                     onRequestScreenOff = { requestScreenOff() },
                     onRequestSystemShade = { requestSystemShade() },
                     onOpenCustomize = { host.onOpenCustomize() },
+                    recentAppPackages = recentAppPackages,
+                    isRecentsVisible = isRecentsVisible,
+                    onRequestRecents = { host.onRequestRecents() },
+                    onDismissRecentApp = { pkg -> host.onDismissRecentApp(pkg) },
+                    onClearAllRecentApps = { host.onClearAllRecentApps() },
+                    onDismissRecents = { host.onSetRecentsSheetVisible(false) },
                     onKeyboardStrategyChanged = { nextStrategy ->
                         overlayScope.launch {
                             runCatching {
@@ -592,6 +618,18 @@ class CoverAccessibilityService : AccessibilityService() {
     /** Suppress touch and visibility while a cover app takes foreground focus. */
     fun setLauncherTouchable(touchable: Boolean) {
         launcherSurface?.setTouchable(touchable)
+        if (touchable) {
+            detachGestureBar(reason = "launcher_touchable")
+        } else {
+            attachGestureBarIfNeeded()
+        }
+    }
+
+    /** Dispatches Android's native `GLOBAL_ACTION_RECENTS` on this accessibility service. */
+    internal fun performGlobalRecents(): Boolean {
+        val dispatched = runCatching { performGlobalAction(GLOBAL_ACTION_RECENTS) }.getOrDefault(false)
+        logDebug { "Global ACTION_RECENTS dispatched=$dispatched" }
+        return dispatched
     }
 
     /** Returns the [Display] ID currently hosting [launcherSurface], or `null` if detached. */
@@ -622,8 +660,9 @@ class CoverAccessibilityService : AccessibilityService() {
     /** Returns `true` when [launcherSurface] is actively attached to its display window. */
     fun isLauncherAttached(): Boolean = launcherSurface?.isAttached() == true
 
-    /** Safely detaches [launcherSurface] and clears the local surface reference. */
+    /** Safely detaches [launcherSurface] and any companion gesture bar, clearing local references. */
     private fun detachLauncherSurface(reason: String) {
+        detachGestureBar(reason = reason)
         val surface = launcherSurface ?: return
         launcherSurface = null
         runCatching { surface.detach() }
@@ -634,6 +673,62 @@ class CoverAccessibilityService : AccessibilityService() {
                 )
             }
         logDebug { "Launcher surface detached reason=$reason" }
+    }
+
+    /** Mounts a slim bottom navigation gesture strip on non-default cover displays while suppressed. */
+    private fun attachGestureBarIfNeeded() {
+        val coverDisplayId = launcherSurface?.activeDisplayId()
+            ?.takeIf { it != Display.DEFAULT_DISPLAY }
+            ?: return
+        val existingBar = gestureBarSurface
+        if (existingBar != null &&
+            existingBar.isAttached() &&
+            existingBar.activeDisplayId() == coverDisplayId
+        ) {
+            return
+        }
+        detachGestureBar(reason = "reattach_gesture_bar")
+
+        val coverDisplay = (getSystemService(DISPLAY_SERVICE) as? DisplayManager)
+            ?.getDisplay(coverDisplayId)
+            ?.takeIf { it.isValid }
+            ?: return
+        val barHeightPx = (20f * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        val config = com.tyejaedon.coverscreenos.overlay.surface.CoverSurfaceWindowConfig(
+            width = WindowManager.LayoutParams.MATCH_PARENT,
+            height = barHeightPx,
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+            extraFlags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        )
+        val barSurface = CoverComposeSurface(
+            hostContext = this,
+            windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            logTag = LAUNCHER_SURFACE_LOG_TAG
+        )
+        val attached = barSurface.attach(display = coverDisplay, windowConfig = config) {
+            CoverBottomGestureBar(
+                onHomeGesture = { ForegroundService.requestOverlayReclaim(reason = "gesture_bar_home") },
+                onRecentsGesture = { ForegroundService.requestCoverRecents(preferNative = true) },
+                onBackGesture = {
+                    if (!shouldThrottleGlobalAction()) {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                    }
+                }
+            )
+        }
+        if (attached) {
+            gestureBarSurface = barSurface
+        }
+    }
+
+    /** Detaches the bottom gesture strip if currently mounted. */
+    private fun detachGestureBar(reason: String) {
+        val bar = gestureBarSurface ?: return
+        gestureBarSurface = null
+        runCatching { bar.detach() }
+            .onFailure { error ->
+                Log.w(LAUNCHER_SURFACE_LOG_TAG, "Gesture bar detach failed reason=$reason: ${error.message}")
+            }
     }
 
     /**
@@ -689,6 +784,9 @@ class CoverAccessibilityService : AccessibilityService() {
         if (shouldTrackAsUserForegroundApp(foregroundPackage, foregroundClassName)) {
             lastKnownUserAppPackage = foregroundPackage
             lastKnownUserAppElapsedMs = nowElapsedMs
+            if (!CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(foregroundClassName)) {
+                ForegroundService.recordRecentCoverApp(foregroundPackage)
+            }
         }
 
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -853,6 +951,9 @@ class CoverAccessibilityService : AccessibilityService() {
 
     /** Returns `true` if [packageName]/[className] identifies a native home surface eligible to reclaim the overlay. */
     private fun shouldRequestOverlayReclaim(packageName: String, className: String? = null): Boolean {
+        if (CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(className)) {
+            return false
+        }
         return CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className) ||
             OVERLAY_RECLAIM_PACKAGE_PREFIXES.any { prefix ->
                 packageName.startsWith(prefix)
