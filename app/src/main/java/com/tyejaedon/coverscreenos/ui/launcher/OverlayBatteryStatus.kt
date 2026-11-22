@@ -37,7 +37,9 @@ import kotlin.math.roundToInt
  * Immutable snapshot of battery charge percentage and charging state for the cover status bar.
  */
 internal data class BatteryStatusSnapshot(
+    /** Normalized integer battery percentage (0–100) shown in the gauge fill and text label. */
     val levelPercent: Int,
+    /** True while actively charging or plugged in at full charge so the pill shows charging styling. */
     val isCharging: Boolean
 )
 
@@ -51,15 +53,18 @@ internal data class BatteryStatusSnapshot(
 @Composable
 internal fun rememberBatteryStatus(): BatteryStatusSnapshot? {
     val context = LocalContext.current
+    // Remembered battery state seeded synchronously from sticky intent and refreshed on broadcasts.
     var status by remember(context) { mutableStateOf(readBatteryStatus(context)) }
 
     // Register for live ACTION_BATTERY_CHANGED updates while composed and unregister in onDispose.
     DisposableEffect(context) {
+        // Receiver updating remembered Compose state whenever Android broadcasts battery changes.
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 status = resolveBatteryStatusSnapshot(intent)
             }
         }
+        // IntentFilter scoping the receiver to system battery-change sticky broadcasts.
         val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
         // RECEIVER_NOT_EXPORTED restricts third-party broadcasts while still receiving system stickies.
         val stickyIntent = context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -79,6 +84,7 @@ internal fun rememberBatteryStatus(): BatteryStatusSnapshot? {
  * persistent receiver by passing `null` to `Context.registerReceiver`.
  */
 private fun readBatteryStatus(context: Context): BatteryStatusSnapshot? {
+    // Latest cached system battery broadcast read synchronously before composition settles.
     val stickyIntent = context.registerReceiver(
         null,
         IntentFilter(Intent.ACTION_BATTERY_CHANGED),
@@ -93,12 +99,16 @@ private fun readBatteryStatus(context: Context): BatteryStatusSnapshot? {
  */
 private fun resolveBatteryStatusSnapshot(intent: Intent?): BatteryStatusSnapshot? {
     intent ?: return null
+    // Raw level and scale reported by BatteryManager (devices can report scales other than 100).
     val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
     val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
     if (level < 0 || scale <= 0) return null
 
+    // Percentage normalized to 0..100 regardless of OEM battery scale.
     val levelPercent = ((level.toFloat() / scale.toFloat()) * 100f).roundToInt().coerceIn(0, 100)
+    // Raw BatteryManager status constant indicating charging, discharging, or full state.
     val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
+    // Treat both active charging and full-on-charger states as plugged-in charging for the indicator.
     val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
 
     return BatteryStatusSnapshot(levelPercent = levelPercent, isCharging = isCharging)
@@ -111,8 +121,11 @@ private fun resolveBatteryStatusSnapshot(intent: Intent?): BatteryStatusSnapshot
  */
 @Composable
 internal fun BatteryStatusPill(status: BatteryStatusSnapshot, modifier: Modifier = Modifier) {
+    // Clamped 0..1 width ratio used to size the inner battery gauge fill bar.
     val levelFraction = (status.levelPercent / 100f).coerceIn(0f, 1f)
+    // Translucent track color behind the battery fill bar.
     val trackColor = Color.White.copy(alpha = 0.18f)
+    // Semantic fill color: destructive red when critical, charging accent when plugged in, else white.
     val fillColor = when {
         status.levelPercent <= 15 -> CoverOSDestructiveColor
         status.isCharging -> CoverOSBatteryChargingColor

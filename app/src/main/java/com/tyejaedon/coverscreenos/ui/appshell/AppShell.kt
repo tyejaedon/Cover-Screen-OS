@@ -77,7 +77,7 @@ import kotlinx.coroutines.launch
  */
 private data class HomeTab(val route: String, @StringRes val title: Int, val icon: ImageVector)
 
-// Ordered list driving the bottom nav bar, navigation rail, and horizontal swipe navigation.
+// Canonical tab list driving the floating bottom bar, side navigation rail, and swipe navigation.
 private val homeTabs = listOf(
     HomeTab(HomeRoutes.Dashboard, R.string.home_dashboard, Icons.Default.DashboardCustomize),
     HomeTab(HomeRoutes.Customize, R.string.home_customize, Icons.Default.Palette),
@@ -135,16 +135,21 @@ fun AppShell(
     topBarActions: @Composable () -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {}
 ) {
+    // Android Context used for reading launch intents, DataStore setup, and starting/stopping the service.
     val context = LocalContext.current
+    // Persistent settings store holding whether the user has already seen the first-run tour.
     val tourStore = remember(context) { LauncherSettingsStore(context) }
-    // Start at `null` so the welcome sheet never flashes before DataStore emits its stored value.
+    // Stored tour flag: starts at `null` while loading from disk so the sheet never flickers early.
     val tourSeen by tourStore.welcomeTourSeen.collectAsState(initial = null)
+    // True when opened via a coverscreenos:// deep link so we jump straight to the target page without the tour.
     val deepLinkLaunch = remember(context) { isDeepLinkLaunch(context) }
+    // Immediate in-memory dismiss flag so closing the tour hides it right away while DataStore saves.
     var tourDismissed by rememberSaveable { mutableStateOf(false) }
-    // Incremented whenever PermissionsScreen updates grants so rememberDashboardState re-polls immediately.
+    // Counter bumped after PermissionsScreen changes grants so rememberDashboardState refreshes right away.
     var permissionRefreshKey by remember { mutableIntStateOf(0) }
+    // Live combined snapshot of permission readiness and ForegroundService status shared across tabs.
     val dashboardState = rememberDashboardState(permissionRefreshKey)
-    // Capture startDestination once so later permission changes do not reset the NavHost graph.
+    // First tab shown at launch (Permissions if setup is incomplete, else Dashboard); remembered once so fixing permissions mid-session won't jump tabs unexpectedly.
     val startDestination = remember {
         HomeRoutes.initialDestination(dashboardState.permissions.missing.isNotEmpty())
     }
@@ -154,25 +159,31 @@ fun AppShell(
             ForegroundServiceHelper.startForegroundService(context)
         }
     }
+    // Jetpack Navigation controller driving tab switches, nested Customize routes, and back navigation.
     val navController = rememberNavController()
+    // Coroutine scope for saving welcome-tour dismissal and running Customize screen import/export actions.
     val customizeActionScope = rememberCoroutineScope()
+    // Host state for transient confirmation/error snackbars triggered from CustomizeScreen.
     val customizeSnackbar = remember { SnackbarHostState() }
-    // Retain per-category scroll offsets across nested CustomizeCategory switches and configuration changes.
+    // One saved scroll offset per CustomizeCategory tab so switching categories remembers where you scrolled.
     var categoryScrollPositions by rememberSaveable {
         mutableStateOf(IntArray(CustomizeCategory.entries.size))
     }
+    // Current top entry on the Compose navigation back stack.
     val backStackEntry by navController.currentBackStackEntryAsState()
+    // Route metadata for the active screen, used to highlight the right nav bar or rail item.
     val destination = backStackEntry?.destination
-    // Match against destination.hierarchy so nested CustomizeCategory routes still highlight Customize.
+    // Active top-level tab (checks destination.hierarchy so nested Customize pages still highlight Customize).
     val selectedTab = homeTabs.firstOrNull { tab ->
         destination?.hierarchy?.any { it.route == tab.route } == true
     } ?: homeTabs.first { it.route == startDestination }
 
     BoxWithConstraints(modifier = modifier) {
-        // Material3 responsive breakpoints: switch to NavigationRail on medium/expanded widths
-        // (>= 600.dp) and tighten bottom bar spacing on compact-height viewports (<= 480.dp).
+        // Material3 width breakpoint (>= 600dp): shows a side NavigationRail instead of the floating bottom bar.
         val expanded = maxWidth >= 600.dp
+        // Height breakpoint (<= 480dp): trims bottom bar margin on short landscape or half-folded windows.
         val isCompactHeight = maxHeight <= 480.dp
+        // Localized navigation items passed to OneUIFloatingNavBar on compact-width screens.
         val navItems = homeTabs.map {
             OneUINavItem(
                 route = it.route,
@@ -225,12 +236,14 @@ fun AppShell(
                     modifier = Modifier.weight(1f).testTag("home_tab_content")
                         // Support horizontal swipe gestures across top-level tabs beyond a 72.dp threshold.
                         .pointerInput(selectedTab.route) {
+                            // Accumulated horizontal finger movement (in pixels) for the current swipe gesture.
                             var distance = 0f
                             detectHorizontalDragGestures(
                                 onDragStart = { distance = 0f },
                                 onHorizontalDrag = { _, delta -> distance += delta },
                                 onDragEnd = {
                                     if (abs(distance) >= 72.dp.toPx()) {
+                                        // Position of the active tab and clamped neighbor index to navigate to.
                                         val index = homeTabs.indexOfFirst { it.route == selectedTab.route }
                                         val next = (index + if (distance < 0) 1 else -1)
                                             .coerceIn(0, homeTabs.lastIndex)

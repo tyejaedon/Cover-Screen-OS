@@ -13,9 +13,16 @@ import kotlin.math.max
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.toDrawable
 
+/** Logcat tag used for non-fatal disk thumbnail cache read/write warnings. */
 private const val ICON_THUMBNAIL_CACHE_LOG_TAG = "CoverIconThumbCache"
+
+/** Subdirectory under [Context.getCacheDir] holding persisted PNG app icon thumbnails. */
 private const val ICON_THUMBNAIL_CACHE_DIR_NAME = "cover_icon_thumbs"
+
+/** Fixed square pixel dimension (128x128) used to rasterize icons into uniform thumbnails. */
 private const val ICON_THUMBNAIL_EDGE_PX = 128
+
+/** Maximum disk footprint (36 MiB) enforced by deleting least-recently-used thumbnails. */
 private const val ICON_THUMBNAIL_CACHE_MAX_BYTES = 36L * 1024L * 1024L
 
 /**
@@ -31,6 +38,7 @@ internal object OverlayIconThumbnailDiskCache {
      * touching `lastModified` on hit to preserve approximate LRU eviction order.
      */
     fun getBitmap(context: Context, packageName: String, versionToken: String?): Bitmap? {
+        // Version-hashed PNG path on disk for this package's pre-rasterized icon.
         val cacheFile = cacheFileFor(
             context = context,
             packageName = packageName,
@@ -39,6 +47,7 @@ internal object OverlayIconThumbnailDiskCache {
         if (!cacheFile.exists() || !cacheFile.isFile) return null
 
         return runCatching {
+            // Decoded square thumbnail bitmap returned directly to the memory cache or UI.
             val bitmap = android.graphics.BitmapFactory.decodeFile(cacheFile.absolutePath) ?: return null
             // Refresh mtime so frequently accessed icons survive age-based disk trimming.
             cacheFile.setLastModified(System.currentTimeMillis())
@@ -63,6 +72,7 @@ internal object OverlayIconThumbnailDiskCache {
      * [Bitmap.CompressFormat.PNG], and trims older cache files if total usage exceeds the budget.
      */
     fun put(context: Context, packageName: String, versionToken: String?, drawable: Drawable) {
+        // Destination PNG path keyed by package name and version so updates miss stale files.
         val cacheFile = cacheFileFor(
             context = context,
             packageName = packageName,
@@ -75,6 +85,7 @@ internal object OverlayIconThumbnailDiskCache {
                 cacheDir.mkdirs()
             }
 
+            // Rasterized 128x128 bitmap written losslessly so future reads skip adaptive-icon rendering.
             val bitmap = drawable.toSquareBitmap(ICON_THUMBNAIL_EDGE_PX)
             FileOutputStream(cacheFile).use { output ->
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
@@ -96,8 +107,11 @@ internal object OverlayIconThumbnailDiskCache {
      */
     private fun cacheFileFor(context: Context, packageName: String, versionToken: String?): File {
         val cacheRoot = File(context.cacheDir, ICON_THUMBNAIL_CACHE_DIR_NAME)
+        // Normalized version string guaranteeing non-blank cache keys even if version metadata is absent.
         val safeVersionToken = versionToken?.takeUnless { it.isBlank() } ?: "unknown"
+        // Composite key combining package identity and version to auto-invalidate on app updates.
         val digestInput = "$packageName|$safeVersionToken"
+        // Fixed-length SHA-256 filename safe across filesystem path length and character limits.
         val hashedName = digestInput.sha256Hex()
         return File(cacheRoot, "$hashedName.png")
     }
@@ -107,10 +121,12 @@ internal object OverlayIconThumbnailDiskCache {
      * drops within [ICON_THUMBNAIL_CACHE_MAX_BYTES].
      */
     private fun trimToBudget(cacheDir: File) {
+        // Snapshot of cached thumbnail files and their cumulative byte size on disk.
         val files = cacheDir.listFiles { file -> file.isFile }?.toList().orEmpty()
         var totalBytes = files.sumOf { file -> file.length() }
         if (totalBytes <= ICON_THUMBNAIL_CACHE_MAX_BYTES) return
 
+        // Oldest-touched files first so eviction approximates LRU using mtime updates on cache hits.
         val byAge = files.sortedBy { file -> file.lastModified() }
         byAge.forEach { file ->
             if (totalBytes <= ICON_THUMBNAIL_CACHE_MAX_BYTES) return
@@ -144,9 +160,11 @@ internal object OverlayIconThumbnailDiskCache {
             }
         }
 
+        // Square offscreen target bitmap and canvas used to rasterize vector/adaptive drawables.
         val targetBitmap = createBitmap(edgePx, edgePx)
         val canvas = Canvas(targetBitmap)
 
+        // Aspect-preserving scale and centered draw coordinates within the square target canvas.
         val sourceWidth = max(intrinsicWidth, 1)
         val sourceHeight = max(intrinsicHeight, 1)
         val scale = minOf(edgePx.toFloat() / sourceWidth, edgePx.toFloat() / sourceHeight)

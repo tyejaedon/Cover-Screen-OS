@@ -71,11 +71,13 @@ internal fun AppearanceCustomizationCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 ThemePreference.entries.forEach { option ->
+                    // Human-readable button caption for each theme mode option.
                     val label = when (option) {
                         ThemePreference.SYSTEM -> "System"
                         ThemePreference.LIGHT -> "Light"
                         ThemePreference.DARK -> "Dark"
                     }
+                    // Highlights the active choice with a solid filled button vs an outlined button.
                     val selected = themePreference == option
                     if (selected) {
                         Button(

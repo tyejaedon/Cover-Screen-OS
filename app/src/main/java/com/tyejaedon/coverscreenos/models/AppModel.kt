@@ -11,8 +11,11 @@ import android.graphics.drawable.Drawable
  * to avoid allocating bitmap/vector drawables unnecessarily.
  */
 data class AppModel(
+    // Human-readable app title shown beneath the icon in the drawer and dock picker.
     val name: String,
+    // Unique Android package ID (e.g. "com.android.chrome") used as a stable key and launch target.
     val packageName: String,
+    // Preloaded launcher icon; stays null during fast metadata-only scans to save memory.
     val iconDrawable: Drawable? = null
 )
 

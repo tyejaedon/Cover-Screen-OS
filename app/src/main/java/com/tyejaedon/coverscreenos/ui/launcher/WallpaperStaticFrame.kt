@@ -88,6 +88,7 @@ internal fun WallpaperTransformFrame(
         modifier = modifier.clipToBounds().background(Color.Black),
         contentAlignment = androidx.compose.ui.Alignment.Center
     ) {
+        // Current cover container dimensions in pixels (clamped >= 1f to prevent division by zero).
         val widthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         val heightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
         // Swap width/height when rotated 90° or 270° before calculating fit/crop scale ratios.
@@ -95,14 +96,18 @@ internal fun WallpaperTransformFrame(
         val rotatedHeight = if (rotation % 180 == 0) sourceHeight else sourceWidth
         val widthScale = widthPx / rotatedWidth.coerceAtLeast(1)
         val heightScale = heightPx / rotatedHeight.coerceAtLeast(1)
+        // Base multiplier before user zoom: CROP fills the screen edge-to-edge; FIT leaves letterbox space.
         val baseScale = if (scaleMode == WallpaperScaleMode.CROP) max(widthScale, heightScale) else min(widthScale, heightScale)
+        // Final rendered size after applying user pinch-zoom.
         val scaledWidth = rotatedWidth * baseScale * zoom
         val scaledHeight = rotatedHeight * baseScale * zoom
         // Clamp pan offsets to available overflow so cropX/cropY never expose black edges when zoomed/cropped.
         val offsetX = ((scaledWidth - widthPx) / 2f).coerceAtLeast(0f) * cropX.coerceIn(-1f, 1f)
         val offsetY = ((scaledHeight - heightPx) / 2f).coerceAtLeast(0f) * cropY.coerceIn(-1f, 1f)
+        // Layout size prior to rotation/zoom; graphicsLayer then applies GPU rotation, zoom, and pan.
         val unrotatedWidthPx = sourceWidth * baseScale
         val unrotatedHeightPx = sourceHeight * baseScale
+        // GPU render-effect chain combining exact layout sizing, hardware transform layer, and blur.
         val transform = with(density) {
             Modifier
                 .requiredSize(unrotatedWidthPx.toDp(), unrotatedHeightPx.toDp())

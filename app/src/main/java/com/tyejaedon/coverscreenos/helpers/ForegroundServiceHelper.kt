@@ -14,6 +14,7 @@ import com.tyejaedon.coverscreenos.overlay.ForegroundService
  */
 object ForegroundServiceHelper {
 
+    // Logcat tag used when skipping a service start because permissions aren't ready yet.
     private const val LOG_TAG = "ForegroundServiceHelper"
 
     /** Returns true when foreground notification posting (`POST_NOTIFICATIONS`) is allowed. */
@@ -39,6 +40,7 @@ object ForegroundServiceHelper {
      * Uses `applicationContext` to prevent leaking short-lived UI contexts.
      */
     fun startForegroundService(context: Context): Boolean {
+        // Application-scoped context avoids holding onto a short-lived screen/Activity across service calls.
         val appContext = context.applicationContext
         if (!hasCoreOverlayPermissions(appContext)) {
             Log.w(LOG_TAG, "Foreground service start skipped: required permissions are missing.")
@@ -53,6 +55,7 @@ object ForegroundServiceHelper {
 
     /** Sends a stop command so the service can shut itself down cleanly. */
     fun stopForegroundService(context: Context) {
+        // Application-scoped context keeps service shutdown decoupled from any caller UI lifecycle.
         val appContext = context.applicationContext
         appContext.startService(ForegroundService.createStopIntent(appContext))
     }

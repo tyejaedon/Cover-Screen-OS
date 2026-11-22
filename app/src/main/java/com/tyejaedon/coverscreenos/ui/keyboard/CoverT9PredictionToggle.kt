@@ -16,6 +16,10 @@ import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKeyColors
  * Fires [HapticTier.Strong] feedback to clearly distinguish a mode toggle from regular
  * character taps, and attaches the `"keyboard_t9_prediction_toggle"` Compose `testTag` along
  * with an accessibility state description.
+ *
+ * @param isPredictive True when T9 word prediction is active; false for classic ABC multi-tap.
+ * @param onModeChanged Callback invoked with the inverted mode boolean whenever the key is tapped.
+ * @param modifier Optional Compose modifier applied after height and test-tag defaults.
  */
 @Composable
 internal fun CoverT9PredictionToggle(

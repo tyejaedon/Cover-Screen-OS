@@ -20,16 +20,19 @@ internal data class EditorFieldProfile(
          * ([InputType.TYPE_MASK_VARIATION]).
          */
         fun from(editorInfo: EditorInfo?): EditorFieldProfile {
+            // Raw bit-packed EditorInfo.inputType integer supplied by the focused app (0 if unavailable).
             val inputType = editorInfo?.inputType ?: 0
-            // InputType packs base class, variation, and behavioral flags into one bitmask int.
+            // Base category (text, number, phone, datetime) extracted via the class bitmask.
             val inputClass = inputType and InputType.TYPE_MASK_CLASS
+            // Subtype within that class (e.g., password vs. plain text) extracted via the variation bitmask.
             val variation = inputType and InputType.TYPE_MASK_VARIATION
 
+            // True when the focused box only expects digits, phone symbols, or dates/times.
             val isNumericClass = inputClass == InputType.TYPE_CLASS_NUMBER ||
                 inputClass == InputType.TYPE_CLASS_PHONE ||
                 inputClass == InputType.TYPE_CLASS_DATETIME
 
-            // Cover all standard text and numeric password variations across classic and web views.
+            // True for numeric PINs and classic/web password fields so suggestions and key popups stay off.
             val isPasswordField = variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||

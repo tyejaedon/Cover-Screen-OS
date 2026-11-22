@@ -203,6 +203,7 @@ internal fun WallpaperCustomizationCard(
                     Text("Reset")
                 }
             }
+            // Zoom factor rounded to one decimal place for the label above the zoom slider.
             val displayZoom = (zoom * 10f).roundToInt() / 10f
             Text("Zoom: ${displayZoom}x", style = MaterialTheme.typography.bodySmall)
             Slider(
@@ -261,6 +262,7 @@ private fun WallpaperPreviewCard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    // Window width in pixels used as a bounded target size when decoding preview thumbnails.
     val fallbackWidth = LocalWindowInfo.current.containerSize.width.coerceAtLeast(1)
     // Derive the preview frame aspect ratio from the secondary cover display's physical mode.
     val coverAspectRatio = remember(context) {
@@ -270,8 +272,10 @@ private fun WallpaperPreviewCard(
             mode.physicalWidth.toFloat() / mode.physicalHeight
         else 9f / 19f
     }
+    // Pixel width and proportional height used to decode a right-sized preview bitmap off the main thread.
     val availableWidth = fallbackWidth
     val previewHeight = (availableWidth / coverAspectRatio).toInt().coerceAtLeast(1)
+    // Cleaned URI string and parsed Android Uri (null when no wallpaper is chosen / pure black mode).
     val normalizedUri = wallpaperUri?.trim().takeUnless { it.isNullOrEmpty() }
     val uri = remember(normalizedUri) { normalizedUri?.toUri() }
     // Decode a preview frame sized to cover bounds off the main thread whenever source or framing changes.
@@ -345,6 +349,7 @@ private fun WallpaperPreviewCard(
                         }
                     }
             ) {
+                // Decoded frame ready for rendering inside the cover preview card (null while loading or on error).
                 val previewFrame = preview.frame
                 if (previewFrame != null && uri != null) {
                     WallpaperMediaContent(
@@ -415,6 +420,7 @@ private fun WallpaperPreviewCard(
         }
     }
 
+    // Decoded frame passed to the full-screen crop modal once both URI and preview frame are ready.
     val cropFrame = preview.frame
     if (showCropDialog && uri != null && cropFrame != null) {
         WallpaperCropDialog(

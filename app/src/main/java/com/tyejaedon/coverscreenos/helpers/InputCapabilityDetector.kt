@@ -59,12 +59,19 @@ enum class InputAvailabilityTier {
  */
 class InputCapabilityDetector(context: Context) {
 
+    // Long-lived app context so detector checks don't retain a screen or Activity.
     private val appContext = context.applicationContext
+
+    // Settings database reader used for legacy enabled/default keyboard queries.
     private val contentResolver = appContext.contentResolver
+
+    // Resolves friendly human-readable names (like "Gboard") for installed keyboards.
     private val packageManager = appContext.packageManager
+
+    // Android's keyboard manager listing installed and enabled Input Method Editors (IMEs).
     private val inputMethodManager = appContext.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
 
-    // Accept both full and shortened ComponentName formats when matching CoverT9 IME IDs.
+    // Normalized set of both full and shortened ComponentName formats for our built-in CoverT9 keyboard.
     private val coverT9ImeIds: Set<String> = run {
         val componentName = ComponentName(appContext, CoverT9InputMethodService::class.java)
         setOf(componentName.flattenToString(), componentName.flattenToShortString())
@@ -77,6 +84,7 @@ class InputCapabilityDetector(context: Context) {
      * evaluates CoverT9/Gboard enablement and OEM risks, and computes an availability estimate.
      */
     fun detect(): InputCapabilitySnapshot {
+        // Every keyboard installed on the device, indexed by canonical ID for quick label/package lookups.
         val allInputMethods = inputMethodManager?.inputMethodList.orEmpty()
         val inputMethodById = allInputMethods.associateBy { normalizeImeId(it.id) }
 
@@ -98,11 +106,14 @@ class InputCapabilityDetector(context: Context) {
 
         val normalizedEnabledIds = enabledIds.map(::normalizeImeId)
         val normalizedDefaultId = defaultImeId?.let(::normalizeImeId)
+
+        // Flags tracking whether our built-in CoverT9 keyboard or Google's Gboard are ready or default.
         val isCoverT9Enabled = normalizedEnabledIds.any { it in coverT9ImeIds }
         val isCoverT9Default = normalizedDefaultId != null && normalizedDefaultId in coverT9ImeIds
         val isGboardEnabled = enabledEntries.any { it.packageName == GBOARD_PACKAGE_NAME }
         val isGboardDefault = defaultImeEntry?.packageName == GBOARD_PACKAGE_NAME
 
+        // Signals feeding the readiness score: picker availability, Samsung cover-screen restriction, and third-party fallback options.
         val isPickerAvailable = inputMethodManager != null && allInputMethods.isNotEmpty()
         val hasSamsungOemRisk = isSamsungDevice()
         val hasAlternativeImeEnabled = enabledEntries.any { entry ->

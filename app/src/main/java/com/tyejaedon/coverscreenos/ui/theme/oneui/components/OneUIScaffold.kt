@@ -53,7 +53,7 @@ class OneUICollapsingHeaderState(
     val maxExpandedHeightPx: Float,
     val minCollapsedHeightPx: Float
 ) {
-    /** Accumulated vertical collapse distance in pixels (`0f` = fully expanded). */
+    /** Accumulated vertical collapse distance in pixels (`0f` = fully expanded, `collapseRangePx` = fully collapsed). */
     var scrollOffset by mutableFloatStateOf(0f)
         private set
 
@@ -77,8 +77,10 @@ class OneUICollapsingHeaderState(
         override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
             // Upward finger drag yields negative available.y, so negate it to grow scrollOffset.
             val delta = -available.y
+            // Snapshot of scrollOffset before clamping so we know exactly how many pixels the header absorbed.
             val previousOffset = scrollOffset
             scrollOffset = (scrollOffset + delta).coerceIn(0f, collapseRangePx)
+            // Exact vertical pixels consumed by collapsing/expanding the header; leftover pixels flow to the child list.
             val consumed = scrollOffset - previousOffset
             return Offset(0f, -consumed)
         }
@@ -94,8 +96,11 @@ fun rememberOneUICollapsingHeaderState(
     expandedHeight: Dp = if (LocalConfiguration.current.screenHeightDp <= 480) 52.dp else 180.dp,
     collapsedHeight: Dp = if (LocalConfiguration.current.screenHeightDp <= 480) 48.dp else 56.dp
 ): OneUICollapsingHeaderState {
+    // Screen density multiplier used to convert Dp header heights into raw scroll pixels.
     val density = LocalDensity.current
+    // Expanded Viewing Area height in raw pixels.
     val expandedPx = with(density) { expandedHeight.toPx() }
+    // Pinned compact toolbar height in raw pixels.
     val collapsedPx = with(density) { collapsedHeight.toPx() }
     return remember(expandedPx, collapsedPx) {
         OneUICollapsingHeaderState(
@@ -124,15 +129,23 @@ fun OneUIScaffold(
     headerState: OneUICollapsingHeaderState = rememberOneUICollapsingHeaderState(),
     content: @Composable (PaddingValues) -> Unit
 ) {
+    // Pixel density used to convert headerState's pixel height back into Compose Dp layout units.
     val density = LocalDensity.current
+    // Active LTR/RTL reading direction so cutout start/end padding maps to the proper physical screen side.
     val layoutDirection = LocalLayoutDirection.current
-    // Combine statusBars and displayCutout top insets so the header clears both status icons and camera/hinge cutouts.
+    // System status bar inset measurements keeping the header below clock/battery icons.
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
+    // Hardware camera-hole / hinge cutout measurements avoiding clipped text on irregular screens.
     val cutoutPadding = WindowInsets.displayCutout.asPaddingValues()
+    // Effective top clearance picking whichever inset (status bar or display cutout) is taller.
     val topInset = maxOf(statusBarPadding.calculateTopPadding(), cutoutPadding.calculateTopPadding())
+    // Horizontal cutout clearance on the leading edge (left in LTR, right in RTL).
     val cutoutStart = cutoutPadding.calculateStartPadding(layoutDirection)
+    // Horizontal cutout clearance on the trailing edge (right in LTR, left in RTL).
     val cutoutEnd = cutoutPadding.calculateEndPadding(layoutDirection)
+    // Live collapsible header height converted from pixels to Dp for layout modifiers.
     val currentHeightDp = with(density) { headerState.currentHeightPx.toDp() }
+    // Shorthand for `0f..1f` header collapse progress driving title alpha cross-fades.
     val fraction = headerState.collapseFraction
 
     BoxWithConstraints(
@@ -141,13 +154,19 @@ fun OneUIScaffold(
             .background(OneUITheme.colors.canvasBackground)
             .nestedScroll(headerState.nestedScrollConnection)
     ) {
-        // Responsive breakpoints: wide tablets/unfolded inner screens vs compact outer cover displays.
+        // True on tablets or unfolded inner screens (>= 600dp wide) needing wider outer margins.
         val isWide = maxWidth >= 600.dp
+        // True on short outer cover screens (<= 480dp tall) where the big header collapses permanently.
         val isCompactHeight = maxHeight <= 480.dp
+        // Hides the floating Now Pill on compact cover screens so it never blocks cards in tight vertical space.
         val showFloatingNowPill = nowPill != null && !isCompactHeight
+        // Baseline left/right page padding selected for wide, compact-cover, or standard phone sizes.
         val baseHorizontalPadding = if (isWide) OneUITheme.dimensions.screenPaddingExpanded else if (isCompactHeight) 12.dp else OneUITheme.dimensions.screenPaddingCompact
+        // Final leading margin ensuring content clears both screen padding and any side display cutout.
         val startPadding = maxOf(baseHorizontalPadding, cutoutStart)
+        // Final trailing margin ensuring content clears both screen padding and any side display cutout.
         val endPadding = maxOf(baseHorizontalPadding, cutoutEnd)
+        // Fixed 52dp top bar on compact cover displays, or smoothly collapsing height on standard displays.
         val effectiveTopBarHeight = if (isCompactHeight) 52.dp else currentHeightDp
 
         // Content / Interaction Area
@@ -164,7 +183,7 @@ fun OneUIScaffold(
                     .widthIn(max = OneUITheme.dimensions.maxCardWidth)
                     .padding(start = startPadding, end = endPadding)
             ) {
-                // Supply bottom PaddingValues matching whichever floating bottom bars are active so list ends scroll clear.
+                // Extra bottom clearance passed to child scroll containers so the final item scrolls clear of floating bars.
                 val bottomContentPadding = when {
                     floatingNavBar != null && showFloatingNowPill -> OneUITheme.dimensions.floatingNavHeight + OneUITheme.dimensions.nowPillHeight + 48.dp
                     floatingNavBar != null -> OneUITheme.dimensions.floatingNavHeight + 32.dp

@@ -31,11 +31,17 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
  * without stealing IME/key focus ([WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE]).
  */
 internal data class CoverSurfaceWindowConfig(
+    // Desired window width in pixels or LayoutParams constant (defaults to full cover-screen width).
     val width: Int = WindowManager.LayoutParams.MATCH_PARENT,
+    // Desired window height in pixels or LayoutParams constant (defaults to full cover-screen height).
     val height: Int = WindowManager.LayoutParams.MATCH_PARENT,
+    // Anchor corner/alignment inside the target display (top-left by default).
     val gravity: Int = Gravity.TOP or Gravity.START,
+    // Additional WindowManager flags supplied by callers (e.g., FLAG_WATCH_OUTSIDE_TOUCH).
     val extraFlags: Int = 0,
+    // Optional window transition animation style resource ID (`0` disables custom animations).
     val windowAnimations: Int = 0,
+    // Cutout policy so the cover UI renders around hinge/camera cutouts without black bars.
     val cutoutMode: Int = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
 ) {
     /**
@@ -75,15 +81,24 @@ internal class CoverComposeSurface(
     private val logTag: String = "CoverComposeSurface"
 ) {
 
+    // Active Jetpack Compose root view hosted inside the overlay window (`null` when detached).
     private var composeView: ComposeView? = null
+    // Display-scoped WindowManager bound to the target cover screen via [windowContext].
     private var windowManager: WindowManager? = null
+    // Window-scoped Context created from `hostContext.createDisplayContext(display).createWindowContext(...)`.
     private var windowContext: Context? = null
+    // Custom AndroidX Lifecycle/SavedState/ViewModelStore owner driving Compose state without an Activity.
     private var lifecycleOwner: CoverSurfaceLifecycleOwner? = null
+    // Live WindowManager.LayoutParams mutated in place when toggling `FLAG_NOT_TOUCHABLE` or `FLAG_SECURE`.
     private var layoutParams: WindowManager.LayoutParams? = null
+    // Android Display ID where [composeView] is currently attached (`null` when detached).
     private var activeDisplayId: Int? = null
 
+    // Tracks whether touches are currently enabled (`false` when suppressed behind a launched app).
     private var isTouchable: Boolean = true
+    // Pending touchable state requested before `onViewAttachedToWindow` fired; applied upon attachment.
     private var deferredTouchable: Boolean? = null
+    // Desired `FLAG_SECURE` state preserved across re-attach calls and applied in [WindowManager.LayoutParams].
     private var secureRequested: Boolean = false
 
     /**
@@ -158,6 +173,7 @@ internal class CoverComposeSurface(
             setContent(content)
         }
 
+        // WindowManager layout specification binding this ComposeView onto the cover display as an overlay.
         val params = WindowManager.LayoutParams(
             windowConfig.width,
             windowConfig.height,
@@ -367,8 +383,11 @@ internal class CoverComposeSurface(
     internal class CoverSurfaceLifecycleOwner :
         LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
 
+        // Drives Compose lifecycle events (CREATE/START/RESUME/PAUSE/STOP/DESTROY) without an Activity.
         private val registry = LifecycleRegistry(this)
+        // Supplies AndroidX SavedState support required by Compose's rememberSaveable and view-tree owners.
         private val savedStateController = SavedStateRegistryController.create(this)
+        // Retains ViewModels scoped to this overlay surface until [destroy] clears them.
         private val store = ViewModelStore()
 
         init {

@@ -36,12 +36,15 @@ fun Modifier.oneUiPanel(
     hazeState: HazeState? = null,
     blurRadius: Dp = 24.dp
 ): Modifier {
+    // Active Material 3 color palette providing fallback surface and outline tokens.
     val scheme = MaterialTheme.colorScheme
-    // Border priority: explicit per-panel signal -> user-customized accent border -> neutral outline.
+    // Resolved 1dp border color: explicit per-panel signal > user accent border > neutral translucent outline.
     val borderColor = signal?.copy(alpha = 0.9f)
         ?: LocalCoverOverlayPanelBorder.current
         ?: scheme.outline.copy(alpha = CoverOneUITokens.tier1BorderAlpha)
 
+    // Background fill modifier: chooses live Haze frosted-glass blur when hazeState is provided,
+    // or falls back to a flat translucent surface tint when blurring is unavailable (e.g. Previews).
     val fillModifier = if (hazeState != null) {
         // Clip before hazeEffect so the live GPU backdrop blur stays confined to the rounded card bounds.
         Modifier
@@ -78,7 +81,9 @@ fun Modifier.oneUiElevatedPanel(
     shape: Shape = RoundedCornerShape(CoverOneUITokens.radiusHero),
     signal: Color? = null
 ): Modifier {
+    // Active color scheme supplying the base surface and neutral outline colors.
     val scheme = MaterialTheme.colorScheme
+    // Higher-opacity border stroke (tier2BorderAlpha) helping dialogs stand out above Tier-1 cards.
     val borderColor = signal?.copy(alpha = 0.95f)
         ?: LocalCoverOverlayPanelBorder.current
         ?: scheme.outline.copy(alpha = CoverOneUITokens.tier2BorderAlpha)
@@ -100,10 +105,14 @@ fun Modifier.oneUiChip(
     selected: Boolean = false,
     shape: Shape = RoundedCornerShape(CoverOneUITokens.radiusChip)
 ): Modifier {
+    // Active color palette providing neutral surface and outline fallbacks for unselected chips.
     val scheme = MaterialTheme.colorScheme
+    // Single resolved accent color (user override or current page signal hue) for selected state.
     val accent = oneUiEffectiveAccent()
 
+    // Chip background fill: highlighted with 90% accent when selected, otherwise subtle Tier-1 frost.
     val fillColor = if (selected) accent.copy(alpha = 0.9f) else scheme.surface.copy(alpha = CoverOneUITokens.tier1FillAlpha)
+    // Chip border color: crisp solid accent when selected, otherwise low-opacity neutral outline.
     val borderColor = if (selected) accent else scheme.outline.copy(alpha = CoverOneUITokens.tier1BorderAlpha)
 
     return this

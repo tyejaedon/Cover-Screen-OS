@@ -24,13 +24,18 @@ import kotlinx.coroutines.withContext
  * instance per process for the telemetry file.
  */
 private val Context.coverInputTelemetryDataStore by preferencesDataStore(name = "cover_input_telemetry")
+// Logcat tag for filtering input-telemetry read warnings.
 private const val INPUT_TELEMETRY_LOG_TAG = "InputTelemetryStore"
 
 /** Strongly-typed DataStore [Preferences.Key] definitions for cover-screen IME telemetry. */
 private object InputTelemetryKeys {
+    // Total times the cover overlay asked Android to show the keyboard/IME picker.
     val imeShowRequestCount = longPreferencesKey("cover_ime_show_request")
+    // Subset of keyboard show attempts that succeeded.
     val imeShowSuccessCount = longPreferencesKey("cover_ime_show_success")
+    // Subset of keyboard show attempts that failed or were suppressed by the system.
     val imeShowFailureCount = longPreferencesKey("cover_ime_show_failure")
+    // Times we showed the user a fallback tip when an OEM blocked the system keyboard on the cover screen.
     val oemBlockedHintCount = longPreferencesKey("cover_ime_oem_blocked_hint")
 }
 
@@ -69,6 +74,7 @@ class InputTelemetryStore(
     context: Context,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
+    // Application-scoped Context handle so storing this repository never leaks an Activity or Service.
     private val appContext = context.applicationContext
 
     /**

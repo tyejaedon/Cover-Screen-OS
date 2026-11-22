@@ -50,19 +50,27 @@ class CoverAccessibilityService : AccessibilityService() {
         private const val LOG_TAG = "CoverAccessibility"
         private const val LAUNCHER_SURFACE_LOG_TAG = "CoverA11yLauncher"
         private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
+        // How long to ignore the exact same accessibility swipe gesture so one flick isn't handled twice.
         private const val GESTURE_DEBOUNCE_MS = 550L
+        // Minimum pause between back-to-back system actions (back, home, shade, lock) to prevent double triggers.
         private const val ACTION_THROTTLE_MS = 300L
+        // Rate limit for updating the shared timestamp when the same app keeps firing window events.
         private const val FOREGROUND_EVENT_REFRESH_MIN_INTERVAL_MS = 250L
+        // How long the native cover home screen must stay on top before we bring our launcher overlay back.
         private const val RECLAIM_STABILITY_DEBOUNCE_MS = 1_500L
+        // Safety cooldown after seeing a real user app so a brief system flash doesn't snatch focus away.
         private const val RECENT_USER_APP_GUARD_MS = 2_000L
+        // Package prefixes for Samsung's stock launcher that signal the user exited back to home.
         private val OVERLAY_RECLAIM_PACKAGE_PREFIXES = arrayOf(
             "com.sec.android.app.launcher"
         )
+        // Temporary system UI overlays (like volume bars or AOD) that shouldn't immediately reclaim our launcher.
         private val TRANSIENT_SYSTEM_UI_PREFIXES = arrayOf(
             "com.android.systemui",
             "com.samsung.systemui",
             "com.samsung.android.app.aodservice"
         )
+        // System, launcher, and self packages excluded when tracking whether a real user app was recently open.
         private val NON_USER_APP_PREFIXES = arrayOf(
             "com.android.systemui",
             "com.samsung.systemui",
@@ -70,12 +78,15 @@ class CoverAccessibilityService : AccessibilityService() {
             "com.sec.android.app.launcher",
             "com.tyejaedon.coverscreenos"
         )
+        /** Most recent non-self package seen on the cover display (shared across threads for polling). */
         @Volatile
         private var latestForegroundPackage: String? = null
 
+        /** Component class name paired with [latestForegroundPackage] (e.g., `SubHomeActivity`). */
         @Volatile
         private var latestForegroundClassName: String? = null
 
+        /** Monotonic uptime timestamp (`elapsedRealtime`) when [latestForegroundPackage] was last updated. */
         @Volatile
         private var latestForegroundEventElapsedMs: Long = 0L
 
@@ -190,9 +201,11 @@ class CoverAccessibilityService : AccessibilityService() {
         //
         // Phase 2 scope: state plumbing only. No view work.
 
+        /** Weak reference to the live bound [CoverAccessibilityService] so static callers avoid leaking the Service. */
         @Volatile
         private var activeServiceRef: WeakReference<CoverAccessibilityService>? = null
 
+        /** Stashed [LauncherOverlayHost] surviving unbind/rebind cycles until `onServiceConnected` installs it. */
         @Volatile
         private var pendingLauncherHost: LauncherOverlayHost? = null
 
@@ -276,15 +289,25 @@ class CoverAccessibilityService : AccessibilityService() {
         }
     }
 
+    // Last package logged on TYPE_WINDOW_STATE_CHANGED so we only log actual foreground transitions.
     private var lastWindowPackage: String? = null
+    // ID of the last accessibility swipe gesture processed, paired with [lastGestureAtMs] for debouncing.
     private var lastGestureId: Int? = null
+    // Monotonic uptime timestamp when [lastGestureId] was seen.
     private var lastGestureAtMs: Long = 0L
+    // Monotonic uptime timestamp of the last `performGlobalAction` call for throttling rapid presses.
     private var lastActionAtMs: Long = 0L
+    // Native cover-home package currently waiting out [RECLAIM_STABILITY_DEBOUNCE_MS] before reclaiming.
     private var reclaimCandidatePackage: String? = null
+    // Monotonic uptime timestamp when [reclaimCandidatePackage] first became top-most.
     private var reclaimCandidateSinceElapsedMs: Long = 0L
+    // Most recent third-party user app observed on the cover display (used to guard against premature reclaim).
     private var lastKnownUserAppPackage: String? = null
+    // Monotonic uptime timestamp when [lastKnownUserAppPackage] was last observed.
     private var lastKnownUserAppElapsedMs: Long = 0L
+    // Main-thread handler hosting the delayed reclaim stability verification callback.
     private val reclaimHandler = Handler(Looper.getMainLooper())
+    // Pending delayed runnable verifying via `inspectDisplayWindowState` that the user app actually exited.
     private var pendingReclaimCheck: Runnable? = null
 
     /**

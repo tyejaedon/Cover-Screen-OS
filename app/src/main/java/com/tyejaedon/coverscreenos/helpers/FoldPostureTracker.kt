@@ -41,10 +41,13 @@ enum class CoverFoldPosture {
  * the device, preventing battery drain, ghost touches, and unnecessary composition cycles.
  */
 class FoldPostureTracker(
+    // Host context passed to WindowInfoTracker to observe window/hinge layout events.
     private val context: Context,
+    // Jetpack WindowManager handle that streams FoldingFeature hinge changes (injectable for tests).
     private val windowInfoTracker: WindowInfoTracker = WindowInfoTracker.getOrCreate(context)
 ) {
 
+    // Internal mutable hinge state; starts as CLOSED so the outer screen stays active until an unfold event arrives.
     private val _posture = MutableStateFlow(CoverFoldPosture.CLOSED)
     /**
      * Reactive stream of the device's current [CoverFoldPosture]. Defaults to
@@ -52,6 +55,7 @@ class FoldPostureTracker(
      */
     val posture: StateFlow<CoverFoldPosture> = _posture.asStateFlow()
 
+    // Active coroutine collecting windowLayoutInfo; kept non-null while listening so stopMonitoring() can cancel it.
     private var trackingJob: Job? = null
 
     /**

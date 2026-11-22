@@ -9,7 +9,9 @@ package com.tyejaedon.coverscreenos.overlay
  * enforcing a hard upper bound ([incomingCallSuppressionMaxMs]) against stuck states.
  */
 internal class OverlayReclaimPolicy(
+    // Hard upper time limit on call suppression so a missed end-call signal never hides the launcher forever.
     private val incomingCallSuppressionMaxMs: Long,
+    // Short grace period after the last call signal so brief screen transitions don't prematurely reclaim.
     private val incomingCallReclaimBlockGraceMs: Long
 ) {
     /**

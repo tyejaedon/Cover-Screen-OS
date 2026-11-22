@@ -64,14 +64,28 @@ import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+/** Fixed column count for each cover launcher app-grid page. */
 private const val GRID_COLUMNS = 4
+
+/** Fixed row count for each cover launcher app-grid page. */
 private const val GRID_ROWS = 3
+
+/** Total slots rendered per 4x3 grid page (12), driving pagination and placeholder padding. */
 private const val APPS_PER_GRID_PAGE = GRID_COLUMNS * GRID_ROWS
+
+/** Number of pinned shortcut slots rendered inside the One UI bottom dock pill. */
 private const val DOCK_SLOT_COUNT = 4
+
+/** Scrub speed multiplier so short horizontal thumb drags span across all pager dots smoothly. */
 private const val INDICATOR_SCRUB_SENSITIVITY = 1.45f
+
+/** Minimum uptime milliseconds between scrub page jumps to avoid jittery rapid pager updates. */
 private const val INDICATOR_SCRUB_INTERVAL_MS = 42L
 
+/** Uniform horizontal and vertical gap between tiles in the 4x3 app grid. */
 private val GRID_TILE_GAP = 6.dp
+
+/** Inner padding around each 4x3 app grid page, clearing top pager chrome while keeping bottom compact. */
 private val GRID_CONTENT_PADDING = PaddingValues(start = 6.dp, top = 14.dp, end = 6.dp, bottom = 2.dp)
 
 /**
@@ -182,8 +196,10 @@ internal fun gridPageStartLetterForPagerPage(
     appPages: List<List<AppModel>>,
     firstAppGridPageIndex: Int
 ): String? {
+    // Zero-based index into appPages; negative indices point to non-app pages (notifications/lock/widgets).
     val appPageIndex = pagerPageIndex - firstAppGridPageIndex
     if (appPageIndex < 0) return null
+    // Leading character of the first app on this grid page, falling back to "#" when empty.
     val firstAppName = appPages.getOrNull(appPageIndex)?.firstOrNull()?.name?.trim().orEmpty()
     if (firstAppName.isEmpty()) return "#"
     val firstChar = firstAppName.first()
@@ -213,11 +229,16 @@ internal fun PageIndicator(
     // Keep pointerInput coroutines reading the latest callback without restarting gesture detectors.
     val latestOnScrubActiveChanged by androidx.compose.runtime.rememberUpdatedState(onScrubActiveChanged)
 
+    // True while actively dragging across the indicator strip; widens the active pill for tactile feedback.
     var isDragging by remember { mutableStateOf(false) }
+    // Measured pixel width of the inner dot track (excluding touch padding) for tap/drag fraction math.
     var indicatorWidthPx by remember { mutableIntStateOf(0) }
+    // Last page jumped to during the active drag so duplicate scrollToPage calls are skipped.
     var lastScrubbedPage by remember { androidx.compose.runtime.mutableIntStateOf(pagerState.currentPage) }
+    // Uptime timestamp of the last scrub jump used to throttle updates to INDICATOR_SCRUB_INTERVAL_MS.
     var lastScrubTimestampMs by remember { mutableLongStateOf(0L) }
 
+    // Visual dot/pill sizes and expanded hit-target padding around the compact indicator dots.
     val dotDiameter = 5.dp
     val dotSpacing = 6.dp
     val hitAreaHorizontalPadding = 14.dp
@@ -229,7 +250,9 @@ internal fun PageIndicator(
         }
     }
 
+    // Continuous fractional pager position (page + offset) driving smooth pill gliding across dots.
     val currentProgress = (pagerState.currentPage + pagerState.currentPageOffsetFraction).coerceIn(0f, (pageCount - 1).toFloat())
+    // Expanded active indicator pill width while dragging so the active position stays easy to see.
     val activePillWidth = if (isDragging) 18.dp else 14.dp
 
     Box(
@@ -336,6 +359,7 @@ internal fun PageIndicator(
             val stepDistancePx = with(density) { (dotDiameter + dotSpacing).toPx() }
             val activePillWidthPx = with(density) { activePillWidth.toPx() }
             val dotDiameterPx = with(density) { dotDiameter.toPx() }
+            // Horizontal pixel translation keeping the pill centered over the current fractional dot slot.
             val pillOffsetPx = (currentProgress * stepDistancePx) - ((activePillWidthPx - dotDiameterPx) / 2f)
 
             Box(
@@ -379,7 +403,9 @@ internal fun OneUiDockRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         repeat(DOCK_SLOT_COUNT) { index ->
+            // App pinned to this dock slot (null if empty or overridden by the All Apps shortcut).
             val app = dockSlots.getOrNull(index)
+            // Overrides slot 4 as a dedicated "All apps" button when enabled in launcher preferences.
             val isAllApps = index == DOCK_SLOT_COUNT - 1 && slotFourAllApps
             val isSlotEnabled = isAllApps || app != null
 
@@ -451,6 +477,7 @@ private fun AppGridTile(
     hazeState: HazeState? = null
 ) {
     val hapticFeedback = LocalHapticFeedback.current
+    // Remembered package icon decoded from the in-memory/disk thumbnail cache (null until loaded).
     val iconBitmap =
         rememberPackageIconBitmap(app.packageName)
 

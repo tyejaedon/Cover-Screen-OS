@@ -192,16 +192,24 @@ private fun DockReorderStrip(
     onPreviewReorder: (List<String?>) -> Unit,
     onReorderCommitted: (List<String?>) -> Unit
 ) {
+    // Triggers tactile vibrations when a dock tile is picked up and each time it crosses into a new slot.
     val hapticFeedback = LocalHapticFeedback.current
+    // Screen density helper to convert animated dp offsets into pixels for graphicsLayer translation.
     val density = LocalDensity.current
     // Keep pointerInput closures observing the latest slot list without restarting active gestures.
     val latestDockPackages by rememberUpdatedState(newValue = dockPackages)
 
+    // Index (0..COVER_DOCK_SLOT_COUNT - 1) of the tile currently being dragged, or null when idle.
     var draggingSlotIndex by remember { mutableStateOf<Int?>(null) }
+    // Running horizontal pixel distance moved since the last slot swap; drains as slots shift.
     var dragDeltaX by remember { mutableFloatStateOf(0f) }
+    // Measured pixel width of one slot tile, used to decide when a drag crosses into the next slot.
     var slotWidthPx by remember { mutableFloatStateOf(1f) }
+    // Temporary slot order mutated live mid-drag so tiles shuffle smoothly before saving.
     var workingDockPackages by remember { mutableStateOf(normalizeDockPackageSlots(dockPackages)) }
+    // Slot order captured when a drag begins, used to skip saving if the tile ended up where it started.
     var dragStartDockSnapshot by remember { mutableStateOf<List<String?>?>(null) }
+    // Latest slot order produced during a drag, committed to DataStore when the finger lifts.
     var lastReorderedDockSnapshot by remember { mutableStateOf<List<String?>?>(null) }
 
     // Sync external slot updates into working state only while no drag gesture is in progress.
@@ -220,7 +228,9 @@ private fun DockReorderStrip(
         }
     }
 
+    // Maximum distance an adjacent tile nudges out of the way while another tile is dragged toward it.
     val neighborSnapDistance = 10.dp
+    // Normalized [-1f..1f] progress toward the left or right neighboring slot based on current drag pixels.
     val dragProgress = if (slotWidthPx > 0f) {
         (dragDeltaX / slotWidthPx).coerceIn(-1f, 1f)
     } else {
@@ -237,12 +247,14 @@ private fun DockReorderStrip(
             val label = resolveLabel(packageName)
             val isDragging = draggingSlotIndex == index
             val activeDragIndex = draggingSlotIndex
+            // Compute how far this slot should slide aside if a neighbor is being dragged toward it.
             val neighborSnapOffsetTarget = when {
                 activeDragIndex == null || isDragging -> 0.dp
                 dragProgress > 0f && index == activeDragIndex + 1 -> -(neighborSnapDistance * dragProgress)
                 dragProgress < 0f && index == activeDragIndex - 1 -> neighborSnapDistance * -dragProgress
                 else -> 0.dp
             }
+            // Spring-animated visual properties giving the dragged tile physical lift and smooth neighbor shifts.
             val neighborSnapOffset by animateDpAsState(
                 targetValue = neighborSnapOffsetTarget,
                 animationSpec = spring(stiffness = Spring.StiffnessMedium),
@@ -390,7 +402,9 @@ internal fun DockAppPickerDialog(
     onDismiss: () -> Unit,
     onAppSelected: (AppModel) -> Unit
 ) {
+    // Live text typed into the picker search box to narrow down installed apps.
     var query by remember { mutableStateOf("") }
+    // Cached subset of apps matching the search query by app label or package name.
     val filteredApps = remember(query, apps) {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isEmpty()) {

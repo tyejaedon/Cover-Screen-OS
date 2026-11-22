@@ -72,7 +72,9 @@ internal fun AppearanceScreen(
             Text("Accent color", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AccentColor.entries.forEach { accent ->
+                    // Marks the currently saved accent swatch so we draw a thicker highlight border around it.
                     val selected = settings.accentColor == accent
+                    // Shared rounded-square geometry used for both the color fill and selection border.
                     val shape = RoundedCornerShape(12.dp)
                     Box(
                         Modifier.size(48.dp)

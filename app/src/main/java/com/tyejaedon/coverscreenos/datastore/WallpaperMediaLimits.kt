@@ -22,19 +22,27 @@ enum class WallpaperMediaType {
  * duration so decoding inside the cover overlay service remains fast and memory-safe.
  */
 object WallpaperMediaLimits {
+    /** Hard 64 MiB file-size cap so oversized media cannot fill app storage or stall import. */
     const val MAX_FILE_BYTES = 64L * 1024L * 1024L
+    /** Maximum static image width/height in pixels before bitmap allocation is rejected. */
     const val MAX_WIDTH = 8192
     const val MAX_HEIGHT = 8192
+    /** Maximum total pixels (40 MP) for static image wallpapers to prevent out-of-memory errors. */
     const val MAX_IMAGE_PIXELS = 40_000_000L
+    /** Tighter dimension and pixel caps (2048px / 4 MP) for animated GIFs and videos. */
     const val MAX_ANIMATED_WIDTH = 2048
     const val MAX_ANIMATED_HEIGHT = 2048
     const val MAX_ANIMATED_PIXELS = 4_194_304L
+    /** Longest allowed animated GIF or looping video wallpaper (10 seconds). */
     const val MAX_DURATION_MS = 10_000L
+    /** Frame-rate and total-frame caps keeping background playback smooth and battery-friendly. */
     const val MAX_FRAME_RATE = 30
     const val MAX_FRAME_COUNT = 300
     /** Minimum per-frame delay (~33.3 ms for 30 fps, rounded up to 34 ms). */
     const val MIN_FRAME_DELAY_MS = 34
+    /** Recognized ISO BMFF `ftyp` major brand codes for MP4/M4V video files. */
     private val mp4Brands = setOf("isom", "iso2", "iso5", "iso6", "mp41", "mp42", "avc1", "dash", "M4V ")
+    /** Video codec MIME types supported across Android hardware/software decoders. */
     private val supportedVideoCodecs = setOf("video/avc", "video/hevc", "video/vp9")
 
     /**
@@ -160,8 +168,11 @@ object WallpaperMediaLimits {
         reader.skipBytes(2)
         if (packed and 0x80 != 0) reader.skipBytes(3 * (1 shl ((packed and 0x07) + 1)))
 
+        // Frame delay carried over from the preceding Graphic Control Extension (defaults to 34ms).
         var pendingDelayMs = MIN_FRAME_DELAY_MS
+        // Running count of image frames seen so far (must stay within 2..MAX_FRAME_COUNT).
         var frameCount = 0
+        // Accumulated loop playback length in milliseconds (must stay <= MAX_DURATION_MS).
         var durationMs = 0L
         while (true) {
             when (reader.readByte()) {

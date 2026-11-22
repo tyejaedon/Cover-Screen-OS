@@ -27,10 +27,15 @@ import com.tyejaedon.coverscreenos.overlay.RuntimeSnapshot
  * [inputAccessibility] is tracked for keyboard input readiness without blocking core startup.
  */
 data class DashboardPermissions(
+    /** True if the app is allowed to post its persistent foreground service notification (Android 13+). */
     val notifications: Boolean,
+    /** True if the main Cover Screen OS AccessibilityService is enabled to host the cover overlay. */
     val launcherAccessibility: Boolean,
+    /** True if NotificationListenerService access is enabled so alerts can appear on the cover screen. */
     val notificationListener: Boolean,
+    /** True if Android battery optimization is disabled so the cover service isn't killed in the background. */
     val batteryExemption: Boolean,
+    /** True if the optional input AccessibilityService is enabled for cover-screen keyboard typing. */
     val inputAccessibility: Boolean
 ) {
     /** Human-readable labels for required grants that are not yet enabled. */
@@ -40,7 +45,9 @@ data class DashboardPermissions(
         if (!notificationListener) add("Notification access")
         if (!batteryExemption) add("Battery optimization exemption")
     }
+    /** Number of the 4 required permissions that are currently enabled. */
     val grantedCount: Int get() = 4 - missing.size
+    /** Fixed denominator (4) representing all mandatory setup requirements. */
     val totalCount: Int get() = 4
 }
 
@@ -54,12 +61,14 @@ data class DashboardState(
     val permissions: DashboardPermissions,
     val runtime: RuntimeSnapshot
 ) {
+    /** Overall readiness badge: prioritizes missing setup, then stopped service, then missing host binding. */
     val status: DashboardStatus get() = when {
         permissions.missing.isNotEmpty() -> DashboardStatus.SETUP_NEEDED
         !runtime.serviceActive -> DashboardStatus.STOPPED
         !runtime.launcherHostActive -> DashboardStatus.SETUP_NEEDED
         else -> DashboardStatus.ACTIVE
     }
+    /** Short human-friendly headline corresponding to [status]. */
     val title: String get() = when (status) {
         DashboardStatus.ACTIVE -> "Cover screen active"
         DashboardStatus.SETUP_NEEDED -> "Setup needed"
@@ -89,22 +98,24 @@ object DashboardUseCases {
  */
 @Composable
 fun rememberDashboardState(refreshKey: Int = 0): DashboardState {
+    // Android Context used to check permissions and register a Settings ContentObserver.
     val context = LocalContext.current
+    // Activity/Fragment lifecycle owner watched for ON_RESUME when returning from System Settings.
     val lifecycleOwner = LocalLifecycleOwner.current
+    // Latest snapshot of Android permissions; recomputed when lifecycle resumes, settings change, or refreshKey bumps.
     var permissions by remember(context, refreshKey) {
         mutableStateOf(DashboardUseCases.readPermissions(context))
     }
+    // Live service, accessibility-host, overlay, and event snapshot streamed from ForegroundService.
     val runtime by ForegroundService.runtime.collectAsState()
 
     DisposableEffect(context, lifecycleOwner, refreshKey) {
         fun refresh() { permissions = DashboardUseCases.readPermissions(context) }
-        // Re-check permissions on ON_RESUME because users grant Accessibility, Notification
-        // Listener, and battery exemptions in external Android Settings activities.
+        // Observer that refreshes permissions as soon as the user returns from an external Settings screen.
         val lifecycleObserver = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) refresh()
         }
-        // Also watch Settings.Secure (including Accessibility/Notification Listener entries) so
-        // external toggles—such as multi-window Settings or ADB—update the dashboard live.
+        // ContentObserver watching Settings.Secure (Accessibility/Notification Listener toggles) for live split-screen or ADB changes.
         val settingsObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) = refresh()
         }

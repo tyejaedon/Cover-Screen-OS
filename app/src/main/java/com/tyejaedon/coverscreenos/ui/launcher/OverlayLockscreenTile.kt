@@ -229,6 +229,7 @@ internal fun LockAndDockTile(
     }
 }
 
+/** Closed-loop RGB gradient stops forming the subtle glowing rim around the search affordance chip. */
 private val LOCK_PILL_DIM_RGB_COLORS = listOf(
     Color(0xFFD66A78),
     Color(0xFF5BB58B),
@@ -241,9 +242,11 @@ private val LOCK_PILL_DIM_RGB_COLORS = listOf(
  * Draws a subtle two-pass RGB gradient halo and crisp inner rim behind a chip via [drawBehind].
  */
 private fun Modifier.dimRgbGlow(): Modifier = this.drawBehind {
+    // Base chip corner radius and diagonal gradient endpoints spanning the chip bounds.
     val cornerPx = CoverOneUITokens.radiusChip.toPx()
     val start = Offset(0f, 0f)
     val end = Offset(size.width, size.height)
+    // Alpha-attenuated stop palettes for the diffused outer halo and crisper inner border.
     val outerColors = LOCK_PILL_DIM_RGB_COLORS.map { it.copy(alpha = 0.16f) }
     val innerColors = LOCK_PILL_DIM_RGB_COLORS.map { it.copy(alpha = 0.34f) }
     // Soft outer halo stroke followed by a tighter, brighter inner rim stroke.
@@ -255,6 +258,7 @@ private fun Modifier.dimRgbGlow(): Modifier = this.drawBehind {
         cornerRadius = CornerRadius(cornerPx + outerExpandPx, cornerPx + outerExpandPx),
         style = Stroke(width = 3.dp.toPx())
     )
+    // Slight inset expansion for the thin inner rim stroke around the chip edge.
     val borderExpandPx = 0.75.dp.toPx()
     drawRoundRect(
         brush = Brush.linearGradient(colors = innerColors, start = start, end = end),
@@ -317,9 +321,13 @@ private fun SearchAffordanceButton(onClick: () -> Unit, minHeight: Dp, modifier:
     }
 }
 
+/** Maximum ongoing alert icon badges (e.g., active call or timer) shown above the lockscreen clock. */
 private const val MAX_LOCK_ONGOING_HIGHLIGHTS = 1
+
+/** Maximum standard (non-ongoing) recent notification icon badges shown alongside ongoing highlights. */
 private const val MAX_LOCK_NORMAL_HIGHLIGHTS = 2
 
+/** SystemUI package names excluded so OS status chrome notifications never occupy highlight badges. */
 private val LOCK_HIGHLIGHT_BANNED_PACKAGES = setOf(
     "com.android.systemui",
     "com.samsung.systemui"
@@ -335,6 +343,7 @@ private val LOCK_HIGHLIGHT_BANNED_PACKAGES = setOf(
 internal fun selectLockHighlightNotifications(
     notifications: List<CoverNotificationModel>
 ): List<CoverNotificationModel> {
+    // Strip media sessions (handled by CompactNowPlayingCard) and SystemUI noise notifications.
     val eligible = notifications.filterNot { model ->
         val pkg = model.packageName.trim().lowercase(Locale.ROOT)
         model.isMediaNotification ||
@@ -342,10 +351,12 @@ internal fun selectLockHighlightNotifications(
             pkg.startsWith("com.android.systemui.") ||
             pkg.startsWith("com.samsung.systemui.")
     }
+    // Highest-priority ongoing alert (e.g., live call/timer) ordered newest-first.
     val ongoing = eligible
         .filter { it.isOngoing }
         .sortedByDescending { it.postTime }
         .take(MAX_LOCK_ONGOING_HIGHLIGHTS)
+    // Up to two newest standard notifications deduplicated to one icon badge per source app.
     val normal = eligible
         .filterNot { it.isOngoing }
         .sortedByDescending { it.postTime }
@@ -364,6 +375,7 @@ private fun LockTopNotificationHighlights(
     onNotificationOpen: (CoverNotificationModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Remembered prioritized subset of notifications displayed as icon badges above the clock.
     val highlightNotifications = remember(notifications) {
         selectLockHighlightNotifications(notifications)
     }
@@ -375,7 +387,9 @@ private fun LockTopNotificationHighlights(
         verticalAlignment = Alignment.CenterVertically
     ) {
         highlightNotifications.forEach { notification ->
+            // Cached app icon bitmap for this notification badge, loaded off the memory/disk cache.
             val iconBitmap = rememberPackageIconBitmap(notification.packageName)
+            // Call-active accent fill distinguishes ongoing alerts from translucent standard alert pills.
             val badgeColor = if (notification.isOngoing) {
                 CoverOSCallActiveColor.copy(alpha = 0.6f)
             } else {

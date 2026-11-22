@@ -86,6 +86,7 @@ fun ResizableKeyboardSurfaceControls(
                 .height(16.dp)
                 .testTag("keyboard_resize_grip")
                 .pointerInput(Unit) {
+                    // Tracks the last snapped preset height so haptic ticks fire once per crossed preset.
                     var lastSnappedPreset = extraHeightDp
                     detectVerticalDragGestures(
                         onDragStart = { lastSnappedPreset = roundToNearestPreset(extraHeightDp) },
@@ -95,6 +96,7 @@ fun ResizableKeyboardSurfaceControls(
                             // Dragging the grip *up* should grow the keyboard (standard
                             // bottom-sheet drag-handle convention), hence the negation.
                             val deltaDp = with(density) { -dragAmount.toDp().value }
+                            // Clamped new extra height sent back to the host / settings store.
                             val next = normalizeExtraKeyHeightDp(extraHeightDp + deltaDp)
                             onExtraHeightChangedState.value(next)
                             // Emit a haptic detent only when crossing into a new preset bucket.

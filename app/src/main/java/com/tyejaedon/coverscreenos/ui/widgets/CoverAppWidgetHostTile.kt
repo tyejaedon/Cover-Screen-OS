@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,6 +53,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeEffect
 import kotlin.math.roundToInt
 
+// Shared rounded corner radius matching CoverOS glass cards on the cover display.
 private val WIDGET_CORNER_RADIUS = 18.dp
 
 /**
@@ -59,8 +61,8 @@ private val WIDGET_CORNER_RADIUS = 18.dp
  * masonry grid ([CoverWidgetTwoColumnGrid]) over a Haze glassmorphic backdrop.
  *
  * Bridges legacy [AppWidgetHostView] instances into Compose via [AndroidView], clips them with a
- * hardware-accelerated [ViewOutlineProvider], and updates each widget's responsive dp size bounds
- * via [AppWidgetHostView.updateAppWidgetSize].
+ * hardware-accelerated [ViewOutlineProvider], updates each widget's responsive dp size bounds via
+ * [AppWidgetHostView.updateAppWidgetSize], and delegates widget taps via [onLaunchWidgetApp].
  */
 @Composable
 fun CoverAppWidgetHostTile(
@@ -69,8 +71,10 @@ fun CoverAppWidgetHostTile(
     onRemoveWidget: (Int) -> Unit,
     onAddWidgetRequest: () -> Unit,
     hazeState: HazeState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onLaunchWidgetApp: (String) -> Unit = {}
 ) {
+    // Host Context used to inflate AppWidgetHostViews; Density converts dp metrics to pixels.
     val context = LocalContext.current
     val density = LocalDensity.current
 
@@ -154,13 +158,16 @@ fun CoverAppWidgetHostTile(
             }
         } else {
             val configuration = LocalConfiguration.current
-            // Account for 12dp horizontal grid padding on each side and cap widget height at ~68% of cover screen.
+            // Usable grid width in dp (screen width minus 12dp left/right padding), floored at 180dp so columns stay legible.
             val availableWidthDp = (configuration.screenWidthDp - 24).coerceAtLeast(180)
+            // Height cap (~68% of cover screen) so a single tall widget never pushes all others off-screen.
             val maxSlotHeightDp = (configuration.screenHeightDp * 0.68f)
                 .roundToInt()
                 .coerceIn(160, WIDGET_DEFAULT_MAX_HEIGHT_DP)
+            // Compose shape and matching native pixel radius for clipping both the card and inner RemoteViews.
             val cornerShape = RoundedCornerShape(WIDGET_CORNER_RADIUS)
             val cornerRadiusPx = with(density) { WIDGET_CORNER_RADIUS.toPx() }
+            // Precomputed layout spec per widget ID (column span, outer slot size, and fitted widget viewport).
             val specs = remember(widgetIds, availableWidthDp, maxSlotHeightDp, density.density) {
                 widgetIds.map { widgetId ->
                     val meta = widgetHostManager.getAppWidgetInfo(widgetId)
@@ -182,7 +189,13 @@ fun CoverAppWidgetHostTile(
             ) {
                 CoverWidgetTwoColumnGrid(specs = specs) {
                     widgetIds.forEachIndexed { index, widgetId ->
+                        // Placement geometry for this widget slot.
                         val spec = specs[index]
+                        // Owning app package looked up once per widget so taps can open that app on the cover screen.
+                        val widgetPackageName = remember(widgetId, widgetHostManager) {
+                            widgetHostManager.getAppWidgetInfo(widgetId)?.provider?.packageName
+                        }
+                        // Native Android AppWidgetHostView inflated and remembered across recompositions for this ID.
                         val widgetView = remember(widgetId, widgetHostManager) {
                             widgetHostManager.createWidgetView(context, widgetId)
                         }
@@ -222,6 +235,7 @@ fun CoverAppWidgetHostTile(
                                                 container.invalidateOutline()
                                             }
                                             if (widgetView is AppWidgetHostView) {
+                                                // Exact rendered widget size in dp reported to the provider so it chooses an appropriate layout.
                                                 val targetSize = SizeF(
                                                     spec.widgetWidthDp.toFloat(),
                                                     spec.widgetHeightDp.toFloat()
@@ -243,6 +257,19 @@ fun CoverAppWidgetHostTile(
                                         color = Color.White.copy(alpha = 0.6f),
                                         fontSize = 12.sp,
                                         modifier = Modifier.padding(16.dp)
+                                    )
+                                }
+
+                                // Intercept widget taps in Compose so CoverOS hides the overlay and
+                                // launches the widget's owning app on the cover display via CoverAppLauncher,
+                                // while still yielding to parent verticalScroll and the delete button above.
+                                if (widgetPackageName != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clickable(onClickLabel = "Open app") {
+                                                onLaunchWidgetApp(widgetPackageName)
+                                            }
                                     )
                                 }
 
@@ -319,9 +346,11 @@ private fun CoverWidgetTwoColumnGrid(
         content = content,
         modifier = modifier.fillMaxWidth()
     ) { measurables, constraints ->
+        // Available horizontal width in pixels and gap/single-column widths derived from it.
         val fullWidthPx = constraints.maxWidth
         val gapPx = WIDGET_GRID_GAP_DP.dp.roundToPx()
         val singleColWidthPx = ((fullWidthPx - gapPx) / 2).coerceAtLeast(1)
+        // Compute exact (x, y, width, height) coordinates and total grid height before measuring children.
         val packed = packTwoColumnGrid(
             specs = specs,
             singleColWidthPx = singleColWidthPx,
@@ -331,6 +360,7 @@ private fun CoverWidgetTwoColumnGrid(
             dpToPx = { dp -> dp.dp.roundToPx() }
         )
 
+        // Measure each widget tile with fixed bounds so Surface/Box matches the packed slot exactly.
         val placeables = measurables.mapIndexed { index, measurable ->
             val placement = packed.placements[index]
             measurable.measure(Constraints.fixed(placement.widthPx, placement.heightPx))

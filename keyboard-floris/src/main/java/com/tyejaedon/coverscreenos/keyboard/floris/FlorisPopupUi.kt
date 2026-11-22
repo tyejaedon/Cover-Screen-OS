@@ -33,12 +33,14 @@ fun FlorisKeyPreviewBubble(
     themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover
 ) {
     val density = LocalDensity.current
+    // Vertical pixel offset (-48dp) floating the preview above the pressed key and the user's thumb.
     val yOffsetPx = with(density) { (-48).dp.roundToPx() }
 
     Popup(
         alignment = Alignment.TopCenter,
         offset = IntOffset(0, yOffsetPx),
         properties = PopupProperties(
+            // Keep non-focusable and non-dismissing so underlying key-press tracking continues cleanly.
             focusable = false,
             dismissOnBackPress = false,
             dismissOnClickOutside = false,
@@ -80,6 +82,7 @@ fun FlorisExtendedPopupMenu(
     if (!expanded || options.isEmpty()) return
 
     val density = LocalDensity.current
+    // Vertical pixel offset (-46dp) placing the character chooser strip right above the long-pressed key.
     val yOffsetPx = with(density) { (-46).dp.roundToPx() }
 
     Popup(
@@ -87,6 +90,7 @@ fun FlorisExtendedPopupMenu(
         offset = IntOffset(0, yOffsetPx),
         onDismissRequest = onDismiss,
         properties = PopupProperties(
+            // Focusable + outside-tap dismissible so the user can cancel by tapping anywhere else or Back.
             focusable = true,
             dismissOnBackPress = true,
             dismissOnClickOutside = true,

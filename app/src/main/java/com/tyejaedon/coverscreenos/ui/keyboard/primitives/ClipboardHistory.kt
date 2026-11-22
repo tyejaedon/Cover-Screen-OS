@@ -10,6 +10,7 @@ package com.tyejaedon.coverscreenos.ui.keyboard.primitives
  * Re-recording an already-present snippet moves it back to the front instead of adding a
  * duplicate entry, and the buffer never exceeds [maxSize]. Because entries are guaranteed unique,
  * Compose list keys in [ClipboardHistoryRow] can safely use the snippet text itself.
+ * @property maxSize Maximum number of distinct clips kept before evicting the oldest entry.
  */
 class ClipboardHistory(private val maxSize: Int = DEFAULT_MAX_SIZE) {
 
@@ -17,6 +18,7 @@ class ClipboardHistory(private val maxSize: Int = DEFAULT_MAX_SIZE) {
         require(maxSize > 0) { "maxSize must be positive, was $maxSize" }
     }
 
+    // Backing list ordered newest-at-index-0 to oldest-at-tail, capped at maxSize.
     private val entries = mutableListOf<String>()
 
     /** Most-recent-first snapshot of the current history. */

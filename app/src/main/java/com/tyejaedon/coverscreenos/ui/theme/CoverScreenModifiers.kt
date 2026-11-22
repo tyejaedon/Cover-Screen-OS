@@ -14,18 +14,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-// Default outer margin kept compact (8dp) for small outer cover displays.
+// Holds the default left/right outer margin (8dp) so UI stays roomy without wasting tight cover-screen width.
 private val CoverScreenHorizontalPadding = 8.dp
+// Holds the default top/bottom outer margin (8dp) matching the horizontal breathing room on compact displays.
 private val CoverScreenVerticalPadding = 8.dp
 
-// Follows Android's 48dp minimum accessible touch-target guideline for reliable thumb taps.
+// Holds Android's 48dp minimum recommended tap-target size so small icons stay easy to hit with a thumb.
 private val CoverScreenMinTouchTarget = 48.dp
 
 /** One UI uses noticeably larger, "continuous" corner radii than stock Material. */
 val CoverOSCornerRadiusLarge = 34.dp
-/** Medium continuous corner radius used for standard overlay cards and inner panels. */
+/** Holds the 24dp medium continuous corner radius used for standard overlay cards and inner panels. */
 val CoverOSCornerRadiusMedium = 24.dp
-/** Small continuous corner radius used for compact tiles, badges, and chips. */
+/** Holds the 16dp small continuous corner radius used for compact tiles, badges, and chips. */
 val CoverOSCornerRadiusSmall = 16.dp
 
 /**

@@ -101,18 +101,24 @@ enum class FlorisLayoutType(val dirName: String) {
  */
 @Serializable
 data class PopupSet<T>(
+    /** Default character/action shown immediately on long-press (e.g. `"1"` on key `"q"`). */
     val main: T? = null,
+    /** Secondary popup options fanned out next to [main] (e.g. accented vowels `"é"`, `"è"`). */
     val relevant: List<T> = emptyList()
 ) {
+    /** Returns `true` when this key defines no long-press popup options at all. */
     fun isEmpty(): Boolean = main == null && relevant.isEmpty()
 
+    /** Returns `true` when at least one primary or extended popup item exists. */
     fun isNotEmpty(): Boolean = !isEmpty()
 
+    /** Returns a flat list starting with [main] (if present) followed by [relevant]. */
     fun all(): List<T> = buildList {
         if (main != null) add(main)
         addAll(relevant)
     }
 
+    /** Combines two popup sets without duplicate entries, preferring this set's [main]. */
     fun merge(other: PopupSet<T>): PopupSet<T> {
         val mergedMain = this.main ?: other.main
         val mergedRelevant = buildList {
@@ -135,19 +141,31 @@ data class PopupSet<T>(
  */
 @Serializable
 data class TextKeyData(
+    /** Functional category of the key controlling visual styling and tap behavior. */
     val type: KeyType = KeyType.CHARACTER,
+    /** Positive Unicode code point for characters, or negative [KeyCode] constant for actions. */
     val code: Int = KeyCode.UNSPECIFIED,
+    /** Text or glyph displayed on the keycap face. */
     val label: String = "",
+    /** Layout group identifier (`GROUP_*`) used to align left/right edge or enter-key clusters. */
     val groupId: Int = GROUP_DEFAULT,
+    /** Long-press popup characters/digits attached to this key. */
     val popup: PopupSet<TextKeyData> = PopupSet(),
+    /** Relative horizontal width multiplier (`1.0f` = standard key width, `4.2f` = spacebar). */
     val widthFactor: Float = 1.0f,
+    /** Alphabetic characters cycled/predicted by this key in T9 mode (e.g. `"abc"`). */
     val t9Chars: String = "",
+    /** Optional Compose test tag exposed in semantics for automated UI tests. */
     val testTag: String? = null
 ) {
     companion object {
+        /** Standard ungrouped key. */
         const val GROUP_DEFAULT = 0
+        /** Key anchored to the left edge group (e.g. Shift / layout switch). */
         const val GROUP_LEFT = 1
+        /** Key anchored to the right edge group (e.g. Backspace). */
         const val GROUP_RIGHT = 2
+        /** Dedicated Enter/Done action group. */
         const val GROUP_ENTER = 3
     }
 }
@@ -157,8 +175,12 @@ data class TextKeyData(
  */
 @Serializable
 data class FlorisLayoutArrangement(
+    /** Layout category name matching [FlorisLayoutType.dirName] (e.g. `"characters"`, `"t9"`). */
     val type: String = "characters",
+    /** Specific layout variant filename without `.json` (e.g. `"qwerty"`, `"western"`, `"compact"`). */
     val name: String = "qwerty",
+    /** Reading/layout direction (`"ltr"` or `"rtl"`). */
     val direction: String = "ltr",
+    /** Grid of keyboard rows from top to bottom, each holding ordered [TextKeyData] descriptors. */
     val arrangement: List<List<TextKeyData>> = emptyList()
 )

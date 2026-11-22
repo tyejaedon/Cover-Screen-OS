@@ -22,10 +22,15 @@ object CoverSearchUiTestTags {
     const val SEARCH_IME_PICKER_BUTTON = "cover_search_ime_picker_button"
 
     // Mode-specific input fields, embedded T9 keypad, and IME-inset container variants
+    /** Text field shown when the user chooses Android's system keyboard instead of built-in T9. */
     const val SEARCH_SYSTEM_IME_FIELD = "cover_search_system_ime_field"
+    /** Read-out field fed by the embedded cover T9 keypad. */
     const val SEARCH_T9_FIELD = "cover_search_t9_field"
+    /** Root node of the embedded T9 keypad inside the search overlay. */
     const val SEARCH_T9_KEYPAD_ROOT = "cover_search_t9_keypad"
+    /** Wrapper applying system IME bottom insets when the system keyboard is active. */
     const val SEARCH_CONTENT_CONTAINER_WITH_IME_PADDING = "cover_search_content_with_ime_padding"
+    /** Wrapper omitting IME bottom insets when using the built-in T9 keypad (avoids double padding). */
     const val SEARCH_CONTENT_CONTAINER_NO_IME_PADDING = "cover_search_content_no_ime_padding"
     const val SEARCH_OPEN_AFFORDANCE_BUTTON = "cover_search_open_affordance_button"
 

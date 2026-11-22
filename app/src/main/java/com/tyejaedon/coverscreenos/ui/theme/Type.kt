@@ -6,8 +6,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 /**
- * Base Material 3 [Typography] instance supplied to [androidx.compose.material3.MaterialTheme]
- * by [CoverOSTheme]. Cover-specific visual hierarchy uses [CoverOSTextStyles].
+ * Holds the default Material 3 [Typography] table wired into `MaterialTheme` by [CoverOSTheme].
+ * Cover-screen-specific typography uses the custom presets inside [CoverOSTextStyles].
  */
 val CoverOSTypography = Typography()
 
@@ -21,7 +21,7 @@ val CoverOSTypography = Typography()
  */
 object CoverOSTextStyles {
 
-    /** Oversized light-weight clock readout with tight negative tracking (`-0.5.sp`) for large numerals. */
+    /** Holds the large, thin-weight (`42.sp`, Light) clock readout style with tightened letter spacing so big numerals look cohesive. */
     val ClockText = TextStyle(
         fontSize = 42.sp,
         fontWeight = FontWeight.Light,
@@ -29,21 +29,21 @@ object CoverOSTextStyles {
         lineHeight = 58.sp
     )
 
-    /** Compact medium-weight date subtitle anchored directly below the cover clock. */
+    /** Holds the compact (`14.sp`, Medium) date line style placed directly beneath the cover clock. */
     val DateText = TextStyle(
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.2.sp
     )
 
-    /** Small launcher icon label sized for tight multi-column cover grids while remaining legible. */
+    /** Holds the small (`11.sp`, Medium) label style sized to keep app names crisp under compact launcher icons. */
     val AppLabelText = TextStyle(
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.1.sp
     )
 
-    /** Semi-bold section header with expanded tracking (`0.6.sp`) for group labels on compact screens. */
+    /** Holds the spaced-out (`12.sp`, SemiBold) section-heading style used to label grouped rows on small displays. */
     val SectionLabelText = TextStyle(
         fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,

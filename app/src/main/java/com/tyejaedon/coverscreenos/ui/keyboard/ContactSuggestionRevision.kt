@@ -30,8 +30,11 @@ import kotlinx.coroutines.delay
  */
 @Composable
 internal fun rememberContactSuggestionRevision(enabled: Boolean): Int {
+    // Host context used to open keyboard preferences and check runtime contacts permission.
     val context = LocalContext.current
+    // Counter incremented on any contact-preference or permission change so callers re-query NLP words.
     var revision by remember(context) { mutableIntStateOf(0) }
+    // SharedPreferences file storing the user's "include_contact_names" toggle.
     val preferences = remember(context) {
         context.getSharedPreferences("keyboard_words", Context.MODE_PRIVATE)
     }
@@ -39,6 +42,7 @@ internal fun rememberContactSuggestionRevision(enabled: Boolean): Int {
     DisposableEffect(preferences, enabled) {
         if (!enabled) return@DisposableEffect onDispose {}
 
+        // Listener bumping revision only when the contact-names flag changes.
         val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == "include_contact_names") revision++
         }
@@ -49,11 +53,13 @@ internal fun rememberContactSuggestionRevision(enabled: Boolean): Int {
     }
     LaunchedEffect(context, enabled, revision) {
         if (!enabled || !preferences.getBoolean("include_contact_names", false)) return@LaunchedEffect
+        // Baseline READ_CONTACTS grant state when this effect started watching.
         val wasGranted = context.checkSelfPermission(Manifest.permission.READ_CONTACTS) ==
             PackageManager.PERMISSION_GRANTED
         // Permission can be revoked while this overlay remains mounted.
         while (true) {
             delay(5_000)
+            // Current permission status polled every 5s to catch System Settings changes.
             val isGranted = context.checkSelfPermission(Manifest.permission.READ_CONTACTS) ==
                 PackageManager.PERMISSION_GRANTED
             if (isGranted != wasGranted) {

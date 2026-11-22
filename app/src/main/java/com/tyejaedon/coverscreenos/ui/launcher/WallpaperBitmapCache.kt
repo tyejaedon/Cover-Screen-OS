@@ -10,6 +10,10 @@ import android.util.LruCache
  * capped at 10 MiB (measured in KiB units) and synchronized for safe access from `Dispatchers.IO`.
  */
 object WallpaperBitmapCache {
+    /**
+     * In-memory least-recently-used (LRU) cache holding up to 10 MiB (`10 * 1024` KiB) of
+     * decoded [WallpaperFrame] objects so waking the cover screen doesn't re-decode heavy media.
+     */
     private val cache = object : LruCache<String, WallpaperFrame>(10 * 1024) {
         // LruCache expects sizeOf in consistent units; KiB avoids integer overflow on large bitmaps.
         override fun sizeOf(key: String, value: WallpaperFrame): Int = value.bitmap.byteCount / 1024

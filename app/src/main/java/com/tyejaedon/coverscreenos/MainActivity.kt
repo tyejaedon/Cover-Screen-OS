@@ -29,11 +29,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            // Retain one DataStore repository instance across recompositions using applicationContext
-            // to avoid leaking this Activity reference.
+            // Holds the single settings store handle across UI recompositions; uses applicationContext
+            // so retaining this store never keeps the short-lived Activity in memory.
             val settingsStore = remember { LauncherSettingsStore(applicationContext) }
-            // Observe persisted preferences reactively; emit default LauncherSettings on first
-            // frame while DataStore finishes its initial asynchronous disk read.
+            // Live Compose state mirroring the user's saved preferences, starting with defaults
+            // for the first frame until DataStore finishes reading from disk.
             val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
 
             CoverOSTheme(

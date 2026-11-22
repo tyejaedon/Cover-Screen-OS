@@ -82,16 +82,21 @@ internal fun HapticTier.scaledBy(strength: HapticStrength): HapticTier = when (s
  */
 @Composable
 internal fun rememberHapticPerformer(tier: HapticTier): () -> Unit {
+    // Host View used for fallback View.performHapticFeedback when no hardware Vibrator is active.
     val view: View = LocalView.current
     val context = LocalContext.current
+    // DataStore preferences repository holding the user's haptic strength setting.
     val settingsStore = remember(context) { LauncherSettingsStore(context.applicationContext) }
     // Collect only hapticStrength with distinctUntilChanged so unrelated settings edits do not re-allocate.
     val hapticStrength by remember(settingsStore) {
         settingsStore.settings.map { it.hapticStrength }.distinctUntilChanged()
     }.collectAsState(initial = LauncherSettings().hapticStrength)
+    // Final haptic intensity after applying the user's Off / Light / Standard / Strong preference.
     val effectiveTier = remember(tier, hapticStrength) { tier.scaledBy(hapticStrength) }
     return remember(view, effectiveTier) {
+        // Fallback HapticFeedbackConstants flag (or null when scaled down to None).
         val code = effectiveTier.toHapticConstant() ?: return@remember { /* no-op */ }
+        // Predefined VibrationEffect ID for hardware vibrator playback.
         val effect = effectiveTier.toVibrationEffect() ?: return@remember { /* no-op */ }
         // Query Vibrator directly rather than VibratorManager (API 31+) to support minSdk 28.
         val vibrator = view.context.getSystemService(Vibrator::class.java)

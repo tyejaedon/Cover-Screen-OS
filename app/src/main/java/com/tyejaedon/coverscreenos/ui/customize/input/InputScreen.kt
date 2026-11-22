@@ -69,7 +69,9 @@ internal fun InputScreen(
     )
     // Debug-only interactive sandbox for testing keyboard primitives directly inside Customize.
     if (BuildConfig.DEBUG) {
+        // Expands/collapses the QA preview strip below the input settings card.
         var showPreview by rememberSaveable { mutableStateOf(false) }
+        // Scratch buffer collecting tapped keys and suggestion words inside the QA sandbox.
         var sampleText by rememberSaveable { mutableStateOf("") }
         OutlinedButton(onClick = { showPreview = !showPreview }) {
             Text(if (showPreview) "Hide QA keyboard preview" else "Show QA keyboard preview")

@@ -10,26 +10,26 @@ import androidx.compose.ui.graphics.Color
 // (e.g. the dock-visibility toggle, the fast-scroll letter badge).
 // ---------------------------------------------------------------------------
 
-/** Primary "Galaxy" indigo accent used for active controls, toggles, and selected states in dark mode. */
+/** Holds the main "Galaxy" indigo accent color used for active buttons, switches, and selected items in dark mode. */
 val CoverOSPrimary = Color(0xFF7C9CFF)
-/** Tonal container surface paired with [CoverOSPrimary] for filled chips, badges, and subtle highlights. */
+/** Holds the softer dark-blue container fill paired with [CoverOSPrimary] for highlighted pills and selected cards. */
 val CoverOSPrimaryContainer = Color(0xFF25305C)
-/** High-contrast foreground ink rendered on top of [CoverOSPrimaryContainer]. */
+/** Holds the light-blue text/icon color drawn on top of [CoverOSPrimaryContainer] so labels stay easy to read. */
 val CoverOSOnPrimaryContainer = Color(0xFFDCE4FF)
-/** Dark foreground ink rendered on top of [CoverOSPrimary] to meet legibility contrast ratios. */
+/** Holds the deep navy ink color drawn on top of bright [CoverOSPrimary] buttons for strong contrast. */
 val CoverOSOnPrimary = Color(0xFF0E1635)
 
-/** Secondary mint accent reserved for rare, deliberate highlights such as dock-visibility indicators. */
+/** Holds the secondary mint-green accent reserved for rare highlights like dock-visibility toggles. */
 val CoverOSSecondary = Color(0xFF6EE7C0)
-/** Deep teal container backing elements styled with the secondary accent. */
+/** Holds the deep teal background fill used behind elements styled with [CoverOSSecondary]. */
 val CoverOSSecondaryContainer = Color(0xFF16392F)
-/** Dark foreground ink paired with [CoverOSSecondary] and [CoverOSSecondaryContainer]. */
+/** Holds the dark green text/icon color drawn on top of [CoverOSSecondary] and [CoverOSSecondaryContainer]. */
 val CoverOSOnSecondary = Color(0xFF06231B)
-/** Tertiary warm amber accent used sparingly for focus badges such as the fast-scroll letter indicator. */
+/** Holds the warm amber tertiary accent used sparingly for attention badges such as the fast-scroll letter bubble. */
 val CoverOSTertiary = Color(0xFFFFB870)
-/** Warm dark-amber container surface backing tertiary-accented UI elements. */
+/** Holds the dark bronze container background paired with [CoverOSTertiary]. */
 val CoverOSTertiaryContainer = Color(0xFF4A2B0A)
-/** Dark foreground ink paired with [CoverOSTertiary] and [CoverOSTertiaryContainer]. */
+/** Holds the dark brown ink color drawn on top of [CoverOSTertiary] and [CoverOSTertiaryContainer]. */
 val CoverOSOnTertiary = Color(0xFF2A1400)
 
 // ---------------------------------------------------------------------------
@@ -39,15 +39,15 @@ val CoverOSOnTertiary = Color(0xFF2A1400)
 // Color.kt" rule.
 // ---------------------------------------------------------------------------
 
-/** High-alert red used for destructive actions such as clearing or removing overlay items. */
+/** Holds the alert-red color used for destructive actions like clearing notifications or removing items. */
 val CoverOSDestructiveColor = Color(0xFFD32F2F)
-/** Status green indicating active battery charging on the cover screen. */
+/** Holds the status-green color indicating active battery charging on the cover screen. */
 val CoverOSBatteryChargingColor = Color(0xFF4CAF50)
-/** Deep green pill tint indicating an ongoing voice or VoIP call. */
+/** Holds the deep green pill color shown when an active phone or VoIP call is in progress. */
 val CoverOSCallActiveColor = Color(0xFF1B5E20)
-/** Top stop of the fallback gradient behind media controls when album artwork is unavailable. */
+/** Holds the top slate-blue color of the fallback media gradient when a song has no album artwork. */
 val CoverOSMediaPlaceholderGradientStart = Color(0xFF2C3E50)
-/** Bottom stop of the fallback gradient behind media controls, blending into true black. */
+/** Holds the bottom pure-black color of the fallback media gradient so controls fade cleanly into the screen. */
 val CoverOSMediaPlaceholderGradientEnd = Color(0xFF000000)
 
 // ---------------------------------------------------------------------------
@@ -55,65 +55,65 @@ val CoverOSMediaPlaceholderGradientEnd = Color(0xFF000000)
 // the wallpaper and blur layers read as the actual surface of the screen.
 // ---------------------------------------------------------------------------
 
-/** True pure-black AMOLED canvas background so unlit cover pixels consume minimal power. */
+/** Holds the pure-black (`#000000`) canvas color so unlit OLED pixels turn off completely and save battery. */
 val CoverOSDarkBackground = Color(0xFF000000)
-/** Primary dark elevated card surface lifted slightly above [CoverOSDarkBackground]. */
+/** Holds the charcoal surface color for cards lifted one step above [CoverOSDarkBackground]. */
 val CoverOSDarkSurface = Color(0xFF111214)
-/** Secondary dark surface tier for nested controls, tracks, and subtle containers. */
+/** Holds a slightly lighter dark-gray surface for nested tracks, sliders, and secondary containers. */
 val CoverOSDarkSurfaceVariant = Color(0xFF1B1D22)
-/** Subtle 1dp border/divider stroke separating dark cards and panels. */
+/** Holds the subtle gray color used for thin 1dp borders and dividers between dark cards. */
 val CoverOSDarkOutline = Color(0xFF2C2E34)
 
-/** Pure white primary ink for text and icons placed directly on [CoverOSDarkBackground]. */
+/** Holds pure white text/icon ink for content placed directly on [CoverOSDarkBackground]. */
 val CoverOSDarkOnBackground = Color(0xFFFFFFFF)
-/** Softened near-white ink for primary labels inside [CoverOSDarkSurface] cards (reduces halation on OLED). */
+/** Holds slightly softened off-white ink for card text, reducing harsh glare on OLED displays. */
 val CoverOSDarkOnSurface = Color(0xFFF2F3F5)
-/** Muted cool-gray ink for secondary subtitles, timestamps, and inactive icons in dark mode. */
+/** Holds muted cool-gray ink for secondary subtitles, timestamps, and inactive icons in dark mode. */
 val CoverOSDarkOnSurfaceVariant = Color(0xFFA6AAB4)
 
 // ---------------------------------------------------------------------------
 // Light palette — kept for parity / future light-cover theming.
 // ---------------------------------------------------------------------------
 
-/** Cool light-gray canvas background creating subtle depth behind white elevated cards. */
+/** Holds the soft cool-gray light-mode backdrop that lets white cards pop out clearly. */
 val CoverOSLightBackground = Color(0xFFF4F5F9)
-/** Crisp pure-white elevated card surface in light mode. */
+/** Holds the pure-white surface color for elevated cards in light mode. */
 val CoverOSLightSurface = Color(0xFFFFFFFF)
-/** Soft cool-gray recessed surface variant for tracks, chips, and secondary containers in light mode. */
+/** Holds the recessed light-gray surface used for slider tracks, chips, and inner containers in light mode. */
 val CoverOSLightSurfaceVariant = Color(0xFFE9EBF2)
-/** Medium-contrast border and divider color in light mode. */
+/** Holds the medium-gray outline color used for borders and dividers in light mode. */
 val CoverOSLightOutline = Color(0xFF797D89)
 
-/** Light-mode primary indigo tuned for strong contrast against white and light-gray surfaces. */
+/** Holds the deeper light-mode primary indigo tuned to stay crisp against white backgrounds. */
 val CoverOSLightPrimary = Color(0xFF4860B8)
-/** Foreground ink rendered on top of [CoverOSLightPrimary]. */
+/** Holds white ink rendered on top of [CoverOSLightPrimary] buttons. */
 val CoverOSLightOnPrimary = Color(0xFFFFFFFF)
-/** Soft pastel-indigo container background in light mode. */
+/** Holds the pale blue container tint paired with [CoverOSLightPrimary]. */
 val CoverOSLightPrimaryContainer = Color(0xFFDDE4FF)
-/** Deep indigo foreground ink paired with [CoverOSLightPrimaryContainer]. */
+/** Holds deep navy ink rendered inside [CoverOSLightPrimaryContainer]. */
 val CoverOSLightOnPrimaryContainer = Color(0xFF1A2A63)
 
-/** Light-mode secondary teal-green accent. */
+/** Holds the light-mode secondary teal-green accent. */
 val CoverOSLightSecondary = Color(0xFF266B55)
-/** Foreground ink rendered on top of [CoverOSLightSecondary]. */
+/** Holds white ink rendered on top of [CoverOSLightSecondary]. */
 val CoverOSLightOnSecondary = Color(0xFFFFFFFF)
-/** Soft mint container background in light mode. */
+/** Holds the soft mint container tint paired with [CoverOSLightSecondary]. */
 val CoverOSLightSecondaryContainer = Color(0xFFB5F1DC)
-/** Deep forest-green foreground ink paired with [CoverOSLightSecondaryContainer]. */
+/** Holds deep forest-green ink rendered inside [CoverOSLightSecondaryContainer]. */
 val CoverOSLightOnSecondaryContainer = Color(0xFF0A271F)
 
-/** Light-mode tertiary warm-brown/amber accent. */
+/** Holds the light-mode tertiary warm amber-brown accent. */
 val CoverOSLightTertiary = Color(0xFF8A4F1A)
-/** Foreground ink rendered on top of [CoverOSLightTertiary]. */
+/** Holds white ink rendered on top of [CoverOSLightTertiary]. */
 val CoverOSLightOnTertiary = Color(0xFFFFFFFF)
-/** Soft peach-amber container background in light mode. */
+/** Holds the soft peach container tint paired with [CoverOSLightTertiary]. */
 val CoverOSLightTertiaryContainer = Color(0xFFFFDCC0)
-/** Deep brown foreground ink paired with [CoverOSLightTertiaryContainer]. */
+/** Holds dark brown ink rendered inside [CoverOSLightTertiaryContainer]. */
 val CoverOSLightOnTertiaryContainer = Color(0xFF2D1500)
 
-/** Deep near-black ink for primary text on [CoverOSLightBackground]. */
+/** Holds near-black ink for primary text on [CoverOSLightBackground]. */
 val CoverOSLightOnBackground = Color(0xFF14161B)
-/** Deep near-black ink for primary text inside [CoverOSLightSurface] cards. */
+/** Holds near-black ink for primary text inside [CoverOSLightSurface] cards. */
 val CoverOSLightOnSurface = Color(0xFF14161B)
-/** Muted slate ink for secondary labels and supporting copy in light mode. */
+/** Holds muted slate-gray ink for secondary captions and hints in light mode. */
 val CoverOSLightOnSurfaceVariant = Color(0xFF53586A)

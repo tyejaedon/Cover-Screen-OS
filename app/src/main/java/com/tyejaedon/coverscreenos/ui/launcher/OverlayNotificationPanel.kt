@@ -70,6 +70,7 @@ import dev.chrisbanes.haze.HazeState
 
 private const val NOTIFICATION_RECENT_WINDOW_MS = 60L * 60L * 1000L // "Now" vs "Earlier" boundary.
 
+// Fade + spring-slide transitions when expanding or collapsing stacked notifications inside an app card.
 private val notificationGroupExpandEnter = fadeIn(animationSpec = tween(180, delayMillis = 50)) +
     expandVertically(
         animationSpec = spring(
@@ -196,20 +197,24 @@ internal fun NotificationsPanelTile(
     modifier: Modifier = Modifier,
     hazeState: HazeState? = null
 ) {
+    // User-controlled toggle that tucks persistent/ongoing cards out of the main scroll list.
     var collapseOngoing by remember { mutableStateOf(false) }
 
+    // Partition incoming alerts into persistent/non-clearable items vs. normal dismissible items.
     val ongoingNotifications = remember(notifications) {
         notifications.filter { it.isOngoing || !it.isClearable }
     }
     val importantNotifications = remember(notifications) {
         notifications.filterNot { it.isOngoing || !it.isClearable }
     }
+    // Group notifications by sender app so multiple messages from one app collapse into one card.
     val ongoingGroupedNotifications = remember(ongoingNotifications) {
         groupNotificationsByProvider(ongoingNotifications)
     }
     val importantGroupedNotifications = remember(importantNotifications) {
         groupNotificationsByProvider(importantNotifications)
     }
+    // Bucket dismissible app groups into "Now" (posted within the last hour) vs. "Earlier".
     val nowGroups = remember(importantGroupedNotifications) {
         importantGroupedNotifications.filter { isRecentGroup(it) }
     }
@@ -350,11 +355,14 @@ private fun NotificationProviderGroupCard(
     hazeState: HazeState? = null
 ) {
     val cardShape = RoundedCornerShape(LocalCoverPanelCornerRadius.current)
+    // App icon and friendly app title resolved off-thread from PackageManager + caches.
     val providerIcon = rememberPackageIconBitmap(group.packageName)
     val providerLabel = rememberPackageLabel(group.packageName)
+    // Whether the user tapped "Show N more" to reveal all alerts beyond the 2-row summary.
     var isExpanded by remember(group.packageName) { mutableStateOf(false) }
     val providerNotifications = group.notifications
 
+    // Show at most 2 alerts per app when collapsed so a busy chat app doesn't hog the screen.
     val visibleNotifications = if (isExpanded || providerNotifications.size <= 2) {
         providerNotifications
     } else {
@@ -483,6 +491,7 @@ private fun NotificationGroupRow(
     onDismiss: () -> Unit
 ) {
     // Require a 60% horizontal drag before committing dismissal to prevent accidental swipes while scrolling.
+    // Tracks the user's horizontal swipe progress and settled/dismissed state for this row.
     val dismissState = rememberSwipeToDismissBoxState(
         initialValue = SwipeToDismissBoxValue.Settled,
         positionalThreshold = { totalDistance -> totalDistance * 0.6f }
@@ -499,6 +508,7 @@ private fun NotificationGroupRow(
         enableDismissFromEndToStart = false,
         enableDismissFromStartToEnd = notification.isClearable,
         backgroundContent = {
+            // Smoothly tints the swipe reveal backdrop red once the drag passes the dismiss threshold.
             val color by animateColorAsState(
                 targetValue = when (dismissState.targetValue) {
                     SwipeToDismissBoxValue.StartToEnd -> CoverOSDestructiveColor.copy(alpha = 0.5f)

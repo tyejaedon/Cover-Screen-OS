@@ -50,11 +50,14 @@ internal object LauncherSettingsJson {
      * @throws IllegalArgumentException if any field fails domain validation.
      */
     fun decode(raw: String): LauncherSettings {
+        // Root parsed JSON backup object.
         val json = JSONObject(raw)
         require(json.getInt("version") == 1) { "Unsupported settings version" }
         require(json.has("wallpaperUri")) { "Missing wallpaper URI field" }
+        // Raw JSON array holding the 4 quick-launch dock slots.
         val slots = json.getJSONArray("dockPackages")
         require(slots.length() == COVER_DOCK_SLOT_COUNT) { "Expected four dock slots" }
+        // Normalized 4-element dock list (null = empty slot; whitespace/duplicates rejected).
         val dock = List(COVER_DOCK_SLOT_COUNT) { index ->
             if (slots.isNull(index)) null else slots.getString(index).also {
                 require(it.isNotBlank() && it == it.trim()) { "Invalid dock package" }
@@ -63,6 +66,7 @@ internal object LauncherSettingsJson {
         require(dock.filterNotNull().distinct().size == dock.count { it != null }) {
             "Duplicate dock package"
         }
+        // Wallpaper scrim opacity and blur radius validated against safe display limits.
         val dim = json.getDouble("wallpaperDimAmount").toFloat()
         val blur = json.getDouble("wallpaperBlurRadiusDp").toFloat()
         require(dim.isFinite() && dim in MIN_WALLPAPER_DIM_AMOUNT..MAX_WALLPAPER_DIM_AMOUNT) {
@@ -90,16 +94,19 @@ internal object LauncherSettingsJson {
             "Invalid wallpaper zoom"
         }
         require(rotation in 0..270 && rotation % 90 == 0) { "Invalid wallpaper rotation" }
+        // Corner rounding (dp) for cover UI cards/panels, falling back to default if missing.
         val radius = if (json.has("panelCornerRadiusDp")) json.getDouble("panelCornerRadiusDp").toFloat()
             else DEFAULT_PANEL_CORNER_RADIUS_DP
         require(radius.isFinite() && radius in MIN_PANEL_CORNER_RADIUS_DP..MAX_PANEL_CORNER_RADIUS_DP) {
             "Invalid panel corner radius"
         }
+        // Per-app remembered keyboard mode map (e.g. T9 vs QWERTY per package name).
         val modes = json.getJSONObject("keyboardModeByPackage")
         val savedModes = modes.keys().asSequence().associateWith { packageName ->
             require(packageName.isNotBlank()) { "Empty keyboard package" }
             enumValue<CoverKeyboardMode>(modes.getString(packageName))
         }
+        // Ordered AppWidget IDs restored onto the cover widget page (empty on older backups).
         val decodedWidgetIds = if (json.has("widgetIds")) {
             val arr = json.getJSONArray("widgetIds")
             List(arr.length()) { arr.getInt(it) }

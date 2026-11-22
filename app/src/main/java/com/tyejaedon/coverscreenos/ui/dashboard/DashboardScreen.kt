@@ -52,9 +52,11 @@ fun DashboardScreen(
     modifier: Modifier = Modifier,
     topBarActions: @Composable () -> Unit = {}
 ) {
+    // Controls whether the local "Cover Surface Preview" mock dialog is displayed.
     var previewVisible by remember { mutableStateOf(false) }
+    // True when tapping Start failed (e.g., missing required permissions), showing an error hint below Quick Controls.
     var startBlocked by remember { mutableStateOf(false) }
-    // Persist banner dismissal across configuration changes (rotation / folding).
+    // Remembers if the user dismissed the "Limited features" warning banner across rotation/folding.
     var noticeDismissed by rememberSaveable { mutableStateOf(false) }
 
     OneUIScaffold(
@@ -88,6 +90,7 @@ fun DashboardScreen(
 
             if (state.permissions.missing.isNotEmpty() && !noticeDismissed) {
                 item {
+                    // Names of still-missing required grants and matching singular/plural verb for the banner text.
                     val missingList = state.permissions.missing
                     val verb = if (missingList.size == 1) "is" else "are"
                     FeatureDegradedNotice(

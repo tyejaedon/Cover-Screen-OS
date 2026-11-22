@@ -34,6 +34,9 @@ enum class KeyboardStrategy {
 	}
 }
 
-/** Default cover-screen input strategy: the built-in T9 keypad. */
+/**
+ * Default cover-screen input strategy: the built-in T9 keypad, used on fresh installs
+ * and whenever a saved preference string is missing or unrecognized.
+ */
 val DEFAULT_KEYBOARD_STRATEGY: KeyboardStrategy = KeyboardStrategy.T9
 

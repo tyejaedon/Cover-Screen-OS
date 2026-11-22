@@ -24,8 +24,11 @@ import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
  * (solid black, solid white, mid-tone photo-like gradient). No live device required to sanity
  * check legibility/contrast while iterating on tokens.
  */
+// Holds a pitch-black OLED backdrop to test whether translucent borders still stand out in dark wallpapers.
 private val PreviewWallpaperDark = Color(0xFF000000)
+// Holds a bright off-white backdrop to test worst-case contrast behind translucent frosted panels.
 private val PreviewWallpaperBright = Color(0xFFF5F5F5)
+// Holds a mid-tone slate-blue backdrop simulating typical photographic wallpapers.
 private val PreviewWallpaperMid = Color(0xFF5B6B8C)
 
 /**

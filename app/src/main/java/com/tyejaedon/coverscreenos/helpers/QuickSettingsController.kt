@@ -23,7 +23,10 @@ import kotlin.math.roundToInt
  */
 object QuickSettingsController {
 
+    // Logcat tag for system settings, flashlight, and radio toggle warnings.
     private const val LOG_TAG = "QuickSettingsController"
+
+    // Raw Android system brightness bounds (0..255) mapped to/from a 0.0..1.0 slider fraction.
     private const val MIN_BRIGHTNESS = 0
     private const val MAX_BRIGHTNESS = 255
 
@@ -183,6 +186,7 @@ object QuickSettingsController {
 
     /** Current screen brightness as a 0f..1f fraction. */
     fun getBrightnessPercent(context: Context): Float {
+        // Raw Android brightness level (0..255); falls back to 50% if unreadable.
         val raw = runCatching {
             Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
         }.getOrDefault(MAX_BRIGHTNESS / 2)
@@ -192,6 +196,8 @@ object QuickSettingsController {
     /** Requires [canWriteSystemSettings] to be true; returns false otherwise (no-op). */
     fun setBrightnessPercent(context: Context, percent: Float): Boolean {
         if (!canWriteSystemSettings(context)) return false
+
+        // Clamped integer brightness value on Android's 0..255 scale.
         val value = (percent.coerceIn(0f, 1f) * MAX_BRIGHTNESS).roundToInt()
             .coerceIn(MIN_BRIGHTNESS, MAX_BRIGHTNESS)
 
@@ -231,8 +237,8 @@ object QuickSettingsController {
      */
     fun launchSettingsIntent(context: Context, intent: Intent): Boolean {
         return runCatching {
-            // Identify the destination package so ForegroundService knows which foreground app
-            // is temporarily taking over from the cover overlay.
+            // Package name of the system settings UI taking over the screen; passed to ForegroundService
+            // so the overlay stays hidden until the user leaves Settings.
             val targetPackage = runCatching {
                 context.packageManager
                     .resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)

@@ -59,6 +59,7 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiPanel
 import dev.chrisbanes.haze.HazeState
 import java.util.Locale
 
+// Standard spacing constants for tiles inside the cover search/widget page.
 private val SEARCH_GRID_TILE_GAP = 6.dp
 private val SEARCH_GRID_CONTENT_PADDING = coverScreenContentPadding(horizontal = 6.dp, vertical = 2.dp)
 
@@ -101,6 +102,7 @@ internal fun WidgetGridPageTile(
     hazeState: HazeState,
     modifier: Modifier = Modifier
 ) {
+    // Pad bottom edge for nav/gesture bars while skipping IME insets (keyboard is embedded inside the tile).
     val insetsModifier = Modifier
         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
         .testTag(CoverSearchUiTestTags.SEARCH_CONTENT_CONTAINER_NO_IME_PADDING)
@@ -110,6 +112,7 @@ internal fun WidgetGridPageTile(
             .fillMaxSize()
             .testTag(CoverSearchUiTestTags.SEARCH_WIDGET_GRID_PAGE)
             .pointerInput(onSwipeUpToReturn, swipeThresholdPx) {
+                // Accumulates vertical drag distance (negative = upward) to detect return-to-lock swipes.
                 var cumulativeDrag = 0f
                 detectVerticalDragGestures(
                     onVerticalDrag = { _, dragAmount ->
@@ -365,6 +368,7 @@ internal fun rememberVoiceInputHandle(
     val latestOnListeningStateChanged = rememberUpdatedState(onListeningStateChanged)
     val latestOnError = rememberUpdatedState(onError)
 
+    // Native Android speech-to-text engine instance (null if the device has no recognition service).
     val speechRecognizer = remember(context) {
         if (SpeechRecognizer.isRecognitionAvailable(context)) {
             runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
@@ -424,6 +428,7 @@ internal fun rememberVoiceInputHandle(
         }
     }
 
+    // BCP-47 device locale passed to RecognizerIntent so speech dictation matches the user's language.
     val languageTag = remember { Locale.getDefault().toLanguageTag() }
     return remember(speechRecognizer, languageTag) {
         OverlayVoiceInputHandle(

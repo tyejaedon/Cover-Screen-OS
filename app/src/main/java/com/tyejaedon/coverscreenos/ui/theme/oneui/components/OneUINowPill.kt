@@ -48,8 +48,9 @@ fun OneUINowPill(
     iconTint: Color = OneUITheme.colors.accent,
     onClick: (() -> Unit)? = null
 ) {
+    // Active theme accent tinting the pill's luminous edge gradient.
     val accent = OneUITheme.colors.accent
-    // Cache the gradient stroke Brush so recompositions only rebuild it if the active theme accent changes.
+    // Cached 3-stop gradient Brush giving the pill a subtle glowing rim without reallocating every frame.
     val borderBrush = remember(accent) {
         Brush.linearGradient(
             colors = listOf(
@@ -60,6 +61,7 @@ fun OneUINowPill(
         )
     }
 
+    // Gesture state tracker used to drive tactile press feedback when onClick is supplied.
     val interactionSource = remember { MutableInteractionSource() }
 
     Surface(
@@ -121,6 +123,7 @@ fun OneUIEncircledActionIcon(
     containerColor: Color = OneUITheme.colors.cardSurfaceVariant.copy(alpha = 0.7f),
     onClick: () -> Unit
 ) {
+    // Tracks finger presses on this circular button so oneUIPressable shrinks it smoothly on tap.
     val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = modifier

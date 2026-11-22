@@ -31,9 +31,13 @@ class PackageManagerAppScannerRepository(
 
     /** Process-wide short-lived cache for icon-less app metadata scans. */
     private companion object {
+        // Cache freshness window (2 minutes) so repeated drawer opens avoid redundant IPC calls.
         private const val APP_SCAN_CACHE_TTL_MS = 120_000L
+        // Synchronization monitor protecting cachedApps and cachedAtElapsedMs across coroutine threads.
         private val cacheLock = Any()
+        // Shared icon-less app list cached across screens without pinning heavy Drawables in memory.
         private var cachedApps: List<AppModel>? = null
+        // Monotonic elapsedRealtime timestamp marking when cachedApps was last refreshed.
         private var cachedAtElapsedMs: Long = 0L
     }
 
@@ -46,6 +50,7 @@ class PackageManagerAppScannerRepository(
      * returns cached results if within [APP_SCAN_CACHE_TTL_MS].
      */
     suspend fun scanInstalledApplications(includeIcons: Boolean = false): List<AppModel> = withContext(ioDispatcher) {
+        // Current monotonic clock reading used to test cache expiration safely across clock changes.
         val now = elapsedRealtimeProvider()
         if (!includeIcons) {
             synchronized(cacheLock) {
@@ -56,18 +61,22 @@ class PackageManagerAppScannerRepository(
             }
         }
 
+        // Android PackageManager IPC handle for inspecting installed apps and icons.
         val packageManager = context.packageManager
-        // Match standard launcher entry points (MAIN + CATEGORY_LAUNCHER) just like a home app.
+        // Standard launcher Intent filter matching apps that declare an entry point icon in home screens.
         val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
         }
+        // Raw list of launchable Activity entries returned by Android's package registry.
         val launcherActivities = packageManager.queryIntentActivities(
             launcherIntent,
             PackageManager.ResolveInfoFlags.of(0)
         )
 
+        // Generic Android fallback icon used only if loading a specific app's icon throws.
         val defaultIcon = if (includeIcons) packageManager.defaultActivityIcon else null
 
+        // Deduplicated, alphabetically sorted app descriptors returned to the launcher/dock UI.
         val scannedApps = launcherActivities
             .asSequence()
             .mapNotNull { resolveInfo ->

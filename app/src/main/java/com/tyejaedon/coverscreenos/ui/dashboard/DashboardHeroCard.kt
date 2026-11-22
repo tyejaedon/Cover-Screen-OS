@@ -33,8 +33,9 @@ import androidx.compose.ui.unit.dp
  */
 @Composable
 fun DashboardHeroCard(state: DashboardState, modifier: Modifier = Modifier) {
+    // Toggles whether the detailed diagnostic breakdown (missing items, uptime, last event) is expanded.
     var expanded by remember { mutableStateOf(false) }
-    // Tighten card padding and spacing on short viewports (landscape or half-folded layouts).
+    // True on short viewports (<= 480dp) so card padding and line spacing tighten to fit better.
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
     Card(
         onClick = { expanded = !expanded },

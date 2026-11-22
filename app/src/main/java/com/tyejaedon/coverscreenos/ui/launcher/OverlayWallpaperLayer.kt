@@ -51,6 +51,7 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 private const val WALLPAPER_LOG_TAG = "CoverWallpaper"
+// Cap static wallpaper decoding at 1.8 MP so large camera photos downsample safely without OOMs.
 private const val MAX_WALLPAPER_DECODE_PIXELS = 1_800_000L
 
 /**
@@ -73,6 +74,7 @@ internal fun CoverWallpaperLayer(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    // Cover window pixel dimensions used to target-size decoded bitmaps and video poster frames.
     val containerSize = LocalWindowInfo.current.containerSize
     val uriValue = wallpaperUri?.trim().takeUnless { it.isNullOrEmpty() }
     val uri = remember(uriValue) { uriValue?.toUri() }
@@ -106,6 +108,7 @@ internal fun CoverWallpaperLayer(
             }
         }
     }
+    // Latest decoded static bitmap or video first-frame poster (null triggers the gradient fallback).
     val frame = media
     if (frame == null || uri == null) {
         Box(
@@ -152,10 +155,13 @@ internal fun WallpaperMediaContent(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    // True only while the cover screen is awake/interactive and the overlay lifecycle is active.
     val playbackActive = rememberWallpaperPlaybackActive()
+    // True when Android Battery Saver is active, forcing motion wallpapers down to a static poster.
     val lowEffects = rememberLowEffectsMode()
-    // Pause motion wallpapers when the screen is off, lifecycle is stopped, or Battery Saver is active.
+    // Combined gate that pauses video/GIF motion when the screen sleeps, stops, or enters Battery Saver.
     val shouldPlay by rememberUpdatedState(playbackActive && !lowEffects)
+    // Decoded looping GIF drawable; cleared to null when paused so memory isn't held while idle.
     val animatedDrawable by produceState<AnimatedImageDrawable?>(null, uri, frame.type, shouldPlay) {
         value = if (frame.type != WallpaperMediaType.GIF || !shouldPlay) null else withContext(Dispatchers.IO) {
             try {
@@ -168,6 +174,7 @@ internal fun WallpaperMediaContent(
             }
         }
     }
+    // Sticky fallback flag: once MediaPlayer fails for a URI, show the static poster frame instead.
     var videoPlaybackFailed by remember(uri) { mutableStateOf(false) }
 
     // Synchronize AnimatedImageDrawable start/stop with visibility and power-saving state.
@@ -292,6 +299,7 @@ internal fun decodeWallpaperFrame(
     scaleMode: WallpaperScaleMode
 ): WallpaperFrame {
     val type = detectWallpaperType(context, uri)
+    // File size + mtime stamp so replacing a local wallpaper file invalidates the cached bitmap.
     val fileToken = if (uri.scheme == "file") {
         uri.path?.let { path ->
             File(path).let { file -> "${file.lastModified()}_${file.length()}" }
@@ -299,6 +307,7 @@ internal fun decodeWallpaperFrame(
     } else {
         null
     }
+    // Composite key pairing URI, file edit token, framing parameters, and screen pixel size.
     val cacheKey = WallpaperBitmapCache.buildKey(
         uri.toString(),
         "$fileToken|$zoom|$rotation|$scaleMode",
@@ -360,7 +369,9 @@ internal fun decodeWallpaperFrame(
         val baseScale = if (scaleMode == WallpaperScaleMode.CROP) max(scaleX, scaleY) else min(scaleX, scaleY)
         val targetScale = (baseScale * zoom).coerceAtMost(1f)
         val sourcePixels = sourceWidth.toLong() * sourceHeight
+        // Downsample scale factor keeping decoded bitmaps under MAX_WALLPAPER_DECODE_PIXELS (1.8 MP).
         val pixelBudgetScale = sqrt(MAX_WALLPAPER_DECODE_PIXELS / sourcePixels.toFloat())
+        // Use the tighter of viewport-zoom scale and pixel-budget scale so we never upscale or blow RAM.
         val decodeScale = min(targetScale, pixelBudgetScale).coerceAtMost(1f)
         // Software allocation allows safe Compose Canvas/blur rendering across secondary displays.
         decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
@@ -413,11 +424,17 @@ private fun openWallpaperInputStream(context: Context, uri: Uri) =
  * destruction or detachment, and reports playback errors back to Compose for poster fallback.
  */
 private class WallpaperVideoTextureView(context: Context) : TextureView(context), TextureView.SurfaceTextureListener {
+    // Current video URI being played so changing wallpapers resets the player cleanly.
     private var sourceUri: Uri? = null
+    // Desired play/pause state requested by Compose (synced once MediaPlayer finishes preparing).
     private var shouldPlay = false
+    // Native Android media player decoding the muted looping wallpaper video.
     private var player: MediaPlayer? = null
+    // Guards start()/pause() calls until onPrepared fires after prepareAsync().
     private var isPrepared = false
+    // Android Surface wrapping TextureView's SurfaceTexture where MediaPlayer draws video frames.
     private var surface: Surface? = null
+    // Notifies Compose when playback fails so the UI can fall back to the static poster frame.
     private var failureCallback: ((Throwable) -> Unit)? = null
 
     init {

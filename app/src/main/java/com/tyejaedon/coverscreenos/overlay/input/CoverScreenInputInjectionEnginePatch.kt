@@ -12,9 +12,9 @@ package com.tyejaedon.coverscreenos.overlay.input
 internal fun previousWordLength(text: String): Int {
     // Strip trailing spaces first so pressing word-delete right after a space deletes the
     // whitespace plus the previous word rather than leaving the word intact.
-    val trimmed = text.trimEnd()
+    val trimmed = text.trimEnd() // Text left of the caret with trailing spaces removed
     if (trimmed.isEmpty()) return text.length
-    val lastSpace = trimmed.lastIndexOf(' ')
+    val lastSpace = trimmed.lastIndexOf(' ') // Boundary separating the previous word from earlier text
     // If no space remains, delete the entire prefix back to index 0; otherwise delete from
     // just after the last space up to the original (untrimmed) end of `text`.
     return if (lastSpace == -1) text.length else text.length - lastSpace - 1

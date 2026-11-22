@@ -3,15 +3,46 @@ package com.tyejaedon.coverscreenos.keyboard.floris
 import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
 
+/**
+ * Visual color theme modes supported by `:keyboard-floris`.
+ */
 enum class FlorisThemeMode {
+    /** High-contrast pitch-dark theme tailored for OLED cover displays. */
     AMOLED_COVER,
+    /** Dynamic palette derived from the active Material 3 [ColorScheme]. */
     MATERIAL_DYNAMIC
 }
 
 /**
  * FlorisBoard Snygg-inspired semantic theme tokens for `:keyboard-floris`.
- * Provides high-contrast AMOLED cover tokens (`#141416` surface, `#1F1F24` character keys,
- * `#2A2A30` functional keys, `#10B981` emerald action keys) alongside Material3 dynamic tokens.
+ * Provides high-contrast AMOLED cover tokens (`#111215` surface, `#272A30` character keys,
+ * `#1B1D22` functional keys, `#3E7BFA` cobalt action keys) alongside Material3 dynamic tokens.
+ *
+ * @property mode Theme source ([FlorisThemeMode.AMOLED_COVER] or [FlorisThemeMode.MATERIAL_DYNAMIC]).
+ * @property keyboardSurface Backdrop color behind all key rows.
+ * @property keyBackground Default fill color for letter and digit keycaps.
+ * @property keyForeground Primary label/icon color on character keys.
+ * @property keySecondaryForeground Muted label color for T9 sub-letters, spacebar label, and secondary hints.
+ * @property functionalKeyBackground Fill color for modifier keys (Backspace, Symbols, Mode toggle).
+ * @property functionalKeyForeground Label/icon color for functional modifier keys.
+ * @property shiftActiveBackground Highlight fill when Shift or Caps Lock is active.
+ * @property shiftActiveForeground Icon color when Shift or Caps Lock is active.
+ * @property shiftLockedBorder Outline border added around the Shift key while Caps Lock is locked.
+ * @property actionKeyBackground Accent fill for primary IME action keys (Enter, Send, Search, Done).
+ * @property actionKeyForeground Icon/text color on the primary action key.
+ * @property destructiveKeyForeground Alert tint for destructive keys such as Clear.
+ * @property smartbarBackground Backdrop behind the top suggestion/tool bar.
+ * @property candidateChipBackground Fill behind non-primary suggestion chips.
+ * @property candidateChipForeground Text color for secondary suggestion chips.
+ * @property candidatePrimaryBackground Highlighted fill behind the top/selected prediction chip.
+ * @property candidatePrimaryForeground Text color for the top/selected prediction chip.
+ * @property popupBubbleBackground Surface color for floating key previews and extended accent menus.
+ * @property popupBubbleForeground Text color inside floating key previews and extended accent menus.
+ * @property popupBubbleBorder Border stroke color available for popup containers.
+ * @property popupSelectedBackground Fill for an active option inside extended popups.
+ * @property popupSelectedForeground Text color for an active option inside extended popups.
+ * @property glideTrailPrimary Crisp inner stroke color of the swipe-typing trail.
+ * @property glideTrailGlow Soft outer halo stroke color behind the swipe-typing trail.
  */
 data class FlorisThemePalette(
     val mode: FlorisThemeMode = FlorisThemeMode.AMOLED_COVER,
@@ -40,6 +71,7 @@ data class FlorisThemePalette(
     val glideTrailPrimary: Color,
     val glideTrailGlow: Color
 ) {
+    /** Built-in theme presets and Material 3 palette adapters. */
     companion object {
         /**
          * High-contrast AMOLED Cover palette inspired by Samsung One UI Keyboard & Gboard dark:

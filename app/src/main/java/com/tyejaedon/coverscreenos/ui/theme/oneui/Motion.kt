@@ -19,8 +19,11 @@ import androidx.compose.animation.slideOutVertically
  * (such as `Dp` or `IntOffset`) so Compose knows when the spring is close enough to snap to rest.
  */
 fun <T> oneUiSpring(visibilityThreshold: T? = null): SpringSpec<T> = spring(
+    // Damping < 1.0 gives a gentle physical deceleration without bouncy overshoot.
     dampingRatio = CoverOneUITokens.motionSpringDamping,
+    // Stiffness 380f keeps gestures feeling snappy on small cover screens.
     stiffness = CoverOneUITokens.motionSpringStiffness,
+    // Optional snap threshold so sub-pixel animations finish cleanly instead of coasting forever.
     visibilityThreshold = visibilityThreshold
 )
 
@@ -38,6 +41,7 @@ fun oneUiFadeOut(): ExitTransition = fadeOut(animationSpec = tween(CoverOneUITok
  */
 fun oneUiSlideUp(): EnterTransition =
     slideInVertically(
+        // Start just 25% below the resting position so panels glide in cleanly instead of flying from off-screen.
         initialOffsetY = { fullHeight -> fullHeight / 4 },
         animationSpec = tween(CoverOneUITokens.motionEnterMillis)
     ) + fadeIn(animationSpec = tween(CoverOneUITokens.motionEnterMillis))
@@ -48,6 +52,7 @@ fun oneUiSlideUp(): EnterTransition =
  */
 fun oneUiSlideDown(): ExitTransition =
     slideOutVertically(
+        // Drop by 25% of height as opacity fades out so dismissal mirrors oneUiSlideUp().
         targetOffsetY = { fullHeight -> fullHeight / 4 },
         animationSpec = tween(CoverOneUITokens.motionExitMillis)
     ) + fadeOut(animationSpec = tween(CoverOneUITokens.motionExitMillis))

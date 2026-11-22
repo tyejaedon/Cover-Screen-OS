@@ -21,10 +21,10 @@ import kotlinx.coroutines.flow.asStateFlow
 class CoverDisplayHelper(private val context: Context) {
 
     private companion object {
-        // Fallback polling interval to reconcile keyguard state if an OEM drops lock broadcasts.
+        // Backup check every 10s so lock status still catches up if an OEM drops a broadcast.
         private const val LOCK_STATUS_POLL_INTERVAL_MS = 10_000L
 
-        // Display power states where the cover screen can still host or resume UI cleanly.
+        // Screen power modes where the outer cover display is awake or half-awake enough to keep our UI attached.
         private val USABLE_COVER_STATES = intArrayOf(
             Display.STATE_ON,
             Display.STATE_VR,
@@ -33,19 +33,31 @@ class CoverDisplayHelper(private val context: Context) {
         )
     }
 
+    // Android's screen directory service, used to list attached displays and check their power state.
     private val displayManager: DisplayManager by lazy {
         context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
     }
+
+    // Active broadcast listener catching screen-lock and unlock events from Android.
     private var lockStatusReceiver: LockStatusReceiver? = null
+
+    // Tracks whether lockStatusReceiver is currently registered so stopping monitoring stays safe and idempotent.
     private var isLockStatusReceiverRegistered = false
+
+    // Main-thread scheduler used to run the 10-second fallback lock-status check.
     private val mainHandler: Handler by lazy(LazyThreadSafetyMode.NONE) {
         Handler(Looper.getMainLooper())
     }
+
+    // Repeating task scheduled on mainHandler while monitoring is active; null when stopped.
     private var lockStatusPoller: Runnable? = null
+
+    // Internal mutable lock flag; starts true (locked) so nothing bypasses security before the first read.
     private val _isDeviceLocked = MutableStateFlow(true)
     /** Reactive keyguard lock state updated by [LockStatusReceiver] and fallback polling. */
     val isDeviceLocked: StateFlow<Boolean> = _isDeviceLocked.asStateFlow()
 
+    // Dedicated tracker listening to Jetpack WindowManager for hinge open/close angles.
     private val foldPostureTracker: FoldPostureTracker by lazy {
         FoldPostureTracker(context)
     }

@@ -76,12 +76,17 @@ import kotlinx.coroutines.withContext
  */
 class CoverWidgetPickerActivity : ComponentActivity() {
 
+    // Host helper used to list installed widget providers, allocate IDs, and bind widgets.
     private val widgetHostManager by lazy { CoverAppWidgetHostManager(this) }
+    // DataStore handle where finalized pinned widget IDs are saved permanently.
     private val settingsStore by lazy { LauncherSettingsStore(applicationContext) }
 
     // Pending widget state retained across the external bind-permission and widget-configure subflows.
+    // Newly allocated widget slot ID awaiting bind permission and/or provider configuration.
     private var pendingAppWidgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
+    // Provider metadata for the widget currently going through bind/configure.
     private var pendingProviderInfo: AppWidgetProviderInfo? = null
+    // Re-entrancy guard ignoring duplicate card taps while an OS permission/config dialog is open.
     private var isAwaitingExternalFlow: Boolean = false
 
     /**
@@ -108,6 +113,7 @@ class CoverWidgetPickerActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
+            // Current theme and corner-radius preferences so the picker matches the cover launcher.
             val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
 
             CoverOSTheme(
@@ -161,6 +167,7 @@ class CoverWidgetPickerActivity : ComponentActivity() {
         if (isAwaitingExternalFlow) return
         cleanupPendingWidget()
 
+        // Reserve a fresh numeric widget slot ID from Android's AppWidgetHost.
         val appWidgetId = widgetHostManager.allocateAppWidgetId()
         if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
             Toast.makeText(this, "Unable to allocate widget slot", Toast.LENGTH_SHORT).show()
@@ -189,6 +196,7 @@ class CoverWidgetPickerActivity : ComponentActivity() {
      */
     private fun handleBoundWidget(appWidgetId: Int, info: AppWidgetProviderInfo) {
         if (info.configure != null) {
+            // Tracks whether Android launched the widget's optional setup screen successfully.
             val started = widgetHostManager.startConfigureActivityForResult(
                 activity = this,
                 appWidgetId = appWidgetId,
@@ -220,6 +228,7 @@ class CoverWidgetPickerActivity : ComponentActivity() {
 
     /** Releases any unconfirmed `appWidgetId` back to `AppWidgetHost` so cancelled flows do not leak IDs. */
     private fun cleanupPendingWidget() {
+        // Snapshot before resetting pendingAppWidgetId so deleteAppWidgetId frees the right slot.
         val id = pendingAppWidgetId
         pendingAppWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
         pendingProviderInfo = null
@@ -230,6 +239,7 @@ class CoverWidgetPickerActivity : ComponentActivity() {
     }
 
     companion object {
+        // Legacy request code passed to AppWidgetHost.startAppWidgetConfigureActivityForResult.
         private const val REQUEST_CONFIGURE_WIDGET = 4102
     }
 }
@@ -253,8 +263,10 @@ private fun CoverWidgetPickerScreen(
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
+    // Current text typed into the search bar to filter widgets by label or app name.
     var searchQuery by remember { mutableStateOf("") }
 
+    // Installed widget list loaded asynchronously on Dispatchers.Default (null while still loading).
     // Resolve PackageManager app/widget labels asynchronously on Dispatchers.Default.
     val providers by produceState<List<WidgetProviderItem>?>(initialValue = null, widgetHostManager) {
         value = withContext(Dispatchers.Default) {
@@ -283,6 +295,7 @@ private fun CoverWidgetPickerScreen(
         }
     }
 
+    // Filtered subset of providers matching searchQuery across widget and app names.
     val filteredProviders = remember(providers, searchQuery) {
         val list = providers.orEmpty()
         val query = searchQuery.trim().lowercase()
@@ -443,7 +456,9 @@ private fun WidgetProviderRow(
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
+    // Theme panel corner radius keeping picker rows visually aligned with cover launcher cards.
     val cornerRadius = LocalCoverPanelCornerRadius.current
+    // Preview/app icon rasterized off the UI thread at 72x72px; null shows a fallback widget glyph.
     val iconBitmap by produceState<ImageBitmap?>(initialValue = null, item.info) {
         value = withContext(Dispatchers.Default) {
             runCatching {

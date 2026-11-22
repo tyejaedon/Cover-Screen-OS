@@ -228,17 +228,29 @@ enum class InjectionMethod {
  * without retaining a mutable reference to the underlying node.
  */
 data class CoverFieldMetadata(
+    /** Android package name of the app that owns the focused text field (e.g. `"com.whatsapp"`). */
     val packageName: String = "",
+    /** Optional XML resource ID of the view, used to tell distinct fields apart in the same screen. */
     val viewIdResourceName: String? = null,
+    /** Placeholder hint text shown by the app before the user starts typing. */
     val hintText: String = "",
+    /** True for number, phone, or date/time fields where a compact digit keypad fits best. */
     val isNumeric: Boolean = false,
+    /** True for PIN or password fields that require `FLAG_SECURE` and deferred injection. */
     val isPassword: Boolean = false,
+    /** True specifically for telephone-number input fields. */
     val isPhoneNumber: Boolean = false,
+    /** True when the field accepts Enter/newlines instead of submitting a single-line form. */
     val isMultiLine: Boolean = false,
+    /** Resolved [EditorInfo] action (`GO`, `SEARCH`, `SEND`, `NEXT`, `DONE`, or `NONE`). */
     val imeAction: Int = EditorInfo.IME_ACTION_UNSPECIFIED,
+    /** Existing text already inside the field when the user tapped it (always empty for passwords). */
     val initialText: String = "",
+    /** Starting index of the field's cursor or text selection (`-1` if unknown). */
     val selectionStart: Int = -1,
+    /** Ending index of the field's cursor or text selection (`-1` if unknown). */
     val selectionEnd: Int = -1,
+    /** Screen-space bounding rectangle of the target input box, used to detect field switches. */
     val boundsInScreen: Rect = Rect()
 ) {
     companion object {
@@ -249,8 +261,8 @@ data class CoverFieldMetadata(
         fun fromNode(node: AccessibilityNodeInfo?): CoverFieldMetadata {
             if (node == null) return CoverFieldMetadata()
 
-            val inputType = node.inputType
-            val inputClass = inputType and InputType.TYPE_MASK_CLASS
+            val inputType = node.inputType // Raw Android InputType bitmask from the target EditText
+            val inputClass = inputType and InputType.TYPE_MASK_CLASS // Base class (text, number, phone, datetime)
 
             val isNumericClass = inputClass == InputType.TYPE_CLASS_NUMBER ||
                 inputClass == InputType.TYPE_CLASS_PHONE ||
@@ -260,7 +272,7 @@ data class CoverFieldMetadata(
 
             val isPasswordField = isPasswordInputType(inputType) || node.isPassword
 
-            val bounds = Rect()
+            val bounds = Rect() // Screen coordinates populated by AccessibilityNodeInfo
             node.getBoundsInScreen(bounds)
 
             // AccessibilityNodeInfo.getText() returns the *hint* text (not the actual
@@ -374,7 +386,9 @@ internal fun compatibleKeyboardMode(
  * 4. Any valid editable focus resets the gate via [onEditableFocus].
  */
 internal class FocusLossGate {
+    /** Elapsed-realtime ms when focus loss was first suspected via a non-editable focus event. */
     private var candidateSinceMs: Long? = null
+    /** Elapsed-realtime ms when the target input node was first observed continuously missing. */
     private var absentSinceMs: Long? = null
     /** True while a potential focus loss is being verified by the polling loop. */
     var isArmed: Boolean = false
@@ -437,15 +451,25 @@ internal fun accessibilityActionForIme(action: Int): Int = when (action and Edit
  * Immutable UI and session snapshot exposed by [CoverInputSessionManager.sessionState].
  */
 data class CoverInputSessionState(
+    /** True while the cover keyboard is attached to a focused field on display 1. */
     val isActive: Boolean = false,
+    /** Current plain-text contents held by the cover keyboard's local scratchpad. */
     val buffer: String = "",
+    /** Current caret index inside [buffer]. */
     val cursorPosition: Int = 0,
+    /** Currently visible keypad layout mode (`NUMERIC_PIN`, `T9_MULTITAP`, or `QWERTY`). */
     val keyboardMode: CoverKeyboardMode = CoverKeyboardMode.NUMERIC_PIN,
+    /** True when the T9 keypad collects raw `'2'..'9'` digits for dictionary prediction instead of multi-tap. */
     val isT9Predictive: Boolean = false,
+    /** Uncommitted T9 keypad digits waiting for the user to pick a predicted word. */
     val t9PredictiveDigits: String = "",
+    /** Field properties captured from the target [AccessibilityNodeInfo] when the session started. */
     val metadata: CoverFieldMetadata = CoverFieldMetadata(),
+    /** Flag reserved for indicating in-flight asynchronous injection work. */
     val isInjecting: Boolean = false,
+    /** Short status label shown in the overlay header bar (e.g. `"Synced"`, `"Typing..."`). */
     val lastStatusMessage: String = "Ready",
+    /** True when [lastStatusMessage] represents a successful sync/commit (turns status dot green). */
     val isSuccessFeedback: Boolean = false
 )
 
@@ -467,20 +491,27 @@ object CoverInputSessionManager {
     /** Reactive session snapshot observed by the Compose keyboard overlay UI. */
     val sessionState: StateFlow<CoverInputSessionState> = _sessionState.asStateFlow()
 
+    /** Bounded recent-first store of copied/cut snippets shown in the clipboard-history bar. */
     private val clipboardHistoryBuffer = ClipboardHistory()
     private val _clipboardHistory = MutableStateFlow<List<String>>(emptyList())
     /** Most-recent-first clipboard snippets for the Phase H clipboard-history strip. */
     val clipboardHistory: StateFlow<List<String>> = _clipboardHistory.asStateFlow()
 
+    /** Currently connected accessibility service driving focus tracking and text injection. */
     private var activeAccessibilityService: CoverInputAccessibilityService? = null
+    /** Overlay window controller that attaches/detaches the Compose keyboard on display 1. */
     private var overlayManager: CoverKeyboardOverlayManager? = null
+    /** DataStore wrapper persisting per-package keyboard mode preferences. */
     private var settingsStore: LauncherSettingsStore? = null
     /** Main-thread coroutine scope hosting the DataStore settings collector while bound. */
     private var settingsScope: CoroutineScope? = null
+    /** Active collector job cancelled on [unbindService] to avoid leaking scopes across reconnects. */
     private var settingsJob: Job? = null
     /** Dedicated IO coroutine scope for non-blocking per-package keyboard mode writes. */
     private val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Cached map of package name -> user's preferred [CoverKeyboardMode] loaded from DataStore. */
     private var savedModes: Map<String, CoverKeyboardMode> = emptyMap()
+    /** Prevents incoming DataStore emissions from overriding a mode the user explicitly picked this session. */
     private var modeChosenThisSession = false
 
     /**
@@ -508,7 +539,9 @@ object CoverInputSessionManager {
      */
     private val injectionLock = ReentrantLock()
 
+    /** Most recent full text string successfully written to the target editor (used for delta diffing & echo filtering). */
     private var lastInjectedText: String? = null
+    /** `SystemClock.elapsedRealtime()` timestamp of the last successful text write into the target editor. */
     private var lastInjectionTimestamp: Long = 0L
 
     /**
@@ -1311,13 +1344,21 @@ class CoverInputAccessibilityService : AccessibilityService() {
 
     /** Cached handle to the focused editable node; refreshed before use and recycled on replace/destroy. */
     private var targetFocusedNode: AccessibilityNodeInfo? = null
+    /** Most recent package observed via `TYPE_WINDOW_STATE_CHANGED` on display 1. */
     private var lastWindowPackage: String? = null
+    /** Last accessibility swipe gesture ID seen, used with [lastGestureAtMs] to drop duplicate triggers. */
     private var lastGestureId: Int? = null
+    /** `SystemClock.elapsedRealtime()` timestamp of [lastGestureId]. */
     private var lastGestureAtMs: Long = 0L
+    /** Timestamp of the most recent global Back/Home/Recents/Notifications action to throttle bursts. */
     private var lastActionAtMs: Long = 0L
+    /** Candidate stock-launcher/cover-home package being observed for overlay reclaim stability. */
     private var reclaimCandidatePackage: String? = null
+    /** Elapsed-realtime ms when [reclaimCandidatePackage] first became the foreground candidate. */
     private var reclaimCandidateSinceElapsedMs: Long = 0L
+    /** Last real third-party user app observed in the foreground on the cover screen. */
     private var lastKnownUserAppPackage: String? = null
+    /** Elapsed-realtime ms when [lastKnownUserAppPackage] was last observed in the foreground. */
     private var lastKnownUserAppElapsedMs: Long = 0L
     // Guard window used to swallow the WINDOW_STATE_CHANGED event that our own
     // cover keyboard overlay emits immediately after WindowManager#addView.
@@ -1327,7 +1368,9 @@ class CoverInputAccessibilityService : AccessibilityService() {
     private var fieldFocusClaimedAtMs: Long = 0L
     /** Main-looper handler driving the [FOCUS_LOSS_POLL_MS] verification checks. */
     private val focusLossHandler = Handler(Looper.getMainLooper())
+    /** Currently scheduled polling runnable checking whether the focused editor disappeared. */
     private var pendingFocusLossCheck: Runnable? = null
+    /** Hysteresis gate confirming true focus loss across transient window/content churn. */
     private val focusLossGate = FocusLossGate()
 
     /**
@@ -2260,12 +2303,15 @@ class CoverInputAccessibilityService : AccessibilityService() {
  */
 class CoverKeyboardOverlayManager(private val context: AccessibilityService) {
 
+    /** Window-backed Compose overlay surface anchored as `TYPE_ACCESSIBILITY_OVERLAY`. */
     private val surface = CoverComposeSurface(
         hostContext = context,
         windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
         logTag = TAG
     )
+    /** Resolves the outer clamshell hardware display (`displayId == 1`). */
     private val displayHelper = CoverDisplayHelper(context)
+    /** Bottom-docked overlay layout parameters watching outside touches without taking input focus. */
     private val windowConfig = CoverSurfaceWindowConfig(
         height = WindowManager.LayoutParams.WRAP_CONTENT,
         gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
@@ -2345,13 +2391,16 @@ fun CoverKeyboardOverlayRoot(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Live session snapshot driving the header status, buffer preview, and active keypad mode.
     val sessionState by CoverInputSessionManager.sessionState.collectAsState()
     val modeHaptic = rememberHapticPerformer(HapticTier.Strong)
+    // Dash-delimited multi-tap sequence (e.g. "44-33") reset whenever focus moves to a new input box.
     var t9DigitTrace by remember(
         sessionState.metadata.packageName,
         sessionState.metadata.viewIdResourceName,
         sessionState.metadata.boundsInScreen
     ) { mutableStateOf("") }
+    // Counter bumped on T9 prediction commits/toggles to force candidate refresh and keypad re-keying.
     var t9CandidateCommitCount by remember(
         sessionState.metadata.packageName,
         sessionState.metadata.viewIdResourceName,
@@ -2552,17 +2601,22 @@ fun CoverKeyboardOverlayRoot(
                 CoverKeyboardMode.QWERTY -> {
                     val clipboardHistory by CoverInputSessionManager.clipboardHistory.collectAsState()
                     val clipboardManager = context.getSystemService(ClipboardManager::class.java)
+                    // Enables the Paste toolbar icon when the system clipboard currently holds an entry.
                     var canPasteFromClipboard by remember { mutableStateOf(false) }
                     LaunchedEffect(sessionState.isActive) {
                         canPasteFromClipboard = clipboardManager?.hasPrimaryClip() == true
                     }
 
+                    // Suppress word suggestions and autocorrection for passwords, numbers, and phone inputs.
                     val suggestionsAllowed = !sessionState.metadata.isPassword &&
                         !sessionState.metadata.isNumeric &&
                         !sessionState.metadata.isPhoneNumber
+                    // Active partial word directly left of the cursor used to query QWERTY completions.
                     val currentWord = beforeCursor.takeLastWhile { it.isLetterOrDigit() }
 
+                    // Word suggestions currently displayed in the keyboard smartbar.
                     var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
+                    // Revision counter bumped on learn/suppress actions to recompute suggestion chips immediately.
                     var nlpRevision by remember { mutableIntStateOf(0) }
                     LaunchedEffect(sessionState.buffer, sessionState.cursorPosition, nlpRevision) {
                         if (suggestionsAllowed) {

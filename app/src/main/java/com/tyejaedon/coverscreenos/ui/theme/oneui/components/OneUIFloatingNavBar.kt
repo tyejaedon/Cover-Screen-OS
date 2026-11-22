@@ -74,13 +74,19 @@ fun OneUIFloatingNavBar(
     onItemSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // 0-based slot index of the currently active tab; defaults to the first tab if no route matches.
     val selectedIndex = items.indexOfFirst { it.route == selectedRoute }.coerceAtLeast(0)
+    // Total tab count clamped >= 1 so dividing the bar width never causes division by zero.
     val itemCount = items.size.coerceAtLeast(1)
-    // Adapt bar dimensions when hosted on compact clamshell cover screens (height <= 480dp).
+    // True when hosted on a short cover display (<= 480dp tall) so the bar trims height and padding.
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
+    // Adaptive bar height (52dp compact cover vs 60dp standard phone).
     val barHeight = if (isCompactHeight) 52.dp else OneUITheme.dimensions.floatingNavHeight
+    // Outer horizontal inset keeping the floating pill centered away from screen corners.
     val outerHorizontalPadding = if (isCompactHeight) 12.dp else 24.dp
+    // Tab icon size scaled slightly down on compact displays to preserve vertical breathing room.
     val iconSize = if (isCompactHeight) 20.dp else 22.dp
+    // Tab caption font size paired with iconSize so labels stay legible without wrapping.
     val labelSize = if (isCompactHeight) 10.sp else 11.sp
 
     Surface(
@@ -95,9 +101,12 @@ fun OneUIFloatingNavBar(
     ) {
         // BoxWithConstraints exposes measured inner width so each tab slot and the sliding pill share exact geometry.
         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 6.dp)) {
+            // Equal width allotted to each navigation tab slot inside the pill container.
             val itemWidth = maxWidth / itemCount
+            // Destination horizontal X coordinate (in Dp) for the active tab's highlight pill.
             val targetOffset = itemWidth * selectedIndex
 
+            // Smooth spring-animated X offset (in raw dp Float) gliding the highlight pill between tabs.
             val animatedOffset by animateFloatAsState(
                 targetValue = targetOffset.value,
                 animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f),
@@ -122,7 +131,9 @@ fun OneUIFloatingNavBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 items.forEachIndexed { index, item ->
+                    // True when this tab corresponds to the active destination.
                     val isSelected = index == selectedIndex
+                    // Per-tab touch tracker linking press scale feedback (oneUIPressable) with tap clicks.
                     val interactionSource = remember { MutableInteractionSource() }
 
                     Column(

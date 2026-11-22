@@ -9,7 +9,9 @@ import android.os.SystemClock
  * to `com.android.systemui/.subscreen.SubHomeActivity` rather than `com.sec.android.app.launcher`.
  */
 object CoverHomeSurfaceMatcher {
+    // Package name of Android/One UI SystemUI, which hosts the cover SubHomeActivity on newer builds.
     private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+    // Known launcher package prefixes treated as native home destinations.
     private val LAUNCHER_HOME_PREFIXES = arrayOf(
         "com.sec.android.app.launcher",
         "com.android.launcher",
@@ -51,17 +53,28 @@ object CoverHomeSurfaceMatcher {
  *   [transientExitFailsafeMinSuppressionMs].
  */
 internal class OverlayTransientSignalPolicy(
+    // Prefixes for transient system overlays (SystemUI, Samsung SystemUI, AOD).
     private val transientSystemUiPrefixes: Array<String>,
+    // Subset of transient system prefixes safe to resume after [transientSystemUiResumeGraceMs].
     private val transientSystemUiResumeSafePrefixes: Array<String>,
+    // Any foreground prefix suggesting the cover screen returned to system/home chrome.
     private val overlayResumePackagePrefixes: Array<String>,
+    // Stock launcher package prefixes subject to the brief post-launch guard.
     private val launcherPackagePrefixes: Array<String>,
+    // How long a resume-safe transient package must stay foregrounded before triggering resume.
     private val transientSystemUiResumeGraceMs: Long,
+    // Minimum suppression duration before SystemUI+AOD exit-pattern detection is allowed.
     private val transientExitFailsafeMinSuppressionMs: Long,
+    // Maximum age linking SystemUI and AOD timestamps as one combined cover-app exit signal.
     private val transientExitPatternWindowMs: Long
 ) {
+    // Package currently holding transient foreground focus during dwell timing.
     private var transientForegroundPackage: String? = null
+    // Monotonic timestamp when [transientForegroundPackage] first took focus.
     private var transientForegroundSinceElapsedMs: Long = 0L
+    // Monotonic timestamp of the latest `com.android.systemui` observation during suppression.
     private var transientSystemUiSeenElapsedMs: Long = 0L
+    // Monotonic timestamp of the latest `com.samsung.android.app.aodservice` observation during suppression.
     private var transientAodSeenElapsedMs: Long = 0L
 
     /**

@@ -48,7 +48,9 @@ internal fun SearchFlorisKeyboardHost(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    // DataStore wrapper holding user keyboard preferences (height, one-handed side, autocorrect).
     val settingsStore = remember(context) { LauncherSettingsStore(context.applicationContext) }
+    // Latest collected keyboard preferences; falls back to defaults until DataStore emits.
     val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
     val coroutineScope = rememberCoroutineScope()
 
@@ -57,7 +59,7 @@ internal fun SearchFlorisKeyboardHost(
     val latestQuery by rememberUpdatedState(query)
     val latestOnQueryChanged by rememberUpdatedState(onQueryChanged)
     val latestOnDonePressed by rememberUpdatedState(onDonePressed)
-    // Track cursor position locally because there is no underlying Android EditText/InputConnection.
+    // Track cursor index locally inside the query string because there is no underlying EditText/InputConnection.
     var cursorPosition by remember { mutableIntStateOf(query.length) }
     LaunchedEffect(query.length) {
         if (cursorPosition > query.length) {
@@ -151,10 +153,14 @@ internal fun SearchFlorisKeyboardHost(
         )
     }
 
+    // Active keyboard page (e.g. QWERTY, symbols, T9) used to switch key grids and NLP decoding.
     var activeLayoutMode by remember { mutableStateOf(CoverLayoutMode.QWERTY) }
+    // Word completions and next-word predictions displayed in the suggestion strip above the keys.
     var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Incremented when the user learns/suppresses a word so the NLP suggestion effect re-runs.
     var nlpRevision by remember { mutableIntStateOf(0) }
 
+    // Text slice behind the cursor and the trailing partial word currently being typed.
     val beforeCursor = query.take(cursorPosition.coerceIn(0, query.length))
     val currentWord = beforeCursor.takeLastWhile { it.isLetterOrDigit() }
 
@@ -174,6 +180,7 @@ internal fun SearchFlorisKeyboardHost(
         }
     }
 
+    // Maps the persisted left/right preference to Floris's one-handed keyboard dock alignment.
     val dockAnchor = if (settings.keyboardOneHandedAnchor == KeyboardAnchor.Right) {
         ClamshellDockAnchor.RIGHT
     } else {

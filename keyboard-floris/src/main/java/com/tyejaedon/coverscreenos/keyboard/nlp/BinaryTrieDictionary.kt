@@ -39,6 +39,7 @@ import kotlin.math.max
  *     ChildOffsets (4 bytes * childCount): offsets to child nodes from buffer origin
  */
 class BinaryTrieDictionary(
+    /** Direct or memory-mapped little-endian buffer containing the serialized CTRI trie. */
     private val buffer: ByteBuffer
 ) {
 
@@ -47,10 +48,14 @@ class BinaryTrieDictionary(
         validateHeader()
     }
 
+    /** Total number of terminal dictionary words stored in the binary trie (header offset 12). */
     val wordCount: Int = buffer.getInt(12)
+    /** Total number of trie nodes serialized in the buffer (header offset 8). */
     val nodeCount: Int = buffer.getInt(8)
+    /** Byte offset inside [buffer] where the root node record begins (header offset 16). */
     private val rootOffset: Int = buffer.getInt(16)
 
+    /** Verifies buffer size, `"CTRI"` magic header, and format version before any reads. */
     private fun validateHeader() {
         require(buffer.capacity() >= HEADER_SIZE) { "Buffer too small for Trie header: ${buffer.capacity()}" }
         val magic = buffer.getInt(0)
@@ -63,24 +68,31 @@ class BinaryTrieDictionary(
      * Node pointer representation pointing into the underlying [buffer].
      */
     data class BinaryNode(
+        /** Byte offset of this node from the start of [buffer]. */
         val offset: Int,
+        /** True when the path from root to this node forms a complete dictionary word. */
         val isTerminal: Boolean,
+        /** 26-bit bitmask (`bit 0` = `'a'` .. `bit 25` = `'z'`) indicating which child edges exist. */
         val childMask: Int,
+        /** Highest word frequency anywhere in this node's subtree (used for branch-and-bound pruning). */
         val maxSubtreeFrequency: Long,
+        /** Word frequency if [isTerminal] is true, or `0L` for intermediate prefix-only nodes. */
         val frequency: Long,
+        /** UTF-8 decoded word stored at this terminal node, or `null` if non-terminal. */
         val terminalWord: String?
     )
 
+    /** Decodes a single node record from [buffer] starting at byte [offset]. */
     fun readNode(offset: Int): BinaryNode {
-        var cursor = offset
-        val flags = buffer.get(cursor).toInt()
+        var cursor = offset // Running byte position inside the packed node record
+        val flags = buffer.get(cursor).toInt() // Bit flags (currently bit 0 = FLAG_TERMINAL)
         cursor += 1
         val isTerminal = (flags and FLAG_TERMINAL) != 0
 
-        val childMask = buffer.getInt(cursor)
+        val childMask = buffer.getInt(cursor) // 26-bit presence mask for 'a'..'z' children
         cursor += 4
 
-        val maxSubtreeFreq = buffer.getLong(cursor)
+        val maxSubtreeFreq = buffer.getLong(cursor) // Upper bound on frequency in this subtree
         cursor += 8
 
         var freq = 0L
@@ -88,10 +100,10 @@ class BinaryTrieDictionary(
         if (isTerminal) {
             freq = buffer.getLong(cursor)
             cursor += 8
-            val wordLen = buffer.getShort(cursor).toInt() and 0xFFFF
+            val wordLen = buffer.getShort(cursor).toInt() and 0xFFFF // Unsigned 16-bit UTF-8 byte length
             cursor += 2
             val bytes = ByteArray(wordLen)
-            val dup = buffer.duplicate()
+            val dup = buffer.duplicate() // Thread-safe view so shared buffer position isn't mutated
             dup.position(cursor)
             dup.get(bytes)
             word = String(bytes, StandardCharsets.UTF_8)
@@ -107,10 +119,15 @@ class BinaryTrieDictionary(
         )
     }
 
+    /**
+     * Looks up the byte offset of child edge [char] (`'a'..'z'`) from [parentOffset] in O(1)
+     * without allocating objects, using popcount over [BinaryNode.childMask] to index the
+     * packed 4-byte child-offset table.
+     */
     fun getChildOffset(parentOffset: Int, char: Char): Int? {
         val idx = char - 'a'
         if (idx !in 0..25) return null
-        val bit = 1 shl idx
+        val bit = 1 shl idx // Single-bit flag corresponding to letter `char`
 
         val flags = buffer.get(parentOffset).toInt()
         val isTerminal = (flags and FLAG_TERMINAL) != 0
@@ -118,20 +135,22 @@ class BinaryTrieDictionary(
         val childMask = buffer.getInt(parentOffset + 1)
         if ((childMask and bit) == 0) return null
 
+        // Number of present children before `char` determines its slot in the dense offset array.
         val rank = Integer.bitCount(childMask and (bit - 1))
 
-        var childrenTableOffset = parentOffset + 1 + 4 + 8
+        var childrenTableOffset = parentOffset + 1 + 4 + 8 // Skip flags(1) + childMask(4) + maxSubtreeFreq(8)
         if (isTerminal) {
             val wordLen = buffer.getShort(childrenTableOffset + 8).toInt() and 0xFFFF
-            childrenTableOffset += 8 + 2 + wordLen
+            childrenTableOffset += 8 + 2 + wordLen // Skip frequency(8) + wordLen(2) + UTF-8 word bytes
         }
 
         return buffer.getInt(childrenTableOffset + (rank * 4))
     }
 
+    /** Walks from [rootOffset] along [prefix] and returns the terminal/prefix [BinaryNode], or `null`. */
     fun findNode(prefix: String): BinaryNode? {
         val normalized = prefix.lowercase(Locale.ROOT).trim()
-        var currentOffset = rootOffset
+        var currentOffset = rootOffset // Cursor tracking current node byte offset during traversal
         for (i in 0 until normalized.length) {
             val c = normalized[i]
             val childOffset = getChildOffset(currentOffset, c) ?: return null
@@ -140,11 +159,13 @@ class BinaryTrieDictionary(
         return readNode(currentOffset)
     }
 
+    /** Returns `true` if [word] exists as a complete terminal word in the binary trie. */
     fun contains(word: String): Boolean {
         val node = findNode(word)
         return node?.isTerminal == true
     }
 
+    /** Returns the stored corpus frequency for [word], or `0L` if absent. */
     fun getFrequency(word: String): Long {
         val node = findNode(word)
         return if (node?.isTerminal == true) node.frequency else 0L
@@ -162,13 +183,14 @@ class BinaryTrieDictionary(
             currentOffset = childOffset
         }
 
+        // Max-heap of (nodeOffset, maxSubtreeFrequency) exploring highest-potential branches first.
         val queue = PriorityQueue<Pair<Int, Long>> { a, b ->
             b.second.compareTo(a.second)
         }
         val prefixNode = readNode(currentOffset)
         queue.add(currentOffset to prefixNode.maxSubtreeFrequency)
 
-        val results = mutableListOf<CandidateWord>()
+        val results = mutableListOf<CandidateWord>() // Top predicted completions collected in priority order
 
         while (!queue.isEmpty() && results.size < limit) {
             val (nodeOffset, _) = queue.poll() ?: break
@@ -185,18 +207,18 @@ class BinaryTrieDictionary(
                 if (results.size >= limit) break
             }
 
-            // Enqueue all existing children
+            // Enqueue all existing children by iterating set bits in `node.childMask`
             var mask = node.childMask
             while (mask != 0) {
-                val lowestBit = mask and -mask
+                val lowestBit = mask and -mask // Isolate least-significant set bit
                 val charIndex = Integer.numberOfTrailingZeros(lowestBit)
                 val c = ('a' + charIndex)
                 val childOffset = getChildOffset(nodeOffset, c)
                 if (childOffset != null) {
-                    val childMaxFreq = buffer.getLong(childOffset + 1 + 4)
+                    val childMaxFreq = buffer.getLong(childOffset + 1 + 4) // Peek maxSubtreeFreq without full decode
                     queue.add(childOffset to childMaxFreq)
                 }
-                mask = mask and (mask - 1)
+                mask = mask and (mask - 1) // Clear processed lowest bit
             }
         }
 
@@ -208,10 +230,10 @@ class BinaryTrieDictionary(
      */
     fun predictForDigits(digits: String, limit: Int = 10): List<CandidateWord> {
         if (digits.isEmpty() || limit <= 0) return emptyList()
-        val cleanDigits = digits.filter { it in '2'..'9' }
+        val cleanDigits = digits.filter { it in '2'..'9' } // Keep only T9 letter-bearing digits
         if (cleanDigits.isEmpty()) return emptyList()
 
-        val exactMatches = mutableListOf<BinaryNode>()
+        val exactMatches = mutableListOf<BinaryNode>() // Terminal nodes whose path matches `cleanDigits`
         searchT9(rootOffset, cleanDigits, 0, exactMatches)
 
         exactMatches.sortByDescending { it.frequency }
@@ -230,6 +252,7 @@ class BinaryTrieDictionary(
         return results
     }
 
+    /** Recursively follows only valid T9 letter edges for `digits[digitIndex]` in [buffer]. */
     private fun searchT9(
         currentOffset: Int,
         digits: String,
@@ -252,11 +275,16 @@ class BinaryTrieDictionary(
     }
 
     companion object {
+        /** 4-byte ASCII magic number `"CTRI"` identifying valid Cover Trie binary files. */
         const val MAGIC = 0x43545249 // "CTRI"
+        /** Binary format version expected by [validateHeader]. */
         const val VERSION = 1
+        /** Fixed byte size of the file header before the first node record. */
         const val HEADER_SIZE = 24
+        /** Node flag bit indicating the node stores a terminal word and frequency. */
         private const val FLAG_TERMINAL = 0x01
 
+        /** Standard phone keypad mapping from digits `'2'..'9'` to lowercase letters. */
         private val T9_DIGIT_MAP: Map<Char, String> = mapOf(
             '2' to "abc",
             '3' to "def",
@@ -272,14 +300,14 @@ class BinaryTrieDictionary(
          * Compiles an in-memory [CompactTrieDictionary] into a serialized [ByteBuffer].
          */
         fun compile(trie: CompactTrieDictionary): ByteBuffer {
-            // First pass: collect nodes in post-order or breadth-first to compute offsets
+            // First pass: collect nodes to assign deterministic byte offsets before writing pointers
             class NodeInfo(
                 val trieNode: CompactTrieDictionary.TrieNode,
                 var offset: Int = 0,
                 var serializedBytes: ByteArray = ByteArray(0)
             )
 
-            val allNodes = mutableListOf<NodeInfo>()
+            val allNodes = mutableListOf<NodeInfo>() // Flattened list of every reachable trie node
             fun collect(node: CompactTrieDictionary.TrieNode): NodeInfo {
                 val info = NodeInfo(node)
                 allNodes.add(info)
@@ -292,11 +320,11 @@ class BinaryTrieDictionary(
             val rootInfo = collect(trie.root)
 
             // Two-pass serialization:
-            // Pass 1: compute size of each node without children table, then allocate layout
+            // Pass 1: compute byte offset and record size for every node so child offsets are known
             var currentOffset = HEADER_SIZE
-            val nodeOffsetMap = HashMap<CompactTrieDictionary.TrieNode, Int>()
+            val nodeOffsetMap = HashMap<CompactTrieDictionary.TrieNode, Int>() // Maps in-memory node -> file byte offset
 
-            // We do BFS or layout so all child offsets are known
+            // Compute each node's byte size and advance currentOffset
             for (info in allNodes) {
                 info.offset = currentOffset
                 nodeOffsetMap[info.trieNode] = currentOffset
@@ -317,7 +345,7 @@ class BinaryTrieDictionary(
                 currentOffset += nodeSize
             }
 
-            val totalSize = currentOffset
+            val totalSize = currentOffset // Exact byte size required for header + all node records
             val buffer = ByteBuffer.allocateDirect(totalSize).order(ByteOrder.LITTLE_ENDIAN)
 
             // Write header

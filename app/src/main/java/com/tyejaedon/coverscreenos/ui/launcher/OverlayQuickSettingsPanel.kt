@@ -88,11 +88,17 @@ internal fun QuickSettingsPanelTile(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     // Snapshot initial hardware/system states synchronously so the first frame reflects current values.
+    // Live Wi-Fi radio toggle state mirrored on the Wi-Fi tile.
     var wifiEnabled by remember { mutableStateOf(QuickSettingsController.isWifiEnabled(context)) }
+    // Live Bluetooth adapter toggle state mirrored on the Bluetooth tile.
     var bluetoothEnabled by remember { mutableStateOf(QuickSettingsController.isBluetoothEnabled(context)) }
+    // Current camera torch state updated by TorchCallback and tile clicks.
     var flashlightEnabled by remember { mutableStateOf(false) }
+    // Whether the app currently holds WRITE_SETTINGS permission to drag the brightness slider directly.
     var canWriteSettings by remember { mutableStateOf(QuickSettingsController.canWriteSystemSettings(context)) }
+    // Current screen brightness normalized to 0f..1f for the Material 3 Slider.
     var brightnessPercent by remember { mutableFloatStateOf(QuickSettingsController.getBrightnessPercent(context)) }
+    // Camera ID owning the rear flash LED (null if hardware lacks a torch).
     val torchCameraId = remember { QuickSettingsController.resolveTorchCameraId(context) }
 
     // The overlay stays alive (just hidden) while a system Settings fallback screen is on
@@ -290,6 +296,7 @@ private fun QuickSettingsToggleTile(
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(CoverOneUITokens.radiusChip)
+    // Visual prominence tokens: bright fill/border when active, dimmed when off or hardware-unavailable.
     val fillAlpha = if (!isAvailable) 0.04f else if (isEnabled) 0.30f else 0.08f
     val borderAlpha = if (!isAvailable) 0.08f else if (isEnabled) 0.4f else 0.14f
     val contentTint = when {

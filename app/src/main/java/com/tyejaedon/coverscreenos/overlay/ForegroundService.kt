@@ -76,6 +76,7 @@ data class RuntimeSnapshot(
  */
 class ForegroundService : Service() {
     companion object {
+        // Backing mutable flow holding the latest [RuntimeSnapshot] published to UI/diagnostics.
         private val mutableRuntime = MutableStateFlow(RuntimeSnapshot())
         /** Observable runtime snapshot flow for status screens and instrumentation. */
         val runtime = mutableRuntime.asStateFlow()
@@ -100,9 +101,13 @@ class ForegroundService : Service() {
         }
 
         private const val LOG_TAG = "CoverForegroundService"
+        // Polling cadence while suppressed to detect when the user returns to the cover home screen.
         private const val APP_LAUNCH_RESUME_POLL_INTERVAL_MS = 250L
+        // Minimum hold time after suppressing so launch transitions aren't immediately undone on frame 1.
         private const val APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS = 120L
+        // Maximum age before a cached accessibility foreground event is considered too stale to act on.
         private const val APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS = 2_500L
+        // Number of consecutive matching poll observations required before treating a return-to-home signal as stable.
         private const val APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT = 2
         // Effectively disable the "auto-reclaim after N seconds of no interaction"
         // behavior. Previously this was 45s, which meant that while the user was
@@ -112,29 +117,39 @@ class ForegroundService : Service() {
         // via the accessibility service reclaim signal) or when the display is
         // relocked, not on an idle timer.
         private const val APP_LAUNCH_RESUME_MAX_SUPPRESSION_MS = Long.MAX_VALUE
+        // Minimum time a stock launcher must stay in foreground after launching an app before we reclaim.
         private const val APP_LAUNCH_RESUME_MIN_LAUNCHER_MS = 300L
+        // Grace period a safe SystemUI/AOD screen must hold focus before triggering overlay resume.
         private const val TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS = 120L
+        // Minimum elapsed launch suppression time before SystemUI+AOD exit-pattern failsafe can fire.
         private const val TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS = 700L
+        // Max time window connecting a SystemUI event and an AOD event into a single "app exited" pattern.
         private const val TRANSIENT_EXIT_PATTERN_WINDOW_MS = 1_800L
+        // Two-hour failsafe ceiling on incoming-call suppression so a missed end-call event can't hide the launcher forever.
         private const val INCOMING_CALL_SUPPRESSION_MAX_MS = 7_200_000L
+        // Grace window after the last call signal to absorb brief screen transitions before reclaiming.
         private const val INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS = 5_000L
+        // Cooldown between identical reclaim requests so bursts of accessibility events don't spam retargets.
         private const val OVERLAY_RECLAIM_MIN_INTERVAL_MS = 80L
         private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
         private const val OVERLAY_TRANSITION_LOG_TAG = "CoverOverlayTransition"
         private const val OVERLAY_MARKER_HELD_HIDDEN = "marker=held_hidden"
         private const val OVERLAY_MARKER_REMOVED_STALE = "marker=removed_stale"
 
+        // Packages that often flash briefly over apps (status/shade/AOD) without meaning the user exited.
         private val TRANSIENT_SYSTEM_UI_PREFIXES = arrayOf(
             "com.android.systemui",
             "com.samsung.systemui",
             "com.samsung.android.app.aodservice"
         )
 
+        // Subset of transient Samsung packages considered safe to resume after the brief dwell grace period.
         private val TRANSIENT_SYSTEM_UI_RESUME_SAFE_PREFIXES = arrayOf(
             "com.samsung.systemui",
             "com.samsung.android.app.aodservice"
         )
 
+        // Packages whose foreground presence indicates the user is back on a home/cover system surface.
         private val OVERLAY_RESUME_PACKAGE_PREFIXES = arrayOf(
             "com.android.systemui",
             "com.samsung.systemui",
@@ -144,6 +159,7 @@ class ForegroundService : Service() {
             "com.samsung.android.app.clockface"
         )
 
+        // Standard Android / Samsung launcher package prefixes subject to the brief post-launch guard.
         private val LAUNCHER_PACKAGE_PREFIXES = arrayOf(
             "com.sec.android.app.launcher",
             "com.android.launcher",
@@ -155,6 +171,7 @@ class ForegroundService : Service() {
         var isOverlayActive: Boolean = false
             private set
 
+        /** Weak reference to the running [ForegroundService] so static bridges avoid leaking the Service context. */
         @Volatile
         private var activeServiceRef: WeakReference<ForegroundService>? = null
 
@@ -230,23 +247,35 @@ class ForegroundService : Service() {
         }
     }
 
+    // Main-thread SupervisorJob scope backing polling, fold observation, and display retargeting; cancelled in onDestroy().
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    // Window command facade forwarding show/suppress/detach requests to CoverAccessibilityService.
     private lateinit var overlayWindowController: OverlayWindowController
+    // Single-flight launch coordinator preventing overlapping taps and pairing suppression with Activity dispatch.
     private lateinit var launchCoordinator: CoverLaunchCoordinator
+    // Helper locating the cover hardware display, monitoring keyguard lock status, and tracking fold posture.
     private lateinit var coverDisplayHelper: CoverDisplayHelper
+    // System DisplayManager queried for display validity and monitored via [displayListener].
     private lateinit var displayManager: DisplayManager
+    // Installed-app catalog supplied to the launcher composition via [launcherOverlayHost].
     private lateinit var appRepository: PackageManagerAppScannerRepository
+    // DataStore-backed user preferences (theme, dock, wallpaper, widgets, keyboard strategy).
     private lateinit var launcherSettingsStore: LauncherSettingsStore
+    // Read-only dependency/callback bundle handed to CoverAccessibilityService so it can render the launcher grid.
     private var launcherOverlayHost: LauncherOverlayHost? = null
+    // AppWidgetHost lifecycle wrapper kept listening only while the cover launcher overlay is visible.
     private val widgetHostManager by lazy {
         com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(this)
     }
 
+    // Mutable state holder for suppression session IDs, resume stability counts, reclaim cooldown, and call passthrough.
     private val suppressionState = OverlaySuppressionState()
+    // Policy governing incoming-call passthrough timeouts and reclaim blocking grace windows.
     private val reclaimPolicy = OverlayReclaimPolicy(
         incomingCallSuppressionMaxMs = INCOMING_CALL_SUPPRESSION_MAX_MS,
         incomingCallReclaimBlockGraceMs = INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS
     )
+    // Policy classifying SystemUI/AOD flicker vs genuine returns to the native cover home screen.
     private val transientSignalPolicy = OverlayTransientSignalPolicy(
         transientSystemUiPrefixes = TRANSIENT_SYSTEM_UI_PREFIXES,
         transientSystemUiResumeSafePrefixes = TRANSIENT_SYSTEM_UI_RESUME_SAFE_PREFIXES,
@@ -256,13 +285,20 @@ class ForegroundService : Service() {
         transientExitFailsafeMinSuppressionMs = TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS,
         transientExitPatternWindowMs = TRANSIENT_EXIT_PATTERN_WINDOW_MS
     )
+    // Policy deciding whether to hold an existing cover-display window hidden during transient display loss.
     private val overlayAttachmentPolicy = OverlayAttachmentPolicy()
 
+    // True once the service has received a start/launch request asking the overlay to stay active.
     private var overlayRequested = false
+    // Guards balanced registerDisplayListener / unregisterDisplayListener calls.
     private var isDisplayListenerRegistered = false
+    // Tracks whether ServiceCompat.startForeground has succeeded so stopForegroundIfStarted only runs when promoted.
     private var hasEnteredForeground = false
+    // Guards balanced registerReceiver / unregisterReceiver calls for [screenStateReceiver].
     private var isScreenStateReceiverRegistered = false
+    // Cached screen-power state from PowerManager / ACTION_SCREEN_ON|OFF; prevents attaching over doze/AOD.
     private var isScreenInteractive = true
+    // True while UnlockBridgeActivity / system keyguard unlock prompt is open so the overlay yields touch/visibility.
     private var isUnlockPromptActive = false
 
     /**
@@ -278,10 +314,14 @@ class ForegroundService : Service() {
         }
     }
 
+    // Active coroutine job performing the next overlay attach/retarget pass (cancelled on newer triggers or screen-off).
     private var pendingDisplayRetargetJob: Job? = null
+    // Periodic coroutine job polling [maybeResumeOverlayAfterAppLaunch] while the overlay is suppressed.
     private var suppressionResumePollerJob: Job? = null
+    // Coroutine collecting foldable posture emissions to suppress when unfolded and restore when closed.
     private var foldPostureJob: Job? = null
 
+    // Pass-through delegates exposing [suppressionState] fields directly inside ForegroundService without duplicating state.
     private var isOverlaySuppressedForAppLaunch: Boolean
         get() = suppressionState.isOverlaySuppressedForAppLaunch
         set(value) {

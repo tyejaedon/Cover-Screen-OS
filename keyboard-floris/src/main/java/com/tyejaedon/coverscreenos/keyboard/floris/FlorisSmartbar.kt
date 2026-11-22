@@ -57,6 +57,24 @@ import kotlin.math.abs
 /**
  * User customization and host configuration for [CoverFlorisKeyboardSurface].
  * Bridges `LauncherSettingsStore` preferences from `:app` into `:keyboard-floris`.
+ *
+ * @property extraHeightDp User-resized additional row height (in dp) persisted across sessions.
+ * @property onExtraHeightChanged Optional callback invoked as the user drags the top bar vertically.
+ * @property oneHandedEnabled Whether the keyboard narrows and docks to one thumb side.
+ * @property onOneHandedToggle Optional callback toggled from the top-bar one-handed icon.
+ * @property dockAnchor Left or right screen edge used when [oneHandedEnabled] is true.
+ * @property onAnchorToggle Optional callback swapping left/right one-handed alignment.
+ * @property suggestionStripVisible Master visibility flag for the prediction chip bar.
+ * @property suggestionsEnabled Whether prediction engines should feed candidates into the strip.
+ * @property autocorrectEnabled Whether Space automatically fixes typos on QWERTY.
+ * @property popupKeyPreviewEnabled Whether pressing a letter pops up [FlorisKeyPreviewBubble].
+ * @property imeOptions Android [EditorInfo] flags controlling the Enter key's icon (Search, Send, Done, etc.).
+ * @property showModeSwitchChip Whether the QWERTY/T9 toggle button appears in the toolbar.
+ * @property compactSymbolsLayout Uses a tighter symbols layout variant on smaller cover screens.
+ * @property includeClearKey Adds a dedicated Clear/Undo key to the bottom row (used for search/PIN entry).
+ * @property isT9Predictive True for dictionary-based T9 prediction; false for classic ABC multi-tap.
+ * @property onT9PredictiveToggle Optional callback toggling T9 vs. ABC mode.
+ * @property themePalette Color tokens styling keys, surface, smartbar, popups, and glide trail.
  */
 data class FlorisKeyboardCustomization(
     val extraHeightDp: Float = 0f,
@@ -110,9 +128,11 @@ fun CoverKeyboardTopBar(
     trailingContent: (@Composable RowScope.() -> Unit)? = null
 ) {
     val density = LocalDensity.current
+    // Keep callback references fresh inside pointerInput(Unit) so vertical resize drags don't cancel.
     val onExtraHeightChangedState = rememberUpdatedState(onExtraHeightChanged)
     val onHapticState = rememberUpdatedState(onHaptic)
 
+    // Lets the user temporarily reveal toolbar icons even while word suggestions are visible.
     var forceToolsVisible by remember { mutableStateOf(false) }
     val showCandidates = suggestionsVisible && candidates.isNotEmpty() && !forceToolsVisible
 
@@ -130,11 +150,13 @@ fun CoverKeyboardTopBar(
             .padding(horizontal = 4.dp)
             .testTag("keyboard_resize_controls")
             .pointerInput(Unit) {
+                // Tracks the previous 6dp height detent so haptic clicks fire only at step boundaries.
                 var lastSnapped = extraHeightDp
                 detectVerticalDragGestures(
                     onDragStart = { lastSnapped = extraHeightDp },
                     onVerticalDrag = { change, dragAmount ->
                         change.consume()
+                        // Dragging up (negative Y) grows extraHeightDp within the 0..24dp range.
                         val deltaDp = with(density) { -dragAmount.toDp().value }
                         val next = (extraHeightDp + deltaDp).coerceIn(0f, 24f)
                         onExtraHeightChangedState.value(next)
@@ -317,6 +339,9 @@ fun CoverKeyboardTopBar(
     }
 }
 
+/**
+ * Circular 30dp icon button used across [CoverKeyboardTopBar] for toolbar actions.
+ */
 @Composable
 private fun SmartbarIconButton(
     onClick: () -> Unit,
@@ -358,6 +383,7 @@ fun FlorisSmartbar(
     stripHeight: Dp = 34.dp,
     themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover
 ) {
+    // Horizontal scroll state for the candidate LazyRow.
     val listState = rememberLazyListState()
 
     Box(
@@ -402,6 +428,10 @@ fun FlorisSmartbar(
     }
 }
 
+/**
+ * Individual word suggestion pill inside [FlorisSmartbar] supporting tap commit and
+ * optional long-press Learn/Suppress menu actions.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FlorisCandidateChip(
@@ -412,7 +442,9 @@ private fun FlorisCandidateChip(
     onSuppress: (() -> Unit)?,
     onClick: () -> Unit
 ) {
+    // Controls visibility of the anchored Learn/Suppress dropdown menu on long-press.
     var menuExpanded by remember { mutableStateOf(false) }
+    // Distinct pill colors highlight the top/hero candidate while secondary chips stay subtle.
     val bg = if (selected) {
         themePalette.candidatePrimaryBackground
     } else {

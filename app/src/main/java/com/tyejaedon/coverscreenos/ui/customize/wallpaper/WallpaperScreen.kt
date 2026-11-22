@@ -37,9 +37,11 @@ internal fun WallpaperScreen(
     settings: LauncherSettings,
     onAction: (String?, suspend () -> Unit) -> Unit
 ) {
+    // Prevents launching overlapping media imports while a picked file is still being copied and validated.
     var importing by remember { mutableStateOf(false) }
     // Local draft states mirror persisted settings so dragging/sliding stays responsive without disk churn.
     var scale by remember(settings.wallpaperScaleMode) { mutableStateOf(settings.wallpaperScaleMode) }
+    // Draft dim amount clamped to valid [0..1] range (recovering cleanly from any non-finite stored float).
     var dim by remember(settings.wallpaperDimAmount) {
         mutableFloatStateOf(
             settings.wallpaperDimAmount.takeIf { it.isFinite() }
@@ -47,6 +49,7 @@ internal fun WallpaperScreen(
                 ?: DEFAULT_WALLPAPER_DIM_AMOUNT
         )
     }
+    // Draft blur radius in dp clamped within allowed min/max bounds.
     var blur by remember(settings.wallpaperBlurRadiusDp) {
         mutableFloatStateOf(
             settings.wallpaperBlurRadiusDp.takeIf { it.isFinite() }
@@ -54,10 +57,12 @@ internal fun WallpaperScreen(
                 ?: DEFAULT_WALLPAPER_BLUR_RADIUS_DP
         )
     }
+    // Draft pan offsets, zoom multiplier, and 90-degree rotation step shown live before DataStore commit.
     var cropX by remember(settings.wallpaperCropX) { mutableFloatStateOf(settings.wallpaperCropX) }
     var cropY by remember(settings.wallpaperCropY) { mutableFloatStateOf(settings.wallpaperCropY) }
     var zoom by remember(settings.wallpaperZoom) { mutableFloatStateOf(settings.wallpaperZoom) }
     var rotation by remember(settings.wallpaperRotation) { mutableIntStateOf(settings.wallpaperRotation) }
+    // Controls whether the full-screen Zoom & Crop modal is open (preserved across configuration changes).
     var showCropDialog by rememberSaveable { mutableStateOf(false) }
     // OpenDocument lets the user select images, animated GIFs, or video files via the system file picker.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->

@@ -38,6 +38,7 @@ internal data class T9TapResult(
  * Returns [apps] unchanged when [query] contains only whitespace.
  */
 internal fun filterAppsForSearchQuery(apps: List<AppModel>, query: String): List<AppModel> {
+    // Strip leading/trailing whitespace so accidental spaces still show all apps.
     val normalizedQuery = query.trim()
     if (normalizedQuery.isEmpty()) return apps
 
@@ -51,6 +52,7 @@ internal fun filterAppsForSearchQuery(apps: List<AppModel>, query: String): List
  * (case-insensitive substring match).
  */
 internal fun matchesSearchQuery(appName: String, packageName: String, query: String): Boolean {
+    // Normalize spaces once so caller-supplied raw queries match consistently.
     val normalizedQuery = query.trim()
     if (normalizedQuery.isEmpty()) return true
 
@@ -81,8 +83,9 @@ internal fun applyT9CharacterTap(
         )
     }
 
+    // Lowercase the key's mapped letters so every T9 tap produces uniform search query casing.
     val normalizedLetters = letters.lowercase()
-    // Guard against negative elapsed deltas (e.g. test clocks) and empty buffers before cycling.
+    // True only when the user taps the same digit within 900ms and there is a prior character to swap.
     val shouldCycle = cycleState.lastDigit == digit &&
         (nowElapsedMs - cycleState.lastTapElapsedMs) in 0..T9_MULTI_TAP_WINDOW_MS &&
         currentQuery.isNotEmpty()
@@ -97,6 +100,7 @@ internal fun applyT9CharacterTap(
     // Advance modulo the digit's letter list and overwrite the character placed by the prior tap.
     val nextCycleIndex = (cycleState.cycleIndex + 1) % normalizedLetters.length
     val replacementChar = normalizedLetters[nextCycleIndex]
+    // Swap out the trailing character produced by the earlier tap on this same key.
     val updatedQuery = currentQuery.dropLast(1) + replacementChar
 
     return T9TapResult(

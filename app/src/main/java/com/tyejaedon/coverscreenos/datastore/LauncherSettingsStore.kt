@@ -44,6 +44,7 @@ import kotlin.math.max
 
 /** Fixed number of quick-launch slots rendered in the cover-screen dock. */
 const val COVER_DOCK_SLOT_COUNT = 4
+// Corner-radius limits (dp) for cover launcher panels, cards, and widgets.
 const val MIN_PANEL_CORNER_RADIUS_DP = 0f
 const val MAX_PANEL_CORNER_RADIUS_DP = 32f
 const val DEFAULT_PANEL_CORNER_RADIUS_DP = 16f
@@ -51,18 +52,23 @@ const val DEFAULT_PANEL_CORNER_RADIUS_DP = 16f
 internal fun normalizePanelCornerRadius(radiusDp: Float): Float =
 	if (radiusDp.isFinite()) radiusDp.coerceIn(MIN_PANEL_CORNER_RADIUS_DP, MAX_PANEL_CORNER_RADIUS_DP)
 	else DEFAULT_PANEL_CORNER_RADIUS_DP
+// Dark scrim opacity range (0% to 80%, default 45%) applied over wallpapers to keep icons readable.
 const val MIN_WALLPAPER_DIM_AMOUNT = 0f
 const val MAX_WALLPAPER_DIM_AMOUNT = 0.8f
 const val DEFAULT_WALLPAPER_DIM_AMOUNT = 0.45f
+// Gaussian blur radius range (0dp to 18dp) softened behind launcher panels.
 const val MIN_WALLPAPER_BLUR_RADIUS_DP = 0f
 const val MAX_WALLPAPER_BLUR_RADIUS_DP = 18f
 const val DEFAULT_WALLPAPER_BLUR_RADIUS_DP = 0f
+// Normalized pan offset limits (-1 = far edge, 0 = centered, +1 = opposite edge).
 const val MIN_WALLPAPER_CROP_OFFSET = -1f
 const val MAX_WALLPAPER_CROP_OFFSET = 1f
 const val DEFAULT_WALLPAPER_CROP_OFFSET = 0f
+// Zoom scale multiplier bounds (1x unzoomed up to 3x zoom).
 const val MIN_WALLPAPER_ZOOM = 1f
 const val MAX_WALLPAPER_ZOOM = 3f
 const val DEFAULT_WALLPAPER_ZOOM = 1f
+// Default clockwise wallpaper rotation (0 degrees) and viewport scaling mode (crop-to-fill).
 const val DEFAULT_WALLPAPER_ROTATION = 0
 val DEFAULT_WALLPAPER_SCALE_MODE: WallpaperScaleMode = WallpaperScaleMode.CROP
 
@@ -144,22 +150,30 @@ private val Context.coverLauncherSettingsDataStore by preferencesDataStore(name 
  * - [widgetIds]: comma-separated integer AppWidget IDs preserving user ordering.
  */
 private object LauncherPreferencesKeys {
+	// Tracks whether the first-run welcome walkthrough has been dismissed.
 	val welcomeTourSeen = booleanPreferencesKey("welcome_tour_seen")
+	// Persisted URI string pointing to either a managed app-private file or external content URI.
 	val wallpaperUri = stringPreferencesKey("wallpaper_uri")
+	// Wallpaper scaling enum name (CROP or FIT), dim opacity, and blur radius (dp).
 	val wallpaperScaleMode = stringPreferencesKey("wallpaper_scale_mode")
 	val wallpaperDimAmount = floatPreferencesKey("wallpaper_dim_amount")
 	val wallpaperBlurRadiusDp = floatPreferencesKey("wallpaper_blur_radius_dp")
+	// User crop/pan offsets, zoom scale, and clockwise 90-degree rotation angle.
 	val wallpaperCropX = floatPreferencesKey("wallpaper_crop_x")
 	val wallpaperCropY = floatPreferencesKey("wallpaper_crop_y")
 	val wallpaperZoom = floatPreferencesKey("wallpaper_zoom")
 	val wallpaperRotation = androidx.datastore.preferences.core.intPreferencesKey("wallpaper_rotation")
+	// Dock visibility toggle and option to turn the 4th dock slot into an All Apps drawer button.
 	val dockVisible = booleanPreferencesKey("dock_visible")
+	// UI theme mode (SYSTEM/LIGHT/DARK), accent palette, and rounded corner radius (dp).
 	val themePreference = stringPreferencesKey("theme_preference")
 	val accentColor = stringPreferencesKey("accent_color")
 	val panelCornerRadiusDp = floatPreferencesKey("panel_corner_radius_dp")
 	val dockSlotFourAllApps = booleanPreferencesKey("dock_slot_four_all_apps")
+	// Global input method strategy (built-in T9 vs system IME) and per-app JSON mode overrides.
 	val keyboardStrategy = stringPreferencesKey("keyboard_strategy")
 	val keyboardModeByPackage = stringPreferencesKey("keyboard_mode_by_package")
+	// Built-in cover keyboard feedback, autocorrect, and one-handed sizing/anchoring preferences.
 	val hapticStrength = stringPreferencesKey("haptic_strength")
 	val keyPressSoundEnabled = booleanPreferencesKey("key_press_sound_enabled")
 	val suggestionStripVisible = booleanPreferencesKey("suggestion_strip_visible")
@@ -168,7 +182,9 @@ private object LauncherPreferencesKeys {
 	val keyboardExtraHeightDp = floatPreferencesKey("keyboard_extra_height_dp")
 	val keyboardOneHandedEnabled = booleanPreferencesKey("keyboard_one_handed_enabled")
 	val keyboardOneHandedAnchor = stringPreferencesKey("keyboard_one_handed_anchor")
+	// Comma-separated AppWidget IDs preserving user ordering on the cover widget page.
 	val widgetIds = stringPreferencesKey("cover_widget_ids")
+	// Individual DataStore keys (`dock_slot_0`..`dock_slot_3`) storing pinned dock package names.
 	val dockSlots: List<Preferences.Key<String>> = List(COVER_DOCK_SLOT_COUNT) { slot ->
 		stringPreferencesKey("dock_slot_$slot")
 	}
@@ -179,22 +195,34 @@ private object LauncherPreferencesKeys {
  * widget, and built-in keyboard preferences.
  */
 data class LauncherSettings(
+	// Fixed 4-slot dock package names (null means an unassigned slot).
 	val dockPackages: List<String?> = List(COVER_DOCK_SLOT_COUNT) { null },
+	// Active wallpaper file:// or content:// URI; null renders the default theme backdrop.
 	val wallpaperUri: String? = null,
+	// How wallpaper media scales inside the cover display (CROP or FIT).
 	val wallpaperScaleMode: WallpaperScaleMode = DEFAULT_WALLPAPER_SCALE_MODE,
+	// Scrim darkness (0f..0.8f) overlaid on the wallpaper for foreground legibility.
 	val wallpaperDimAmount: Float = DEFAULT_WALLPAPER_DIM_AMOUNT,
+	// Blur radius (dp) behind cover launcher cards.
 	val wallpaperBlurRadiusDp: Float = DEFAULT_WALLPAPER_BLUR_RADIUS_DP,
+	// Normalized horizontal/vertical crop offsets, zoom factor, and 90-degree rotation angle.
 	val wallpaperCropX: Float = DEFAULT_WALLPAPER_CROP_OFFSET,
 	val wallpaperCropY: Float = DEFAULT_WALLPAPER_CROP_OFFSET,
 	val wallpaperZoom: Float = DEFAULT_WALLPAPER_ZOOM,
 	val wallpaperRotation: Int = DEFAULT_WALLPAPER_ROTATION,
+	// Whether the bottom quick-launch dock is shown on the cover homescreen.
 	val isDockVisible: Boolean = true,
+	// Theme mode, accent palette, and card corner radius applied to both phone and cover UIs.
 	val themePreference: ThemePreference = ThemePreference.SYSTEM,
 	val accentColor: AccentColor = AccentColor.DEFAULT,
 	val panelCornerRadiusDp: Float = DEFAULT_PANEL_CORNER_RADIUS_DP,
+	// When true, slot 4 acts as an All Apps button instead of a pinned app shortcut.
 	val dockSlotFourAllApps: Boolean = false,
+	// Chosen text-entry backend (built-in T9 vs Android system IME).
 	val keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
+	// Per-package remembered keyboard modes (e.g. T9 vs QWERTY for specific apps).
 	val keyboardModeByPackage: Map<String, CoverKeyboardMode> = emptyMap(),
+	// Key-press feedback, smart typing helpers, and ergonomic sizing/alignment options.
 	val hapticStrength: HapticStrength = HapticStrength.Standard,
 	val keyPressSoundEnabled: Boolean = false,
 	val suggestionStripVisible: Boolean = true,
@@ -203,14 +231,20 @@ data class LauncherSettings(
 	val keyboardExtraHeightDp: Float = COMPACT_EXTRA_KEY_HEIGHT_DP,
 	val keyboardOneHandedEnabled: Boolean = false,
 	val keyboardOneHandedAnchor: KeyboardAnchor = KeyboardAnchor.Left,
+	// Ordered Android AppWidget IDs hosted on the cover widget page.
 	val widgetIds: List<Int> = emptyList()
 )
 
+// Logcat filter tag for settings fallback, migration, and wallpaper validation diagnostics.
 private const val SETTINGS_STORE_LOG_TAG = "LauncherSettingsStore"
+// App-private subdirectory under filesDir where validated wallpaper copies are stored safely.
 private const val MANAGED_WALLPAPER_DIR = "cover_wallpaper"
+// Versioned filename prefix and legacy filename used to recognize app-managed wallpaper files.
 private const val MANAGED_WALLPAPER_FILE_PREFIX = "selected_wallpaper_"
 private const val MANAGED_WALLPAPER_FILE_LEGACY = "selected_wallpaper"
+// Fallback extension when a picked gallery URI has no recognizable filename suffix.
 private const val MANAGED_WALLPAPER_FALLBACK_EXTENSION = ".img"
+// Bounding dimension (px) used during validation decodes to test image integrity without OOMs.
 private const val WALLPAPER_VALIDATION_TARGET_SIZE_PX = 512
 /** Process-wide mutex serializing wallpaper file storage mutations and DataStore URI updates. */
 private val wallpaperMutationMutex = Mutex()
@@ -262,6 +296,7 @@ class LauncherSettingsStore(
 	context: Context,
 	private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
+	// Application-scoped Context handle used for DataStore, filesDir, and ContentResolver without leaking Activities.
 	private val appContext = context.applicationContext
 
 	/** Reactive stream indicating whether the user has completed the initial onboarding tour. */
@@ -838,16 +873,20 @@ class LauncherSettingsStore(
 		wallpaperMutationMutex.withLock {
 			withContext(ioDispatcher) {
 				takeSourceUriReadPermission(sourceUri)
+				// Private directory inside app internal storage where validated wallpapers live permanently.
 				val wallpaperDirectory = File(appContext.filesDir, MANAGED_WALLPAPER_DIR)
 				if (!wallpaperDirectory.exists() && !wallpaperDirectory.mkdirs()) {
 					throw IOException("Could not create wallpaper storage.")
 				}
 				cleanInterruptedWallpaperImports(wallpaperDirectory)
 
+				// Final versioned destination file and temporary `.part` staging file used during download/validation.
 				val wallpaperFile = buildVersionedManagedWallpaperFile(wallpaperDirectory, sourceUri)
 				val tempWallpaperFile = File(wallpaperDirectory, "${wallpaperFile.name}.part")
+				// InputStream opened from the user's gallery/file picker URI.
 				val input = openInput()
 					?: throw IOException("Could not read the selected wallpaper. Choose a readable file.")
+				// Tracks whether the new file was committed to DataStore so failure cleanup never deletes an active wallpaper.
 				var wallpaperCommitted = false
 				try {
 					input.use { source -> copyWallpaperImportStream(source, tempWallpaperFile) }
@@ -979,6 +1018,7 @@ class LauncherSettingsStore(
 	 * Android's [MediaMetadataRetriever] and [MediaExtractor], releasing both in `finally` blocks.
 	 */
 	private fun validateVideoFile(file: File) {
+		// Native Android media retriever handle used to inspect duration, resolution, and a keyframe.
 		val retriever = MediaMetadataRetriever()
 		try {
 			retriever.setDataSource(file.absolutePath)
@@ -991,9 +1031,11 @@ class LauncherSettingsStore(
 				"Video dimensions exceed ${WallpaperMediaLimits.MAX_ANIMATED_WIDTH}x${WallpaperMediaLimits.MAX_ANIMATED_HEIGHT} or ${WallpaperMediaLimits.MAX_ANIMATED_PIXELS / 1_000_000} megapixels."
 			}
 
+			// Native MediaExtractor handle used to demux the video track and verify codec/fps/frame count.
 			val extractor = MediaExtractor()
 			try {
 				extractor.setDataSource(file.absolutePath)
+				// Index of the first track whose MIME type starts with "video/".
 				val videoTrackIndex = (0 until extractor.trackCount)
 					.firstOrNull { extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
 					?: throw IllegalArgumentException("Video has no supported video track.")
@@ -1023,6 +1065,7 @@ class LauncherSettingsStore(
 			} finally {
 				extractor.release()
 			}
+			// Sample sync frame decoded from t=0 to prove the device decoder actually supports this stream.
 			val validationFrame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
 				?: throw IllegalArgumentException("Video cannot be decoded by this device.")
 			validationFrame.recycle()

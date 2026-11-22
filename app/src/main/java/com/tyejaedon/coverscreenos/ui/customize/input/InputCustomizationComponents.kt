@@ -97,9 +97,13 @@ internal fun InputCustomizationCard(
 ) {
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
+    // DataStore-backed telemetry store tracking IME picker outcomes and OEM restriction banners.
     val inputTelemetryStore = remember(appContext) { InputTelemetryStore(appContext) }
+    // Live telemetry counters used to calibrate predicted cross-app keyboard availability.
     val telemetryCounters by inputTelemetryStore.counters.collectAsState(initial = InputTelemetryCounters())
+    // Local refresh counter bumped by the "Refresh status" button to re-check device IMEs on demand.
     var localRefreshNonce by remember { mutableIntStateOf(0) }
+    // Flags when InputCapabilityDetector throws so the status card displays an error instead of loading forever.
     var capabilityLoadFailed by remember { mutableStateOf(false) }
     // Re-query installed/default IMEs whenever the parent returns from IME settings or manual refresh runs.
     val capabilitySnapshot by produceState<InputCapabilitySnapshot?>(
@@ -116,6 +120,7 @@ internal fun InputCustomizationCard(
         capabilityLoadFailed = result.isFailure
         value = result.getOrNull()
     }
+    // Manufacturer-specific warning when an OEM limits third-party keyboards on the cover screen.
     val oemRestrictionHint = capabilitySnapshot?.oemRestrictionHint
 
     // Track how often OEM cover-display IME restriction warnings are surfaced to the user.
@@ -125,6 +130,7 @@ internal fun InputCustomizationCard(
         }
     }
 
+    // Supported keyboard strategy options shown as selectable cards in the Input screen.
     val options = listOf(
         KeyboardStrategyUiOption(
             mode = KeyboardStrategy.T9,
@@ -401,6 +407,7 @@ private fun KeyboardSizeAndAnchorControls(
     onKeyboardOneHandedAnchorChanged: (KeyboardAnchor) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Height presets pairing extra dp padding constants with user-friendly size labels.
     val presets = listOf(
         COMPACT_EXTRA_KEY_HEIGHT_DP to "Compact",
         STANDARD_EXTRA_KEY_HEIGHT_DP to "Standard",
@@ -491,6 +498,7 @@ private fun InputCapabilityStatusCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
+                // Human-readable name of the currently active default keyboard and all enabled keyboards.
                 val defaultImeLabel = capabilitySnapshot.defaultInputMethod?.label
                     ?: "No default IME detected"
                 val enabledImeLabels = if (capabilitySnapshot.enabledInputMethods.isEmpty()) {
@@ -522,11 +530,13 @@ private fun InputCapabilityStatusCard(
                     style = MaterialTheme.typography.bodySmall
                 )
 
+                // Friendly readiness tier text derived from IME settings and OEM rules.
                 val availabilityTierLabel = when (capabilitySnapshot.availabilityEstimateTier) {
                     InputAvailabilityTier.HIGH -> "high"
                     InputAvailabilityTier.MODERATE -> "moderate"
                     InputAvailabilityTier.LOW -> "low"
                 }
+                // Historical runtime picker success rate (%) and flag checking if any samples exist yet.
                 val observedSuccessRate = telemetryCounters.imeShowSuccessRatePercent
                 val hasObservedRuntimeSamples = telemetryCounters.imeShowRequestCount > 0L
                 // Average static capability score with observed picker success once runtime samples exist.

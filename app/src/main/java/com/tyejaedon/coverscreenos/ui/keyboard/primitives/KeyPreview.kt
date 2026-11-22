@@ -50,7 +50,9 @@ fun KeyPreview(
     onDismiss: () -> Unit = {}
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
+    // Upward pixel clearance above the keycap so the user's thumb doesn't cover the preview letter.
     val verticalOffsetPx = with(density) { verticalOffsetDp.dp.roundToPx() }
+    // Custom Popup positioning rule centering horizontally above the pressed key's anchor bounds.
     val positionProvider = remember(verticalOffsetPx) {
         object : PopupPositionProvider {
             override fun calculatePosition(

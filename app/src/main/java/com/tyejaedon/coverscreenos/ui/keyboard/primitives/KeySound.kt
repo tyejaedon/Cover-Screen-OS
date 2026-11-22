@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.map
 @Composable
 internal fun rememberKeySoundPerformer(): () -> Unit {
     val context = LocalContext.current
+    // Preferences store providing the user's "Key-press sound" toggle.
     val settingsStore = remember(context) { LauncherSettingsStore(context.applicationContext) }
     // Track only the key-press sound boolean to avoid recomposing on unrelated preference changes.
     val soundEnabled by remember(settingsStore) {

@@ -21,8 +21,10 @@ class LockStatusReceiver(
 
     override fun onReceive(context: Context?, intent: Intent?) {
         context ?: return
+        // Broadcast event name delivered by the OS (screen on/off or user unlock).
         val action = intent?.action ?: return
 
+        // Resolved lock status emitted to the overlay host (`true` = locked, `false` = unlocked).
         val isLocked = when (action) {
             // Turning the screen off engages lock/keyguard protection immediately on secure devices.
             Intent.ACTION_SCREEN_OFF -> true
@@ -47,6 +49,7 @@ class LockStatusReceiver(
          * if the system service is unavailable.
          */
         fun currentLockStatus(context: Context): Boolean {
+            // Android KeyguardManager system service handle used to inspect PIN/biometric/lockscreen state.
             val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
             return keyguardManager?.isDeviceLocked
                 ?: keyguardManager?.isKeyguardLocked

@@ -31,6 +31,7 @@ object AppPermissionHelper {
     // public constant on android.provider.Settings.Secure across all SDK levels.
     private const val ENABLED_NOTIFICATION_LISTENERS_KEY = "enabled_notification_listeners"
 
+    // Shared runtime permission list for photo/wallpaper pickers so requests and checks stay in sync.
     private val galleryMediaPermissions = arrayOf(
         Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
     )
@@ -92,11 +93,13 @@ object AppPermissionHelper {
      * `enabled_notification_listeners` [Settings.Secure] entry.
      */
     fun isNotificationListenerEnabled(context: Context): Boolean {
+        // Colon-separated list of flattened component names granted notification access in Android settings.
         val enabledListeners = Settings.Secure.getString(
             context.contentResolver,
             ENABLED_NOTIFICATION_LISTENERS_KEY
         ) ?: return false
 
+        // Exact "package/service" string identifying our NotificationListenerService.
         val targetListener = ComponentName(context, CoverNotificationListenerService::class.java).flattenToString()
         return enabledListeners.split(':').any { it.equals(targetListener, ignoreCase = true) }
     }
@@ -118,11 +121,13 @@ object AppPermissionHelper {
         ) == 1
         if (!accessibilityEnabled) return false
 
+        // Colon-separated list of enabled accessibility service components stored by Android.
         val enabledServices = Settings.Secure.getString(
             context.contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
 
+        // Flattened "package/class" identifier for the accessibility service being checked.
         val targetService = ComponentName(context, serviceClass).flattenToString()
         return enabledServices.split(':').any { it.equals(targetService, ignoreCase = true) }
     }

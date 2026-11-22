@@ -47,6 +47,12 @@ import kotlinx.coroutines.launch
 
 /**
  * Visual color tokens for a [KeyboardKey] across idle, pressed, and disabled states.
+ *
+ * @property idleBackground Resting keycap fill color.
+ * @property pressedBackground Highlighted keycap fill while a finger is down.
+ * @property idleContent Text/icon foreground color when enabled.
+ * @property disabledBackground Muted fill color when the key is disabled.
+ * @property disabledContent Dimmed text/icon color when the key is disabled.
  */
 data class KeyboardKeyColors(
     val idleBackground: Color,
@@ -141,7 +147,9 @@ fun KeyboardKey(
         "KeyboardKey requires either a label or an icon."
     }
 
+    // Live press state driving visual scale/color animation and the KeyPreview popup.
     var isPressed by remember { mutableStateOf(false) }
+    // Separate haptic and sound performers combined into one keystroke feedback trigger.
     val performHaptic = rememberHapticPerformer(hapticTier)
     val playKeySound = rememberKeySoundPerformer()
     val performFeedback = remember(performHaptic, playKeySound) {
@@ -156,20 +164,24 @@ fun KeyboardKey(
     val onLongPressState = rememberUpdatedState(onLongPress)
     val onDragStartState = rememberUpdatedState(onHorizontalDragStart)
     val onDragState = rememberUpdatedState(onHorizontalDrag)
+    // Spoken accessibility label falling back to visible text when no override is supplied.
     val accessibleLabel = contentDescription ?: label.orEmpty()
 
+    // Quick 60ms spring-like press shrink down to 92% scale for crisp tactile response.
     val scale by animateFloatAsState(
         targetValue = if (isPressed && enabled) 0.92f else 1f,
         animationSpec = tween(60),
         label = "KeyboardKeyScale"
     )
 
+    // Resolved resting/pressed/disabled background color fed into the 60ms color transition.
     val targetBackground = when {
         !enabled -> colors.disabledBackground
         isPressed -> colors.pressedBackground
         else -> colors.idleBackground
     }
     val bg by animateColorAsState(targetBackground, animationSpec = tween(60), label = "KeyboardKeyColor")
+    // Foreground tint for the key label or icon.
     val content = if (enabled) colors.idleContent else colors.disabledContent
 
     Box(

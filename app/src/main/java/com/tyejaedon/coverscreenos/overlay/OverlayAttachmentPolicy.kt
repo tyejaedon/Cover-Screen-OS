@@ -11,6 +11,7 @@ import android.view.Display
  * the overlay from ever lingering on [Display.DEFAULT_DISPLAY].
  */
 internal class OverlayAttachmentPolicy(
+    // Android's built-in primary (inner) display ID; we never hold the cover overlay on it.
     private val defaultDisplayId: Int = Display.DEFAULT_DISPLAY
 ) {
     /**

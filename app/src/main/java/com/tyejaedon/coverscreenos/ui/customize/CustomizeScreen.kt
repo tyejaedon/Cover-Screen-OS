@@ -81,6 +81,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONException
 import java.io.IOException
 
+// Logcat tag for reporting customization, file picker, or IME launch failures.
 private const val LOG_TAG = "CustomizeScreen"
 // Guardrail against loading oversized backup files into memory during debug JSON import.
 private const val MAX_SETTINGS_JSON_BYTES = 1024 * 1024
@@ -116,17 +117,25 @@ internal fun CustomizeScreen(
     onBack: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    // Application-wide context so DataStore, ContentResolver, and system services never retain an Activity.
     val appContext = context.applicationContext
+    // Single settings repository instance for reading and saving all cover-screen preferences.
     val store = remember(appContext) { LauncherSettingsStore(appContext) }
+    // Live snapshot of saved preferences collected from DataStore; drives every category tab.
     val settings by store.settings.collectAsState(initial = LauncherSettings())
+    // Long-lived coroutine scope passed from the shell so saves/exports finish even if UI recomposes.
     val scope = actionScope
+    // Tracks whether the top-bar three-dot overflow menu ("Reset", debug "Export"/"Import") is open.
     var menuExpanded by remember { mutableStateOf(false) }
+    // Controls visibility of the "Reset <category>?" confirmation popup across screen rotations.
     var confirmReset by rememberSaveable { mutableStateOf(false) }
+    // Remembers if the user dismissed the missing-permissions warning banner for this session.
     var noticeDismissed by rememberSaveable { mutableStateOf(false) }
     // Incremented after launching system IME pickers/settings so capability checks re-run on return.
     var keyboardRefreshNonce by rememberSaveable { mutableIntStateOf(0) }
     // Compact-height layout optimizes vertical space when rendered on small/landscape displays.
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
+    // Vertical scroll position for the active category pane, starting from the caller's saved offset.
     val scroll = rememberScrollState(initial = initialScrollPosition)
     // Persist the current scroll offset before leaving or switching categories.
     DisposableEffect(category, scroll) {

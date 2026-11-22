@@ -107,6 +107,7 @@ private fun ClipboardIconButton(
     tag: String,
     enabled: Boolean = true
 ) {
+    // Light tap feedback fired when Copy, Cut, or enabled Paste is tapped.
     val performHaptic = rememberHapticPerformer(HapticTier.Light)
     Box(
         modifier = Modifier
@@ -136,6 +137,7 @@ private fun ClipboardIconButton(
  */
 @Composable
 private fun ClipboardHistoryChip(snippet: String, onClick: () -> Unit) {
+    // Display label capped at 18 chars + ellipsis so long clips never crowd the narrow cover strip.
     val truncated = if (snippet.length > HISTORY_CHIP_MAX_CHARS) {
         snippet.take(HISTORY_CHIP_MAX_CHARS) + "…"
     } else {

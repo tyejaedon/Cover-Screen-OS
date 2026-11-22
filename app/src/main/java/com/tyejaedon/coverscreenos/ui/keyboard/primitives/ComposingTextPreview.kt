@@ -63,8 +63,11 @@ fun ComposingTextPreview(
     counterColor: Color = textColor.copy(alpha = 0.6f),
     showCharCount: Boolean = true
 ) {
+    // Screen density used to convert computed pixel line heights back into Compose dp bounds.
     val density = LocalDensity.current
+    // User toggle between compact (maxCollapsedLines) and expanded (expandedMaxLines) preview height.
     var expanded by remember { mutableStateOf(false) }
+    // Wrapped line count updated by Compose's TextLayoutResult after text measurement.
     var totalLineCount by remember { mutableIntStateOf(1) }
     // Seeded from the text style so the very first frame already renders close to the
     // correct clamped height; onTextLayout below refines it to the true measured value.
@@ -80,9 +83,13 @@ fun ComposingTextPreview(
     // Mask password characters before measurement so character count and line wrapping match.
     val displayText = if (isPassword) "•".repeat(text.length) else text
     val isEmpty = displayText.isEmpty()
+    // Final string drawn inside Text (placeholder hint when empty, otherwise displayText).
     val shown = if (isEmpty) placeholder else displayText
+    // True when wrapped lines exceed the collapsed budget so tapping can toggle expansion.
     val isTruncatable = totalLineCount > maxCollapsedLines
+    // Active line cap applied to the preview container's maxHeight constraint.
     val visibleLines = if (expanded) expandedMaxLines else maxCollapsedLines
+    // Vertical scroll controller pinned to the bottom so the user always sees what they just typed.
     val scrollState = rememberScrollState()
 
     // Keep the viewport scrolled to the end (where the caret normally sits) whenever the

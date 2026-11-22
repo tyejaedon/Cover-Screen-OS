@@ -40,6 +40,11 @@ interface CoverOverlayInputCallbacks {
  *
  * Publishes [mutationRevision] on every text or selection mutation so hosts (like `CoverT9InputMethodService`)
  * can reactively recompute NLP candidates and auto-capitalization state on every keystroke.
+ *
+ * @property overlayCallbacks Fallback text-buffer callbacks when no live Android [InputConnection] is attached.
+ * @property inputConnectionRef Weakly held [InputConnection] so detached editor sessions can be garbage-collected.
+ * @property inputConnectionProvider Dynamic getter returning the currently active [InputConnection] on each call.
+ * @property editorActionHandler Optional override invoked instead of sending an Enter key event on Done/Send.
  */
 class CoverEditorBridge(
     private val overlayCallbacks: CoverOverlayInputCallbacks? = null,
@@ -48,13 +53,18 @@ class CoverEditorBridge(
     private val editorActionHandler: (() -> Unit)? = null
 ) : K3Editor {
 
+    // Internal mutable counter incremented whenever text, composition, or cursor position changes.
     private val _mutationRevision = MutableStateFlow(0L)
+
+    /** Read-only stream of edit counters; hosts observe this to refresh predictions after each keystroke. */
     val mutationRevision: StateFlow<Long> = _mutationRevision.asStateFlow()
 
+    /** Bumps [mutationRevision] when an outside caller modifies text directly without going through this bridge. */
     fun notifyExternalMutation() {
         _mutationRevision.value += 1L
     }
 
+    // Prefer the dynamic provider (live IME session) and fall back to the weak static reference.
     private fun currentInputConnection(): InputConnection? =
         inputConnectionProvider?.invoke() ?: inputConnectionRef?.get()
 
@@ -66,6 +76,7 @@ class CoverEditorBridge(
     ) {
         val ic = currentInputConnection()
         if (ic != null) {
+            // Batch all region/commit/selection changes so the host app treats them as one atomic edit.
             ic.beginBatchEdit()
             ic.setComposingRegion(range.first, range.last + 1)
             ic.commitText(text, 1)
@@ -94,6 +105,7 @@ class CoverEditorBridge(
         notifyExternalMutation()
     }
 
+    /** Reads up to [charsBefore]/[charsAfter] characters around the caret from the active editor or overlay buffer. */
     fun getSurroundingText(charsBefore: Int = 100, charsAfter: Int = 100): K3SurroundingText {
         val ic = currentInputConnection()
         if (ic != null) {
@@ -116,6 +128,7 @@ class CoverEditorBridge(
         )
     }
 
+    /** Inserts [text] at the cursor in either the attached [InputConnection] or overlay callbacks. */
     fun insertText(text: String) {
         val ic = currentInputConnection()
         if (ic != null) {
@@ -126,6 +139,7 @@ class CoverEditorBridge(
         notifyExternalMutation()
     }
 
+    /** Swaps the character immediately before the cursor with [newChar] (used for T9 multi-tap cycling). */
     fun replacePreviousChar(newChar: Char) {
         val ic = currentInputConnection()
         if (ic != null) {
@@ -140,6 +154,7 @@ class CoverEditorBridge(
         notifyExternalMutation()
     }
 
+    /** Deletes [charsBefore] characters before and [charsAfter] characters after the cursor. */
     fun deleteSurroundingText(charsBefore: Int, charsAfter: Int = 0) {
         val ic = currentInputConnection()
         if (ic != null) {
@@ -152,10 +167,12 @@ class CoverEditorBridge(
         notifyExternalMutation()
     }
 
+    /** Removes the whole word (plus trailing whitespace) immediately before the cursor. */
     fun deletePreviousWord() {
         val ic = currentInputConnection()
         if (ic != null) {
             val before = ic.getTextBeforeCursor(50, 0)?.toString() ?: ""
+            // Match the last contiguous non-space token and any trailing spaces after it.
             val wordLen = Regex("\\S+\\s*$").find(before)?.value?.length ?: 1
             ic.deleteSurroundingText(wordLen, 0)
         } else {
@@ -164,10 +181,12 @@ class CoverEditorBridge(
         notifyExternalMutation()
     }
 
+    /** Shifts the caret left (`delta < 0`) or right (`delta > 0`) for spacebar cursor scrubbing. */
     fun moveCursor(delta: Int) {
         val ic = currentInputConnection()
         if (ic != null) {
             val surrounding = getSurroundingText(charsBefore = 100, charsAfter = 100)
+            // Compute caret offset within the fetched window and clamp to valid window bounds.
             val currentPos = surrounding.textBefore.length
             val newPos = (currentPos + delta).coerceIn(0, currentPos + surrounding.textAfter.length)
             ic.setSelection(newPos, newPos)
@@ -177,11 +196,13 @@ class CoverEditorBridge(
         notifyExternalMutation()
     }
 
+    /** Replaces the partial word before the cursor with [candidate], optionally appending a space. */
     fun commitCandidate(candidate: String, trailingSpace: Boolean = true) {
         val toCommit = if (trailingSpace) "$candidate " else candidate
         val ic = currentInputConnection()
         if (ic != null) {
             val surrounding = getSurroundingText(50, 0)
+            // Find only the active alphanumeric word prefix so punctuation stays untouched.
             val word = surrounding.textBefore.takeLastWhile { it.isLetterOrDigit() }
             if (word.isNotEmpty()) {
                 ic.deleteSurroundingText(word.length, 0)
@@ -193,6 +214,7 @@ class CoverEditorBridge(
         notifyExternalMutation()
     }
 
+    /** Submits the current field via [editorActionHandler], an Enter key event, or overlay `onDone()`. */
     fun finishInput() {
         if (editorActionHandler != null) {
             editorActionHandler.invoke()
@@ -210,6 +232,7 @@ class CoverEditorBridge(
         notifyExternalMutation()
     }
 
+    /** Clears up to 500 characters before and after the cursor across the active editor. */
     fun clearAll() {
         val ic = currentInputConnection()
         if (ic != null) {

@@ -30,6 +30,7 @@ import java.util.zip.GZIPInputStream
 object CoverKeyboardNlpManager {
 
     private const val TAG = "CoverKeyboardNlp"
+    // SharedPreferences file storing learned words, suppressed words, and contact opt-in consent.
     private const val PREF_FILE = "keyboard_words"
     private const val KEY_LEARNED = "learned"
     private const val KEY_SUPPRESSED = "suppressed"
@@ -37,6 +38,7 @@ object CoverKeyboardNlpManager {
 
     // Dedicated background scope so corpus decompression and ContactProvider queries never block IME startup.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Mutual-exclusion lock ensuring concurrent callers wait rather than initializing assets twice.
     private val initMutex = Mutex()
 
     /** Guards asynchronous asset initialization so it executes once per process. */
@@ -77,13 +79,17 @@ object CoverKeyboardNlpManager {
 
     // Maps each lowercase antecedent word to up to 5 highest-frequency follower words.
     private var bigramFollowers: Map<String, List<String>> = emptyMap()
+    // Words originating from the core English vocabulary (never hidden when contacts consent is revoked).
     private val baseCorpusWords = mutableSetOf<String>()
     // Tracks tokens introduced exclusively via Contacts so revoking consent hides them immediately.
     private val contactOnlyWords = mutableSetOf<String>()
+    // Live gate queried per suggestion to verify both user consent and READ_CONTACTS permission remain active.
     private var contactsAllowedProvider: () -> Boolean = { true }
-    // Also acts as the mutex protecting `learnedWords`, `suppressedWords`, and `contactOnlyWords`.
+    // User-taught custom words; also serves as the synchronization lock for suppressed and contact sets.
     private val learnedWords = mutableSetOf<String>()
+    // Words explicitly hidden by the user so they never appear in suggestions or autocorrect.
     private val suppressedWords = mutableSetOf<String>()
+    // Cached SharedPreferences handle for reading/writing learned and suppressed words without needing a Context.
     private var sharedPreferences: SharedPreferences? = null
 
     /**
@@ -99,6 +105,7 @@ object CoverKeyboardNlpManager {
         if (includeContactNames == true && !hasPermission) {
             throw IllegalStateException("Contact suggestions require READ_CONTACTS permission")
         }
+        // Only query ContactsProvider when caller enabled it, user opted in, and OS permission is granted.
         val shouldIncludeContacts = (includeContactNames ?: true) && savedConsent && hasPermission
         // Re-check both preference and runtime permission dynamically at suggestion query time.
         contactsAllowedProvider = {
@@ -154,7 +161,9 @@ object CoverKeyboardNlpManager {
                 try {
                     loadBigramCorpus(appContext)
 
+                    // On-disk memory-mapped Trie cache built from the combined vocabulary on first run.
                     val cacheFile = java.io.File(appContext.cacheDir, "trie_mmap_v1.bin")
+                    // Combined word -> frequency table merged across assets, installed apps, contacts, and learned words.
                     val frequencies = HashMap<String, Long>(20000)
                     frequencies.putAll(defaultCorpus)
 
@@ -273,10 +282,13 @@ object CoverKeyboardNlpManager {
      * Provides suggestions for QWERTY input using prefix lookup, learned words, and fuzzy autocorrect.
      */
     fun getQwertySuggestions(prefix: String, limit: Int = 3): List<String> {
+        // Normalized lowercase alphabetic prefix typed by the user.
         val query = prefix.trim().lowercase(Locale.ROOT)
         if (query.isEmpty() || !query.all { it in 'a'..'z' } || limit <= 0) return emptyList()
 
+        // Snapshot of user-learned words under the lock so iteration is thread-safe.
         val learned = synchronized(learnedWords) { learnedWords.toSet() }
+        // LinkedHashSet preserves stage-priority order while deduplicating across learned, Trie, and SymSpell hits.
         val results = LinkedHashSet<String>()
 
         // Stage 1: Prioritize personal learned words matching the typed prefix.
@@ -316,6 +328,7 @@ object CoverKeyboardNlpManager {
      */
     fun getNextWordSuggestions(previousWord: String, limit: Int = 3): List<String> {
         val key = previousWord.trim().lowercase(Locale.ROOT)
+        // Ranked followers from english_bigrams.bin filtered against suppressed/revoked-contact rules.
         val fromBigrams = bigramFollowers[key].orEmpty().filter(::isWordAvailable)
         if (fromBigrams.isNotEmpty()) return fromBigrams.take(limit)
 
@@ -341,6 +354,7 @@ object CoverKeyboardNlpManager {
         if ((normalized in learned || trieDictionary.contains(normalized)) && isWordAvailable(normalized)) {
             return input
         }
+        // Best fuzzy edit-distance fix (or prefix completion fallback) that passes availability filtering.
         val topSuggestion = symSpellAutocorrect.suggest(normalized, limit = 5)
             .firstOrNull { isWordAvailable(it.word) }
             ?.word
@@ -370,9 +384,11 @@ object CoverKeyboardNlpManager {
             return getT9Suggestions(collapsedDigits, limit)
         }
 
+        // Only digits 2..9 map to alphabet letters on a T9 keypad; strip any non-letter digits.
         val cleanDigits = digits.filter { it in '2'..'9' }
         if (cleanDigits.isEmpty()) return emptyList()
 
+        // Query memory-mapped Trie first when available, over-fetching (+4) so suppressed words can be filtered out.
         val binaryCompletions = binaryTrie?.predictForDigits(cleanDigits, limit = limit + 4)
         if (binaryCompletions != null && binaryCompletions.isNotEmpty()) {
             val filtered = binaryCompletions.map { it.word }.filter(::isWordAvailable)

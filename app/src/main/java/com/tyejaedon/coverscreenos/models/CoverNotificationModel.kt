@@ -24,12 +24,17 @@ enum class CoverMediaTransportAction {
  * @property artworkBitmap Optional album art decoded from `MediaMetadata` for background/thumbnail UI.
  */
 data class CoverMediaModel(
+    // Track or episode title shown as the primary line on the cover media card.
     val title: String?,
+    // Performing artist or app subtitle shown below the title.
     val artist: String?,
+    // True when PlaybackState reports active playback so UI shows Pause instead of Play.
     val isPlaying: Boolean,
+    // Capability flags read from PlaybackState actions to enable/disable transport buttons.
     val canPlayPause: Boolean,
     val canSkipPrevious: Boolean,
     val canSkipNext: Boolean,
+    // Decoded album/podcast cover bitmap displayed behind or beside the controls.
     val artworkBitmap: Bitmap?
 )
 
@@ -47,14 +52,23 @@ data class CoverMediaModel(
  * @property media Parsed media transport/metadata snapshot when [isMediaNotification] is true.
  */
 data class CoverNotificationModel(
+    // System-assigned unique key identifying this notification for updates or swipe-to-dismiss.
     val notificationKey: String,
+    // Package name of the app that posted the notification (used for icons and grouping).
     val packageName: String,
+    // Short heading line extracted from the notification extras.
     val title: String,
+    // Compact message preview trimmed for narrow cover-screen cards.
     val previewText: String,
+    // False for pinned system alerts that cannot be swiped away.
     val isClearable: Boolean,
+    // True for ongoing background alerts such as active calls, timers, or media players.
     val isOngoing: Boolean,
+    // Creation/post timestamp in epoch milliseconds used to order newest alerts first.
     val postTime: Long,
+    // True when the notification represents a media session rather than a regular alert.
     val isMediaNotification: Boolean,
+    // Rich playback metadata and control flags when isMediaNotification is true; otherwise null.
     val media: CoverMediaModel?
 )
 

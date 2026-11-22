@@ -20,8 +20,11 @@ import android.view.View
  */
 class CoverAppWidgetHostManager(
     private val context: Context,
+    // Numeric host ID isolating Cover Screen OS widgets from the phone's main home launcher.
     private val hostId: Int = COVER_WIDGET_HOST_ID,
+    // Android host object that allocates IDs, creates AppWidgetHostViews, and receives RemoteViews broadcasts.
     private val appWidgetHost: AppWidgetHost = AppWidgetHost(context.applicationContext, hostId),
+    // System service queried for installed widget providers and bind permissions; null in non-system unit tests.
     private val appWidgetManager: AppWidgetManager? = runCatching { AppWidgetManager.getInstance(context.applicationContext) }.getOrNull()
 ) {
 

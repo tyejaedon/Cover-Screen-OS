@@ -15,8 +15,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 
 /**
- * Standard One UI 8 spring physics spec for interactive components, bottom sheets,
- * tab pills, and card expansions.
+ * Holds the shared One UI 8 spring physics curve (`0.82f` damping, `400f` stiffness)
+ * used across interactive cards, bottom sheets, tab pills, and card expansions so motion
+ * feels consistently snappy yet soft.
  */
 val OneUISpringSpec = spring<Float>(
     dampingRatio = 0.82f,
@@ -39,12 +40,12 @@ fun Modifier.oneUIPressable(
 ): Modifier {
     if (!enabled) return this
 
-    // Share the caller's MutableInteractionSource when supplied (typically wired to clickable),
-    // or fall back to a remembered local source so press state persists across recompositions.
+    // Gesture event stream shared with Modifier.clickable (or created locally) to observe finger presses.
     val source = interactionSource ?: remember { MutableInteractionSource() }
+    // Live pressed flag (`true` while a finger is holding down the view, `false` once released or dragged off).
     val isPressed by source.collectIsPressedAsState()
 
-    // Asymmetric timing: brisk 100ms tween down for instant touch response, soft spring back on release.
+    // Animated scale factor shrinking cleanly to `pressedScale` (97%) over 100ms, then springing back to 100%.
     val scale by animateFloatAsState(
         targetValue = if (isPressed) pressedScale else 1f,
         animationSpec = if (isPressed) {

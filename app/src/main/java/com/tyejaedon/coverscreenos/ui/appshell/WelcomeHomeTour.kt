@@ -33,7 +33,7 @@ import com.tyejaedon.coverscreenos.R
  */
 private data class TourStep(@StringRes val title: Int, @StringRes val description: Int)
 
-// Ordered to mirror the four top-level tabs in AppShell.
+// Ordered tour cards matching the four main tabs inside AppShell (Dashboard, Customize, Permissions, About).
 private val steps = listOf(
     TourStep(R.string.home_dashboard, R.string.home_tour_dashboard),
     TourStep(R.string.home_customize, R.string.home_tour_customize),
@@ -51,9 +51,11 @@ private val steps = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun WelcomeHomeTour(onDismiss: () -> Unit) {
-    // Preserve the active tour page across rotation or fold-posture configuration changes.
+    // Index (0..3) of the tour page currently shown; survives rotation or fold-state changes.
     var selectedStep by rememberSaveable { mutableIntStateOf(0) }
+    // True on short displays (<= 480dp tall) so text and spacing shrink to stay comfortable.
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
+    // Shared left/right inset used across the title, tab strip, description, and action row.
     val horizontalPad = if (isCompactHeight) 16.dp else 24.dp
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(

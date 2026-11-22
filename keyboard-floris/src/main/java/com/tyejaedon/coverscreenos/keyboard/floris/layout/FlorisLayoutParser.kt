@@ -13,14 +13,17 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object FlorisLayoutParser {
 
+    /** Asset root directory containing bundled FlorisBoard JSON layout files. */
     private const val ASSET_BASE_PATH = "ime/keyboard/org.florisboard.layouts"
 
+    /** Lenient Kotlinx JSON decoder tolerating optional/extra fields in upstream layout JSONs. */
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
         encodeDefaults = true
     }
 
+    /** Thread-safe cache keyed by `"<type>/<name>"` so each layout JSON is parsed only once. */
     private val layoutCache = ConcurrentHashMap<String, FlorisLayoutArrangement>()
 
     /**
@@ -31,10 +34,10 @@ object FlorisLayoutParser {
         name: String = defaultLayoutName(type),
         context: Context? = null
     ): FlorisLayoutArrangement {
-        val cacheKey = "${type.dirName}/$name"
+        val cacheKey = "${type.dirName}/$name" // Cache lookup key matching asset subfolder/name
         layoutCache[cacheKey]?.let { return it }
 
-        val rawJson = readAssetOrFallback(type, name, context)
+        val rawJson = readAssetOrFallback(type, name, context) // JSON text from assets, classpath, or embedded fallback
         val parsed = json.decodeFromString<FlorisLayoutArrangement>(rawJson)
         layoutCache[cacheKey] = parsed
         return parsed
@@ -46,18 +49,23 @@ object FlorisLayoutParser {
     fun parseRawJson(rawJson: String): FlorisLayoutArrangement =
         json.decodeFromString<FlorisLayoutArrangement>(rawJson)
 
+    /** Resolves the default variant filename when callers omit an explicit layout name. */
     private fun defaultLayoutName(type: FlorisLayoutType): String = when (type) {
         FlorisLayoutType.CHARACTERS -> "qwerty"
         FlorisLayoutType.SYMBOLS, FlorisLayoutType.SYMBOLS2 -> "western"
         else -> "default"
     }
 
+    /**
+     * Reads layout JSON in priority order: Android `AssetManager` -> JVM classpath resource
+     * (for Robolectric/unit tests) -> compile-time embedded JSON constants.
+     */
     private fun readAssetOrFallback(
         type: FlorisLayoutType,
         name: String,
         context: Context?
     ): String {
-        val assetPath = "$ASSET_BASE_PATH/${type.dirName}/$name.json"
+        val assetPath = "$ASSET_BASE_PATH/${type.dirName}/$name.json" // Relative path inside assets/
         if (context != null) {
             runCatching {
                 return context.assets.open(assetPath).bufferedReader().use { it.readText() }
@@ -67,7 +75,7 @@ object FlorisLayoutParser {
             val stream = FlorisLayoutParser::class.java.classLoader
                 ?.getResourceAsStream("assets/$assetPath")
                 ?: FlorisLayoutParser::class.java.classLoader
-                    ?.getResourceAsStream(assetPath)
+                    ?.getResourceAsStream(assetPath) // Classpath fallback when running without Android Context
             if (stream != null) {
                 return stream.bufferedReader().use { it.readText() }
             }

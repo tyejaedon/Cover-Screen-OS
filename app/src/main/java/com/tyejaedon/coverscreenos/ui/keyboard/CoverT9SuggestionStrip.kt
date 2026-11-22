@@ -40,6 +40,7 @@ internal fun CoverT9SuggestionStrip(
     if (!enabled) return
 
     val context = LocalContext.current
+    // Cache-buster counter that rises whenever contact-suggestion prefs or permissions change.
     val contactRevision = rememberContactSuggestionRevision(enabled)
     // Ensure the NLP dictionary is loaded and resync contact names on preference/permission changes.
     LaunchedEffect(context, contactRevision) {
@@ -47,10 +48,13 @@ internal fun CoverT9SuggestionStrip(
         runCatching { CoverKeyboardNlpManager.refreshContactWords(context) }
     }
 
+    // Light haptic callback fired whenever the user taps a suggestion chip.
     val haptic = rememberHapticPerformer(HapticTier.Light)
     // Bumped after dictionary edits or stale-candidate hits to force suggestion recomputation.
     var revision by remember { mutableIntStateOf(0) }
+    // Active partial letter run right before the cursor (used for QWERTY prefix suggestions).
     val word = textBeforeCursor.takeLastWhile { it.isLetter() }
+    // Ranked candidate words computed from T9 digits, active word prefix, or preceding word.
     val suggestions = remember(textBeforeCursor, predictiveDigits, revision, contactRevision) {
         when {
             !predictiveDigits.isNullOrEmpty() -> CoverKeyboardNlpManager.getT9Suggestions(predictiveDigits)

@@ -15,6 +15,10 @@ package com.tyejaedon.coverscreenos.ui.keyboard.primitives
  *
  * All mutator methods return a new [TextBuffer]; instances are safe to hold
  * as Compose state.
+ *
+ * @property text Full backing text string currently in the buffer.
+ * @property selection Half-open caret/selection range (`first == last` is a caret; `first < last` is a selection).
+ * @property composing Optional soft-editable composing span (`null` when no composition is active).
  */
 data class TextBuffer(
     val text: String = "",

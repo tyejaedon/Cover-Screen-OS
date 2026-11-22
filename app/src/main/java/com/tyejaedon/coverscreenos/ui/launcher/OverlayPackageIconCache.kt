@@ -16,8 +16,11 @@ import com.tyejaedon.coverscreenos.ui.OverlayIconThumbnailDiskCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+// Cap RAM icon storage at 6 MiB so app icons never crowd out wallpapers or overlay textures.
 private const val ICON_CACHE_MAX_BYTES = 6L * 1024L * 1024L
+// Divisor converting raw bytes into 1 KiB units because Android's LruCache capacity is an Int.
 private const val ICON_CACHE_SIZE_UNIT_BYTES = 1024
+// Square target size (128x128 px) for rasterized icons: sharp on cover screens without excess RAM.
 private const val ICON_BITMAP_EDGE_PX = 128
 
 // Global LRU Bitmap Cache for hardware-accelerated Compose Image rendering
@@ -29,6 +32,7 @@ private const val ICON_BITMAP_EDGE_PX = 128
  * concurrently while Compose UI threads perform synchronous cache lookups during composition.
  */
 internal object OverlayBitmapIconCache {
+    /** Backing LRU store that keeps recently drawn icons in RAM and evicts the oldest entries when full. */
     private val cache = object : LruCache<String, ImageBitmap>(
         (ICON_CACHE_MAX_BYTES / ICON_CACHE_SIZE_UNIT_BYTES).toInt()
     ) {
@@ -93,6 +97,7 @@ internal suspend fun resolvePackageIconBitmap(
     OverlayBitmapIconCache.get(packageName)?.let { return it }
 
     val resolved = withContext(Dispatchers.IO) {
+        // Cache-busting key incorporating app versionCode + update timestamp so app updates reload fresh icons.
         val versionToken = resolvePackageIconVersionToken(packageManager, packageName)
         OverlayIconThumbnailDiskCache.getBitmap(
             context = context,
@@ -128,6 +133,7 @@ internal fun rememberPackageIconBitmap(packageName: String): ImageBitmap? {
     val context = LocalContext.current
     val packageManager = remember(context) { context.packageManager }
 
+    // Held Compose state: seeded immediately from RAM LRU cache, then filled off-thread if missing.
     val iconState = produceState<ImageBitmap?>(
         initialValue = OverlayBitmapIconCache.get(packageName),
         key1 = packageName
@@ -150,6 +156,7 @@ internal fun rememberPackageLabel(packageName: String): String {
     val context = LocalContext.current
     val packageManager = remember(context) { context.packageManager }
 
+    // Starts with the trailing package segment as an instant placeholder until PackageManager responds.
     val labelState = produceState(
         initialValue = packageName.substringAfterLast('.'),
         key1 = packageName

@@ -20,11 +20,17 @@ import androidx.compose.ui.unit.dp
  * punch-holes or display cutouts exposed via [WindowInsets.displayCutout].
  */
 internal data class CoverDisplayPolishSpec(
+    /** Minimum touch/visual height for status chips (lock pill, search affordance), scaled to cover height. */
     val statusChipMinHeight: Dp,
+    /** Extra bottom padding beneath the dock row so it avoids clipping on short cover bezels. */
     val dockBottomPadding: Dp,
+    /** Top inset needed to keep overlay chrome clear of a top display cutout or camera hole. */
     val cutoutTopPadding: Dp = 0.dp,
+    /** Bottom inset needed to keep overlay chrome clear of a bottom display cutout. */
     val cutoutBottomPadding: Dp = 0.dp,
+    /** Layout-direction-aware start inset clearing side camera cutouts or hinge edges. */
     val cutoutStartPadding: Dp = 0.dp,
+    /** Layout-direction-aware end inset clearing side camera cutouts or hinge edges. */
     val cutoutEndPadding: Dp = 0.dp
 )
 
@@ -40,11 +46,13 @@ internal data class CoverDisplayPolishSpec(
 internal fun rememberCoverDisplayPolishSpec(): CoverDisplayPolishSpec {
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
+    // Current cover window height in pixels and dp, used to pick the height-bucket spacing preset.
     val containerHeightPx = LocalWindowInfo.current.containerSize.height
     val containerHeightDp = with(density) { containerHeightPx.toDp() }
 
     // Resolve directional cutout insets so overlay content clears hinge/camera obstructions.
     val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
+    // Edge padding values extracted for the active layout direction so consumers stay inset-agnostic.
     val cutoutTop = cutoutInsets.calculateTopPadding()
     val cutoutBottom = cutoutInsets.calculateBottomPadding()
     val cutoutStart = cutoutInsets.calculateStartPadding(layoutDirection)

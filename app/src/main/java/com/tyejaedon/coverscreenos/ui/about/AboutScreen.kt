@@ -52,11 +52,13 @@ fun AboutScreen(
     onDashboard: () -> Unit = {},
     onCustomize: () -> Unit = {}
 ) {
+    // Android Context needed to open app-bundled files inside the assets folder.
     val context = LocalContext.current
-    // Observe the foreground service's live runtime StateFlow so status lines update automatically.
+    // Live service status snapshot (running state, host connection, cover surface visibility, latest event).
     val runtime by ForegroundService.runtime.collectAsState()
+    // Controls whether the full open-source dictionary license is expanded; survives screen folds/rotations.
     var showLicense by rememberSaveable { mutableStateOf(false) }
-    // Cache the asset read per Context so expanding/collapsing or recomposing does not reopen the stream.
+    // Cached license text read once from assets so redrawing the UI does not reopen the file.
     val license = remember(context) {
         context.assets.open("DICTIONARY_LICENSE.txt").bufferedReader().use { it.readText() }
     }

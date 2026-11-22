@@ -56,7 +56,9 @@ fun SuggestionStrip(
     contentPadding: PaddingValues = PaddingValues(horizontal = 8.dp),
     stripHeight: androidx.compose.ui.unit.Dp = DefaultStripHeightDp.dp
 ) {
+    // Horizontal scroll state for the suggestion LazyRow.
     val listState = rememberLazyListState()
+    // Light haptic callback triggered when tapping a candidate chip.
     val performHaptic = rememberHapticPerformer(hapticTier)
 
     Box(

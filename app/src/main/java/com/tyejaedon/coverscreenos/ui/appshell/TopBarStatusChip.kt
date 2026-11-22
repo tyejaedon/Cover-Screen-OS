@@ -34,6 +34,7 @@ import com.tyejaedon.coverscreenos.ui.dashboard.DashboardStatusDetails
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TopBarStatusChip(state: DashboardState) {
+    // Controls whether the tap-to-open bottom sheet with full runtime details is visible.
     var showDetails by remember { mutableStateOf(false) }
     AssistChip(
         onClick = { showDetails = true },

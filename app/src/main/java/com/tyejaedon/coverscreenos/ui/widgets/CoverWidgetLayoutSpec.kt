@@ -96,9 +96,11 @@ internal fun computeWidgetPlacementSpec(
     maxSlotHeightDp: Int = WIDGET_DEFAULT_MAX_HEIGHT_DP,
     columnGapDp: Int = WIDGET_GRID_GAP_DP
 ): WidgetPlacementSpec {
+    // Clamped grid container width and width of one half-row column after subtracting the center gutter.
     val safeContainerWidth = containerWidthDp.coerceAtLeast(180)
     val singleColumnWidth = ((safeContainerWidth - columnGapDp) / 2).coerceAtLeast(80)
 
+    // Resolved span (1 or 2 columns), outer card width, target aspect ratio, and clamped slot height.
     val colSpan = resolveColumnSpan(meta, safeContainerWidth)
     val slotWidthDp = if (colSpan == 1) singleColumnWidth else safeContainerWidth
     val ratio = resolveAspectRatio(meta, colSpan)
@@ -106,6 +108,7 @@ internal fun computeWidgetPlacementSpec(
         .roundToInt()
         .coerceIn(WIDGET_MIN_HEIGHT_DP, maxSlotHeightDp.coerceAtLeast(WIDGET_MIN_HEIGHT_DP))
 
+    // Final inner viewport bounds honoring widget resizability and max-resize caps.
     val (widgetWidthDp, widgetHeightDp) = fitWidgetViewport(
         meta = meta,
         ratio = ratio,
@@ -165,9 +168,11 @@ private fun fitWidgetViewport(
     slotWidthDp: Int,
     slotHeightDp: Int
 ): Pair<Int, Int> {
+    // Axis resizability flags decoded from AppWidgetProviderInfo.resizeMode.
     val isResizableH = (meta.resizeMode and AppWidgetProviderInfo.RESIZE_HORIZONTAL) != 0
     val isResizableV = (meta.resizeMode and AppWidgetProviderInfo.RESIZE_VERTICAL) != 0
 
+    // Maximum permitted viewport bounds after honoring fixed-size axes and maxResize caps.
     var maxW = slotWidthDp
     var maxH = slotHeightDp
 
@@ -195,6 +200,7 @@ private fun fitWidgetViewport(
         fittedH = (maxW / ratio).roundToInt().coerceIn(1, maxH)
     }
 
+    // True when a fully resizable widget fills >=85% of both slot dimensions, allowing clean edge snapping.
     val canSnapToSlot = isResizableH &&
         isResizableV &&
         maxW == slotWidthDp &&
@@ -227,12 +233,15 @@ internal fun packTwoColumnGrid(
         return PackedTwoColumnGrid(emptyList(), 0)
     }
 
+    // Running next-available Y cursor (in pixels) for column 0 (left) and column 1 (right).
     val colHeights = intArrayOf(0, 0)
+    // Output pixel bounds for each widget in the same order as specs.
     val placements = ArrayList<GridItemPlacement>(specs.size)
 
     for (spec in specs) {
         val heightPx = dpToPx(spec.slotHeightDp).coerceAtLeast(1)
         if (spec.colSpan >= 2) {
+            // Full-width rows start below whichever column currently extends further down.
             val y = maxOf(colHeights[0], colHeights[1])
             placements.add(
                 GridItemPlacement(
@@ -246,6 +255,7 @@ internal fun packTwoColumnGrid(
             colHeights[0] = nextY
             colHeights[1] = nextY
         } else {
+            // Drop single-column cards into the shorter column to keep the waterfall balanced.
             val targetCol = if (colHeights[0] <= colHeights[1]) 0 else 1
             val x = targetCol * (singleColWidthPx + columnGapPx)
             val y = colHeights[targetCol]
@@ -261,6 +271,7 @@ internal fun packTwoColumnGrid(
         }
     }
 
+    // Subtract the trailing row gap added after the last item so totalHeightPx wraps tightly.
     val totalHeightPx = (maxOf(colHeights[0], colHeights[1]) - rowGapPx).coerceAtLeast(0)
     return PackedTwoColumnGrid(
         placements = placements,
