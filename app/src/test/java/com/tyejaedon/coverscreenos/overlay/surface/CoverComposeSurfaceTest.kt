@@ -2,6 +2,7 @@ package com.tyejaedon.coverscreenos.overlay.surface
 
 import android.content.Context
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -56,6 +57,40 @@ class CoverComposeSurfaceTest {
         surface.setTouchable(false)
         surface.setTouchable(true)
         assertFalse(surface.isAttached())
+    }
+
+    @Test
+    fun `applyTouchable hides root view with GONE when suppressed and restores VISIBLE`() {
+        val surface = CoverComposeSurface(
+            hostContext = appContext,
+            windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            logTag = TAG
+        )
+        val composeView = androidx.compose.ui.platform.ComposeView(appContext)
+        val windowManager = io.mockk.mockk<WindowManager>(relaxed = true)
+        val params = WindowManager.LayoutParams()
+
+        val composeField = CoverComposeSurface::class.java.getDeclaredField("composeView").apply { isAccessible = true }
+        val wmField = CoverComposeSurface::class.java.getDeclaredField("windowManager").apply { isAccessible = true }
+        val paramsField = CoverComposeSurface::class.java.getDeclaredField("layoutParams").apply { isAccessible = true }
+        val applyMethod = CoverComposeSurface::class.java.getDeclaredMethod(
+            "applyTouchable",
+            Boolean::class.javaPrimitiveType
+        ).apply { isAccessible = true }
+
+        composeField.set(surface, composeView)
+        wmField.set(surface, windowManager)
+        paramsField.set(surface, params)
+
+        applyMethod.invoke(surface, false)
+        assertEquals(View.GONE, composeView.visibility)
+        assertEquals(0f, composeView.alpha)
+        assertTrue(params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
+
+        applyMethod.invoke(surface, true)
+        assertEquals(View.VISIBLE, composeView.visibility)
+        assertEquals(1f, composeView.alpha)
+        assertEquals(0, params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
     }
 
     @Test
