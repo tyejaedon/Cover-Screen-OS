@@ -337,6 +337,37 @@ class CoverAccessibilityServiceLauncherHostingTest {
         assertNull(service.launcherActiveDisplayId())
     }
 
+    @Test
+    fun `retained monitored cover display id keeps foreground tracking alive after screen-off detach`() {
+        val (_, service) = connectService()
+        val host = fakeHost()
+        CoverAccessibilityService.attachLauncherHost(host)
+
+        // Attach surface on secondary display 5, then detach (simulating ACTION_SCREEN_OFF).
+        val surface = mockk<CoverComposeSurface>(relaxed = true)
+        every { surface.activeDisplayId() } returns 5
+        CoverAccessibilityService::class.java.getDeclaredField("launcherSurface").apply {
+            isAccessible = true
+        }.set(service, surface)
+        CoverAccessibilityService.updateMonitoredCoverDisplayIdOnActiveService(5)
+
+        service.hideLauncher(reason = "screen_off")
+        assertNull(service.launcherActiveDisplayId())
+        assertEquals(5, service.effectiveCoverDisplayId())
+
+        // Events on DEFAULT_DISPLAY remain ignored, while cover display 5 events still track.
+        val event = mockk<AccessibilityEvent>(relaxed = true)
+        every { event.eventType } returns AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        every { event.packageName } returns "com.example.wokeapp"
+        every { event.displayId } returns Display.DEFAULT_DISPLAY
+        service.onAccessibilityEvent(event)
+        assertNull(CoverAccessibilityService.currentForegroundPackage())
+
+        every { event.displayId } returns 5
+        service.onAccessibilityEvent(event)
+        assertEquals("com.example.wokeapp", CoverAccessibilityService.currentForegroundPackage())
+    }
+
     // -------------------------------------------------------------------
 
     /**

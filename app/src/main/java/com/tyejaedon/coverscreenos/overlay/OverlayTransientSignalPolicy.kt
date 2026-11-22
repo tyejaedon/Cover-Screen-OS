@@ -17,6 +17,21 @@ object CoverHomeSurfaceMatcher {
         "com.android.launcher",
         "com.google.android.apps.nexuslauncher"
     )
+    // Transient SystemUI overlay window classes/titles (shade, status bar, volume) that must not be treated as cover home.
+    private val TRANSIENT_SYSTEM_UI_CLASS_TOKENS = arrayOf(
+        "NotificationShade",
+        "StatusBar",
+        "VolumeDialog",
+        "VolumePanel",
+        "HeadsUp",
+        "Toast",
+        "GlobalActions",
+        "Screenshot",
+        "BiometricPrompt",
+        "Keyguard",
+        "NavigationBar",
+        "SystemBars"
+    )
 
     /**
      * Returns `true` when [packageName] and optional [className] identify a native
@@ -38,6 +53,14 @@ object CoverHomeSurfaceMatcher {
         return trimmed == "com.android.systemui.subscreen.SubHomeActivity" ||
             trimmed.endsWith(".SubHomeActivity")
     }
+
+    /** Returns `true` if [className] identifies a transient SystemUI overlay (shade, volume, status bar, etc.). */
+    fun isKnownTransientSystemUiOverlayClass(className: String?): Boolean {
+        if (className.isNullOrBlank()) return false
+        return TRANSIENT_SYSTEM_UI_CLASS_TOKENS.any { token ->
+            className.contains(token, ignoreCase = true)
+        }
+    }
 }
 
 /**
@@ -47,7 +70,8 @@ object CoverHomeSurfaceMatcher {
  * Distinguishes brief system chrome (notification shade, volume/AOD flashes) from genuine
  * exits back to the cover home surface using two recovery mechanisms:
  * - **Sustained transient dwell**: holding on a resume-safe SystemUI/AOD package for at least
- *   [transientSystemUiResumeGraceMs].
+ *   [transientSystemUiResumeGraceMs], or holding on a generic non-overlay `com.android.systemui`
+ *   surface for [transientSystemUiFallbackDwellMs].
  * - **Transient exit pattern**: observing both `com.android.systemui` and
  *   `com.samsung.android.app.aodservice` within [transientExitPatternWindowMs] after
  *   [transientExitFailsafeMinSuppressionMs].
@@ -66,7 +90,9 @@ internal class OverlayTransientSignalPolicy(
     // Minimum suppression duration before SystemUI+AOD exit-pattern detection is allowed.
     private val transientExitFailsafeMinSuppressionMs: Long,
     // Maximum age linking SystemUI and AOD timestamps as one combined cover-app exit signal.
-    private val transientExitPatternWindowMs: Long
+    private val transientExitPatternWindowMs: Long,
+    // Sustained dwell duration required to resume on a generic `com.android.systemui` container (non-shade/volume).
+    private val transientSystemUiFallbackDwellMs: Long = 1_200L
 ) {
     // Package currently holding transient foreground focus during dwell timing.
     private var transientForegroundPackage: String? = null
@@ -144,6 +170,35 @@ internal class OverlayTransientSignalPolicy(
 
         val seenForMs = (nowElapsedMs - transientForegroundSinceElapsedMs).coerceAtLeast(0L)
         return seenForMs >= transientSystemUiResumeGraceMs
+    }
+
+    /**
+     * Fallback for `com.android.systemui` cover surfaces that emit a generic container class name
+     * (not `.SubHomeActivity` and not a known shade/volume/status-bar overlay) without a paired AOD event.
+     * Returns `true` once `com.android.systemui` has held focus continuously for [transientSystemUiFallbackDwellMs].
+     */
+    fun shouldResumeFromSustainedSystemUiFallback(
+        packageName: String,
+        className: String?,
+        suppressedForMs: Long,
+        nowElapsedMs: Long = SystemClock.elapsedRealtime()
+    ): Boolean {
+        if (suppressedForMs < transientExitFailsafeMinSuppressionMs) return false
+        if (!packageName.startsWith("com.android.systemui")) return false
+        if (CoverHomeSurfaceMatcher.isKnownTransientSystemUiOverlayClass(className)) {
+            if (transientForegroundPackage == packageName) {
+                transientForegroundPackage = null
+                transientForegroundSinceElapsedMs = 0L
+            }
+            return false
+        }
+        if (transientForegroundPackage != packageName) {
+            transientForegroundPackage = packageName
+            transientForegroundSinceElapsedMs = nowElapsedMs
+            return false
+        }
+        val seenForMs = (nowElapsedMs - transientForegroundSinceElapsedMs).coerceAtLeast(0L)
+        return seenForMs >= transientSystemUiFallbackDwellMs
     }
 
     /** Resets transient foreground dwell and exit-pattern timestamps. */

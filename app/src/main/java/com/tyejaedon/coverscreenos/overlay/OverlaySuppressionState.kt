@@ -20,6 +20,8 @@ internal class OverlaySuppressionState {
     var suppressionSessionId: Long = 0L
     /** Last session ID that completed restoration, preventing duplicate retargets. */
     var completedSuppressionSessionId: Long? = null
+    /** Preserves an active app-launch package if an [OverlaySuppressionReason.INCOMING_CALL] interrupts it. */
+    var priorAppLaunchPackageName: String? = null
 
     /** Consecutive identical foreground observations seen during resume polling. */
     var resumeSignalStableCount: Int = 0
@@ -46,9 +48,21 @@ internal class OverlaySuppressionState {
 
     /**
      * Begins a new suppression session for [packageName] and [reason] at [nowElapsedMs],
-     * incrementing [suppressionSessionId] and resetting resume-stability counters.
+     * incrementing [suppressionSessionId], preserving any interrupted app-launch package if an
+     * incoming call supersedes it, and resetting resume-stability counters.
      */
     fun markSuppressionStarted(packageName: String, reason: OverlaySuppressionReason, nowElapsedMs: Long) {
+        priorAppLaunchPackageName = if (
+            isOverlaySuppressedForAppLaunch &&
+            suppressionReason == OverlaySuppressionReason.APP_LAUNCH &&
+            reason == OverlaySuppressionReason.INCOMING_CALL
+        ) {
+            launchSuppressedPackageName
+        } else if (reason == OverlaySuppressionReason.INCOMING_CALL) {
+            priorAppLaunchPackageName
+        } else {
+            null
+        }
         suppressionSessionId += 1L
         completedSuppressionSessionId = null
         isOverlaySuppressedForAppLaunch = true
@@ -58,12 +72,29 @@ internal class OverlaySuppressionState {
         resetResumeSignalStability()
     }
 
+    /**
+     * Restores an interrupted [OverlaySuppressionReason.APP_LAUNCH] session after a mid-app
+     * [OverlaySuppressionReason.INCOMING_CALL] ends while the user app remains active.
+     */
+    fun restorePriorAppLaunchSuppressionIfPresent(activePackage: String? = null): Boolean {
+        val targetPackage = activePackage?.trim()?.takeUnless { it.isEmpty() }
+            ?: priorAppLaunchPackageName
+            ?: return false
+        priorAppLaunchPackageName = null
+        isOverlaySuppressedForAppLaunch = true
+        suppressionReason = OverlaySuppressionReason.APP_LAUNCH
+        launchSuppressedPackageName = targetPackage
+        resetResumeSignalStability()
+        return true
+    }
+
     /** Clears active suppression state and returns [suppressionReason] to [OverlaySuppressionReason.NONE]. */
     fun clearSuppressionState() {
         isOverlaySuppressedForAppLaunch = false
         suppressionReason = OverlaySuppressionReason.NONE
         launchSuppressedPackageName = null
         launchSuppressedStartedElapsedMs = 0L
+        priorAppLaunchPackageName = null
         resetResumeSignalStability()
     }
 

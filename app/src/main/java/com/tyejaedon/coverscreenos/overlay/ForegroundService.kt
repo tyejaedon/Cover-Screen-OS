@@ -648,13 +648,25 @@ class ForegroundService : Service() {
 
     /**
      * Handles an incoming reclaim request after verifying runtime prerequisites,
-     * incoming-call blocks, and [OVERLAY_RECLAIM_MIN_INTERVAL_MS] throttling.
+     * unfolded posture, incoming-call blocks, and [OVERLAY_RECLAIM_MIN_INTERVAL_MS] throttling.
      *
      * Routes to [maybeResumeOverlayAfterAppLaunch] when suppressed, or schedules an
      * immediate display retarget otherwise.
      */
     private fun requestOverlayReclaimInternal(reason: String) {
         if (!overlayRequested || !hasRuntimePrerequisites()) return
+
+        if (isDeviceUnfolded()) {
+            if (isOverlaySuppressedForAppLaunch && suppressionReason == OverlaySuppressionReason.APP_LAUNCH) {
+                runOnMainThread {
+                    suppressOverlayForReason(
+                        packageName = "com.android.internal.posture",
+                        reason = OverlaySuppressionReason.POSTURE_UNFOLDED
+                    )
+                }
+            }
+            return
+        }
 
         val nowElapsedMs = SystemClock.elapsedRealtime()
         val normalizedReason = reason.trim().ifEmpty { "external" }
@@ -773,10 +785,18 @@ class ForegroundService : Service() {
         publishRuntime("Overlay removed: screen off")
     }
 
-    /** Handles `Intent.ACTION_SCREEN_ON` by scheduling overlay re-attachment if eligible. */
+    /**
+     * Handles `Intent.ACTION_SCREEN_ON` by refreshing lock status and either re-evaluating active
+     * suppression immediately (so waking to lockscreen/cover home reclaims right away) or scheduling retarget.
+     */
     private fun onScreenTurnedOn() {
         isScreenInteractive = true
-        if (!overlayRequested || isOverlaySuppressedForAppLaunch) return
+        coverDisplayHelper.refreshLockStatus()
+        if (!overlayRequested) return
+        if (isOverlaySuppressedForAppLaunch) {
+            maybeResumeOverlayAfterAppLaunch(reason = "screen_on")
+            return
+        }
         scheduleRetarget(reason = "screen_on")
     }
 
@@ -831,11 +851,17 @@ class ForegroundService : Service() {
         scheduleRetarget(reason = "display_$changeType:$displayId")
     }
 
+    private fun isDeviceUnfolded(): Boolean {
+        val posture = runCatching { coverDisplayHelper.foldPosture.value }.getOrNull()
+        return posture == com.tyejaedon.coverscreenos.helpers.CoverFoldPosture.HALF_FOLDED ||
+            posture == com.tyejaedon.coverscreenos.helpers.CoverFoldPosture.FLAT
+    }
+
     /**
      * Evaluates whether the launcher overlay should attach, move, hide, or detach.
      *
-     * Guards against active suppression, missing permissions, non-interactive screens
-     * (`!isScreenInteractive`), and open unlock prompts. When [CoverDisplayHelper.getCoverDisplay]
+     * Guards against unfolded posture, active suppression, missing permissions, non-interactive
+     * screens (`!isScreenInteractive`), and open unlock prompts. When [CoverDisplayHelper.getCoverDisplay]
      * returns `null`, consults [OverlayAttachmentPolicy] to decide between holding the
      * existing secondary-display window hidden vs removing stale overlay state.
      */
@@ -843,6 +869,12 @@ class ForegroundService : Service() {
         if (isOverlaySuppressedForAppLaunch) return
         if (!hasRuntimePrerequisites()) {
             stopServiceForMissingPrerequisites(reason = "$reason prerequisites_lost")
+            return
+        }
+        if (isDeviceUnfolded()) {
+            overlayWindowController.suppressOverlayForLaunch()
+            isOverlayActive = false
+            logDebug { "overlay reason=$reason skipped: device unfolded" }
             return
         }
         if (!isScreenInteractive) {
@@ -908,6 +940,9 @@ class ForegroundService : Service() {
      */
     private fun attachOverlayToTarget(targetDisplay: Display, reason: String) {
         val targetId = targetDisplay.displayId
+        if (targetId != Display.DEFAULT_DISPLAY) {
+            CoverAccessibilityService.updateMonitoredCoverDisplayIdOnActiveService(targetId)
+        }
         val activeId = overlayWindowController.getActiveDisplayId()
         val shouldForceRetarget = overlayWindowController.isOverlayAttached() && activeId != targetId
 
@@ -1017,6 +1052,11 @@ class ForegroundService : Service() {
      * stops widget updates, and starts [startSuppressionResumePolling].
      */
     private fun suppressOverlayForReason(packageName: String, reason: OverlaySuppressionReason) {
+        val knownCoverDisplayId = overlayWindowController.getActiveDisplayId()
+            ?: coverDisplayHelper.getCoverDisplayId()
+        if (knownCoverDisplayId != null && knownCoverDisplayId != Display.DEFAULT_DISPLAY) {
+            CoverAccessibilityService.updateMonitoredCoverDisplayIdOnActiveService(knownCoverDisplayId)
+        }
         suppressionState.markSuppressionStarted(
             packageName = packageName,
             reason = reason,
@@ -1054,7 +1094,9 @@ class ForegroundService : Service() {
                 when (posture) {
                     com.tyejaedon.coverscreenos.helpers.CoverFoldPosture.HALF_FOLDED,
                     com.tyejaedon.coverscreenos.helpers.CoverFoldPosture.FLAT -> {
-                        if (isOverlayActive && !isOverlaySuppressedForAppLaunch) {
+                        if (isOverlayActive ||
+                            (isOverlaySuppressedForAppLaunch && suppressionReason == OverlaySuppressionReason.APP_LAUNCH)
+                        ) {
                             Log.d(LOG_TAG, "Device unfolded ($posture); suppressing cover overlay")
                             suppressOverlayForReason(
                                 packageName = "com.android.internal.posture",
@@ -1149,6 +1191,39 @@ class ForegroundService : Service() {
             return
         }
 
+        // If a mid-app incoming call finished while the pre-call user app is still open on the cover display,
+        // downgrade back to APP_LAUNCH instead of reclaiming the launcher over the user's open app.
+        val interruptedAppPackage = suppressionState.priorAppLaunchPackageName
+        if (suppressionReason == OverlaySuppressionReason.INCOMING_CALL && interruptedAppPackage != null) {
+            val coverDisplayId = resolveCoverDisplayId()
+            val windowSnapshot = coverDisplayId?.let { displayId ->
+                CoverAccessibilityService.inspectDisplayWindowState(
+                    displayId = displayId,
+                    launchedPackage = interruptedAppPackage
+                )
+            }
+            val liveForeground = latestForegroundSignal()
+            val liveUserApp = when {
+                windowSnapshot?.hasLaunchedAppWindow == true -> interruptedAppPackage
+                windowSnapshot?.hasAnyUserAppWindowAboveHome == true -> windowSnapshot.activeUserAppPackage
+                liveForeground != null &&
+                    liveForeground.third <= APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS &&
+                    CoverAccessibilityService.isUserForegroundApplicationPackage(
+                        packageName = liveForeground.first,
+                        className = liveForeground.second
+                    ) -> liveForeground.first
+                else -> null
+            }
+            if (liveUserApp != null && suppressionState.restorePriorAppLaunchSuppressionIfPresent(liveUserApp)) {
+                logResumeDecision(
+                    reason = reason,
+                    decision = "downgrade_call_to_app_launch",
+                    detail = "restoredPackage=$liveUserApp"
+                )
+                return
+            }
+        }
+
         val (foregroundPackage, foregroundClassName) = resolveForegroundPackageForResume()
             ?: run {
                 logResumeDecision(reason = reason, decision = "wait_no_eligible_foreground")
@@ -1165,29 +1240,42 @@ class ForegroundService : Service() {
                     detail = "foreground=$foregroundPackage minSuppressionMs=$TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS"
                 )
                 hasTransientResumeSignal = true
+            } else if (!isTransientForegroundSafeForResume(foregroundPackage, foregroundClassName)) {
+                if (transientSignalPolicy.shouldResumeFromSustainedSystemUiFallback(
+                        packageName = foregroundPackage,
+                        className = foregroundClassName,
+                        suppressedForMs = suppressedForMs
+                    )
+                ) {
+                    logResumeDecision(
+                        reason = reason,
+                        decision = "resume_after_systemui_fallback_dwell",
+                        detail = "foreground=$foregroundPackage class=$foregroundClassName"
+                    )
+                    hasTransientResumeSignal = true
+                } else {
+                    logResumeDecision(
+                        reason = reason,
+                        decision = "block_transient_resume_package",
+                        detail = "foreground=$foregroundPackage class=$foregroundClassName"
+                    )
+                    return
+                }
             } else {
-            if (!isTransientForegroundSafeForResume(foregroundPackage, foregroundClassName)) {
+                if (!shouldResumeFromTransientForeground(foregroundPackage)) {
+                    logResumeDecision(
+                        reason = reason,
+                        decision = "skip_transient_poll",
+                        detail = "foreground=$foregroundPackage"
+                    )
+                    return
+                }
                 logResumeDecision(
                     reason = reason,
-                    decision = "block_transient_resume_package",
-                    detail = "foreground=$foregroundPackage class=$foregroundClassName"
+                    decision = "resume_after_transient_grace",
+                    detail = "foreground=$foregroundPackage graceMs=$TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS"
                 )
-                return
-            }
-            if (!shouldResumeFromTransientForeground(foregroundPackage)) {
-                logResumeDecision(
-                    reason = reason,
-                    decision = "skip_transient_poll",
-                    detail = "foreground=$foregroundPackage"
-                )
-                return
-            }
-            logResumeDecision(
-                reason = reason,
-                decision = "resume_after_transient_grace",
-                detail = "foreground=$foregroundPackage graceMs=$TRANSIENT_SYSTEM_UI_RESUME_GRACE_MS"
-            )
-            hasTransientResumeSignal = true
+                hasTransientResumeSignal = true
             }
         } else {
             resetTransientForegroundTracking()
@@ -1243,6 +1331,10 @@ class ForegroundService : Service() {
         scheduleRetarget(reason = reason)
     }
 
+    private fun resolveCoverDisplayId(): Int? =
+        overlayWindowController.getActiveDisplayId()?.takeIf { it != Display.DEFAULT_DISPLAY }
+            ?: coverDisplayHelper.getCoverDisplayId()?.takeIf { it != Display.DEFAULT_DISPLAY }
+
     /**
      * Resolves an eligible foreground `(packageName, className)` candidate for overlay resumption.
      *
@@ -1252,10 +1344,9 @@ class ForegroundService : Service() {
      * if within [APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS].
      */
     private fun resolveForegroundPackageForResume(): Pair<String, String?>? {
-        val coverDisplayId = overlayWindowController.getActiveDisplayId()
-            ?: coverDisplayHelper.getCoverDisplayId()
+        val coverDisplayId = resolveCoverDisplayId()
         val launchedPackage = launchSuppressedPackageName?.trim()?.takeUnless { it.isEmpty() }
-        val suppressedForMs = if (launchSuppressedStartedElapsedMs > 0L) {
+        val suppressedForMs = if (isOverlaySuppressedForAppLaunch && launchSuppressedStartedElapsedMs != 0L) {
             (SystemClock.elapsedRealtime() - launchSuppressedStartedElapsedMs).coerceAtLeast(0L)
         } else {
             0L
@@ -1269,13 +1360,23 @@ class ForegroundService : Service() {
                 displayId = coverDisplayId,
                 launchedPackage = launchedPackage
             )
-            if (snapshot != null && !snapshot.hasLaunchedAppWindow && snapshot.coverHomePackage != null) {
-                logResumeDecision(
-                    reason = "resolve_windows",
-                    decision = "cover_home_window_top",
-                    detail = "display=$coverDisplayId pkg=${snapshot.coverHomePackage} title=${snapshot.coverHomeClassName}"
-                )
-                return snapshot.coverHomePackage to snapshot.coverHomeClassName
+            if (snapshot != null) {
+                if (snapshot.hasLaunchedAppWindow || snapshot.hasAnyUserAppWindowAboveHome) {
+                    logResumeDecision(
+                        reason = "resolve_windows",
+                        decision = "user_app_window_above_home",
+                        detail = "display=$coverDisplayId launched=$launchedPackage activeUserApp=${snapshot.activeUserAppPackage}"
+                    )
+                    return null
+                }
+                if (snapshot.coverHomePackage != null) {
+                    logResumeDecision(
+                        reason = "resolve_windows",
+                        decision = "cover_home_window_top",
+                        detail = "display=$coverDisplayId pkg=${snapshot.coverHomePackage} title=${snapshot.coverHomeClassName}"
+                    )
+                    return snapshot.coverHomePackage to snapshot.coverHomeClassName
+                }
             }
         }
 

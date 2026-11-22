@@ -99,13 +99,26 @@ class CoverAccessibilityService : AccessibilityService() {
         /** Snapshot of live interactive windows on a cover display from [inspectDisplayWindowState]. */
         internal data class CoverWindowSnapshot(
             val hasLaunchedAppWindow: Boolean,
+            val hasAnyUserAppWindowAboveHome: Boolean = false,
+            val activeUserAppPackage: String? = null,
             val coverHomePackage: String?,
             val coverHomeClassName: String?
         )
 
+        /** Returns `true` for third-party / user-launched apps (excluding SystemUI, AOD, launcher, and self). */
+        internal fun isUserForegroundApplicationPackage(packageName: String, className: String? = null): Boolean {
+            if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
+                return false
+            }
+            return NON_USER_APP_PREFIXES.none { prefix ->
+                packageName.startsWith(prefix)
+            }
+        }
+
         /**
          * Inspects live interactive windows on [displayId] (API 30+) to detect whether [launchedPackage]
-         * is still on screen or whether the native cover home (`SubHomeActivity` / launcher) is on top.
+         * or any other user app window remains visible above cover home, or whether the native cover
+         * home (`SubHomeActivity`, launcher, or SystemUI cover home window) is on top.
          */
         internal fun inspectDisplayWindowState(
             displayId: Int,
@@ -119,6 +132,8 @@ class CoverAccessibilityService : AccessibilityService() {
 
             val selfPackage = service.packageName
             var hasLaunchedAppWindow = false
+            var highestUserAppLayer = Int.MIN_VALUE
+            var activeUserAppPackage: String? = null
             var coverHomePackage: String? = null
             var coverHomeClassName: String? = null
             var highestHomeLayer = Int.MIN_VALUE
@@ -132,6 +147,8 @@ class CoverAccessibilityService : AccessibilityService() {
                 // Ignore our own overlay windows so they never count as foreground targets.
                 if (windowPkg == selfPackage) continue
 
+                val windowTitle = runCatching { window.title?.toString()?.trim() }.getOrNull()
+
                 if (launchedPackage != null &&
                     windowPkg == launchedPackage &&
                     window.type == AccessibilityWindowInfo.TYPE_APPLICATION
@@ -139,16 +156,37 @@ class CoverAccessibilityService : AccessibilityService() {
                     hasLaunchedAppWindow = true
                 }
 
-                // Track the top-most (highest z-order layer) cover-home application window.
+                // Track any non-home, non-system user application window (e.g., permission dialogs, OAuth tabs, chained activities).
                 if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
-                    window.layer > highestHomeLayer
+                    isUserForegroundApplicationPackage(windowPkg, windowTitle) &&
+                    window.layer > highestUserAppLayer
                 ) {
-                    val windowTitle = runCatching { window.title?.toString()?.trim() }.getOrNull()
+                    highestUserAppLayer = window.layer
+                    activeUserAppPackage = windowPkg
+                }
+
+                // Track the top-most (highest z-order layer) cover-home application or named SystemUI cover window.
+                val isCoverHomeWindowType = window.type == AccessibilityWindowInfo.TYPE_APPLICATION ||
+                    (window.type == AccessibilityWindowInfo.TYPE_SYSTEM &&
+                        (windowPkg == "com.android.systemui" || windowPkg == "com.samsung.android.app.aodservice") &&
+                        !CoverHomeSurfaceMatcher.isKnownTransientSystemUiOverlayClass(windowTitle))
+                if (isCoverHomeWindowType && window.layer > highestHomeLayer) {
+                    val isNamedCoverSystemUiTitle = windowTitle.equals("System UI", ignoreCase = true) ||
+                        (windowTitle != null && (
+                            CoverHomeSurfaceMatcher.isSubscreenHomeClassName(windowTitle) ||
+                                windowTitle.contains("SubScreen", ignoreCase = true) ||
+                                windowTitle.contains("CoverScreen", ignoreCase = true)
+                            ))
                     val isSubscreenSystemUiActivity = windowPkg == "com.android.systemui" &&
-                        (windowTitle.isNullOrEmpty() ||
-                            windowTitle.equals("System UI", ignoreCase = true) ||
-                            CoverHomeSurfaceMatcher.isSubscreenHomeClassName(windowTitle))
+                        if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                            windowTitle.isNullOrEmpty() || isNamedCoverSystemUiTitle
+                        } else {
+                            // For TYPE_SYSTEM windows, require an explicit cover/SystemUI home title so generic navbars don't bypass debounce.
+                            isNamedCoverSystemUiTitle
+                        }
                     val isCoverHome = isSubscreenSystemUiActivity ||
+                        (windowPkg == "com.samsung.android.app.aodservice" &&
+                            !CoverHomeSurfaceMatcher.isKnownTransientSystemUiOverlayClass(windowTitle)) ||
                         CoverHomeSurfaceMatcher.isCoverHomeDestination(
                             packageName = windowPkg,
                             className = windowTitle
@@ -165,8 +203,13 @@ class CoverAccessibilityService : AccessibilityService() {
                 }
             }
 
+            val hasAnyUserAppWindowAboveHome = activeUserAppPackage != null &&
+                highestUserAppLayer > highestHomeLayer
+
             return CoverWindowSnapshot(
                 hasLaunchedAppWindow = hasLaunchedAppWindow,
+                hasAnyUserAppWindowAboveHome = hasAnyUserAppWindowAboveHome,
+                activeUserAppPackage = activeUserAppPackage,
                 coverHomePackage = coverHomePackage,
                 coverHomeClassName = coverHomeClassName
             )
@@ -260,6 +303,11 @@ class CoverAccessibilityService : AccessibilityService() {
         fun launcherActiveDisplayIdOnActiveService(): Int? =
             activeServiceRef?.get()?.launcherActiveDisplayId()
 
+        /** Records the active cover [displayId] so suppression survives screen-off surface detachments. */
+        fun updateMonitoredCoverDisplayIdOnActiveService(displayId: Int?) {
+            activeServiceRef?.get()?.updateMonitoredCoverDisplayId(displayId)
+        }
+
         /** @see CoverAccessibilityService.isLauncherAttached */
         fun isLauncherAttachedOnActiveService(): Boolean =
             activeServiceRef?.get()?.isLauncherAttached() == true
@@ -326,6 +374,14 @@ class CoverAccessibilityService : AccessibilityService() {
      * [hideLauncher], [releaseLauncherHost], [onUnbind], and [onDestroy].
      */
     private var launcherSurface: CoverComposeSurface? = null
+
+    /**
+     * Last non-default cover [Display.displayId] seen by this service. Retained across
+     * `ACTION_SCREEN_OFF` surface detachments so [onAccessibilityEvent] does not become
+     * blind to cover-display events if the screen wakes while still suppressed.
+     */
+    @Volatile
+    private var monitoredCoverDisplayId: Int? = null
 
     /**
      * Called by Android when the accessibility service binds and receives its system window token.
@@ -403,6 +459,7 @@ class CoverAccessibilityService : AccessibilityService() {
         // Tear down any Phase-3 hosted launcher surface first so
         // subsequent host handoffs start clean. Safe to call while
         // nothing is attached.
+        monitoredCoverDisplayId = null
         detachLauncherSurface(reason = "release_launcher_host")
         launcherHost = null
         ForegroundService.onLauncherHostChanged()
@@ -429,6 +486,9 @@ class CoverAccessibilityService : AccessibilityService() {
         val host = launcherHost ?: run {
             logDebug { "showLauncher no-op: no LauncherOverlayHost attached" }
             return false
+        }
+        if (display.displayId != Display.DEFAULT_DISPLAY) {
+            monitoredCoverDisplayId = display.displayId
         }
 
         val existingSurface = launcherSurface
@@ -537,6 +597,14 @@ class CoverAccessibilityService : AccessibilityService() {
     /** Returns the [Display] ID currently hosting [launcherSurface], or `null` if detached. */
     fun launcherActiveDisplayId(): Int? = launcherSurface?.activeDisplayId()
 
+    /** Returns the active surface display ID, or the last monitored cover display ID across screen-off detaches. */
+    fun effectiveCoverDisplayId(): Int? = launcherSurface?.activeDisplayId() ?: monitoredCoverDisplayId
+
+    /** Records a non-default cover [displayId] so accessibility tracking persists while screen-off removes the surface. */
+    fun updateMonitoredCoverDisplayId(displayId: Int?) {
+        monitoredCoverDisplayId = displayId?.takeIf { it != Display.DEFAULT_DISPLAY }
+    }
+
     /** Turns the screen off and locks the device, like a power-key press. */
     private fun requestScreenOff() {
         if (shouldThrottleGlobalAction()) return
@@ -573,7 +641,7 @@ class CoverAccessibilityService : AccessibilityService() {
      * overlay-reclaim policies.
      *
      * Handles:
-     * 1. Filtering to `TYPE_WINDOW_STATE_CHANGED` / `TYPE_WINDOWS_CHANGED` on [launcherActiveDisplayId].
+     * 1. Filtering to `TYPE_WINDOW_STATE_CHANGED` / `TYPE_WINDOWS_CHANGED` on [effectiveCoverDisplayId].
      * 2. Updating [latestForegroundPackage] while ignoring our own package so Cover-Screen-OS
      *    overlays (keyboard, media panel, launcher) never self-trigger overlay resumption.
      * 3. Tracking recently active user apps (`lastKnownUserAppPackage`) to guard against premature reclaim.
@@ -587,7 +655,7 @@ class CoverAccessibilityService : AccessibilityService() {
         val isWindowEvent = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         if (!isWindowEvent) return
-        if (event.displayId != launcherActiveDisplayId()) return
+        if (event.displayId != effectiveCoverDisplayId()) return
 
         val foregroundPackage = event.packageName
             ?.toString()
@@ -793,12 +861,7 @@ class CoverAccessibilityService : AccessibilityService() {
 
     /** Returns `true` for third-party / user-launched apps (excluding SystemUI, AOD, launcher, and self). */
     private fun shouldTrackAsUserForegroundApp(packageName: String, className: String? = null): Boolean {
-        if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
-            return false
-        }
-        return NON_USER_APP_PREFIXES.none { prefix ->
-            packageName.startsWith(prefix)
-        }
+        return isUserForegroundApplicationPackage(packageName, className)
     }
 
     /** Returns `true` for transient SystemUI or AOD surfaces that are not cover-home destinations. */
@@ -813,11 +876,11 @@ class CoverAccessibilityService : AccessibilityService() {
 
     /**
      * Schedules a post-debounce check after [RECLAIM_STABILITY_DEBOUNCE_MS] to verify via
-     * [inspectDisplayWindowState] that no launched user app remains visible before reclaiming.
+     * [inspectDisplayWindowState] that no launched user app or secondary user dialog remains visible before reclaiming.
      */
     private fun scheduleDelayedReclaimCheck(candidatePackage: String, candidateClassName: String?) {
         pendingReclaimCheck?.let { reclaimHandler.removeCallbacks(it) }
-        val targetDisplayId = launcherActiveDisplayId() ?: Display.DEFAULT_DISPLAY
+        val targetDisplayId = effectiveCoverDisplayId() ?: Display.DEFAULT_DISPLAY
         val runnable = Runnable {
             pendingReclaimCheck = null
             if (reclaimCandidatePackage != candidatePackage) return@Runnable
@@ -825,11 +888,12 @@ class CoverAccessibilityService : AccessibilityService() {
                 displayId = targetDisplayId,
                 launchedPackage = lastKnownUserAppPackage
             )
-            if (snapshot?.hasLaunchedAppWindow == true) {
+            if (snapshot?.hasLaunchedAppWindow == true || snapshot?.hasAnyUserAppWindowAboveHome == true) {
                 logReclaimDecision(
                     eventTypeName = "DELAYED_RECLAIM_CHECK",
                     packageName = candidatePackage,
-                    decision = "aborted_user_app_still_visible"
+                    decision = "aborted_user_app_still_visible",
+                    detail = "activeUserApp=${snapshot.activeUserAppPackage}"
                 )
                 resetReclaimCandidate()
                 return@Runnable
