@@ -30,9 +30,11 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 // Distance dragged upward inside the bottom strip before Home or Recents hold detection activates.
-private val BOTTOM_BAR_SWIPE_UP_THRESHOLD = 28.dp
-// Distance dragged horizontally along the bottom strip to trigger Back or Recents.
-private val BOTTOM_BAR_HORIZONTAL_THRESHOLD = 36.dp
+private val BOTTOM_BAR_SWIPE_UP_THRESHOLD = 12.dp
+// Distance dragged horizontally along the bottom strip to trigger Back or Recents before system SPY pilfering (~17dp).
+private val BOTTOM_BAR_HORIZONTAL_THRESHOLD = 12.dp
+// Fallback commit distance when the pointer stream ends or is pilfered (ACTION_CANCEL) by a system gesture monitor.
+private val BOTTOM_BAR_CANCEL_COMMIT_THRESHOLD = 8.dp
 // Hold duration after swiping up before promoting the gesture from Home flick to Recents overview.
 private const val HOLD_FOR_RECENTS_DELAY_MS = 260L
 
@@ -62,6 +64,7 @@ fun CoverBottomGestureBar(
 
     val swipeUpThresholdPx = with(density) { BOTTOM_BAR_SWIPE_UP_THRESHOLD.toPx() }
     val horizontalThresholdPx = with(density) { BOTTOM_BAR_HORIZONTAL_THRESHOLD.toPx() }
+    val cancelCommitThresholdPx = with(density) { BOTTOM_BAR_CANCEL_COMMIT_THRESHOLD.toPx() }
 
     val latestOnHome by rememberUpdatedState(onHomeGesture)
     val latestOnRecents by rememberUpdatedState(onRecentsGesture)
@@ -72,7 +75,7 @@ fun CoverBottomGestureBar(
             .fillMaxWidth()
             .height(20.dp)
             .semantics { contentDescription = "Cover navigation gesture bar" }
-            .pointerInput(swipeUpThresholdPx, horizontalThresholdPx) {
+            .pointerInput(swipeUpThresholdPx, horizontalThresholdPx, cancelCommitThresholdPx) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
                     var totalDx = 0f
@@ -127,10 +130,20 @@ fun CoverBottomGestureBar(
                             if (!anyPressed) {
                                 holdRecentsJob?.cancel()
                                 holdRecentsJob = null
-                                if (!gestureHandled && -totalDy >= swipeUpThresholdPx && abs(totalDy) >= abs(totalDx)) {
-                                    gestureHandled = true
-                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    latestOnHome()
+                                if (!gestureHandled) {
+                                    if (abs(totalDx) >= cancelCommitThresholdPx && abs(totalDx) > abs(totalDy) * 1.25f) {
+                                        gestureHandled = true
+                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        if (totalDx > 0f) {
+                                            latestOnRecents()
+                                        } else {
+                                            latestOnBack()
+                                        }
+                                    } else if (-totalDy >= cancelCommitThresholdPx && abs(totalDy) >= abs(totalDx)) {
+                                        gestureHandled = true
+                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        latestOnHome()
+                                    }
                                 }
                                 break
                             }

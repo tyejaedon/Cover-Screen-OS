@@ -368,6 +368,36 @@ class CoverAccessibilityServiceLauncherHostingTest {
         assertEquals("com.example.wokeapp", CoverAccessibilityService.currentForegroundPackage())
     }
 
+    @Test
+    fun `showLauncher on already attached surface detaches any mounted gesture bar`() {
+        val (_, service) = connectService()
+        val host = fakeHost()
+        CoverAccessibilityService.attachLauncherHost(host)
+
+        val display = defaultDisplay()
+        val attachedLauncherSurface = mockk<CoverComposeSurface>(relaxed = true)
+        every { attachedLauncherSurface.isAttached() } returns true
+        every { attachedLauncherSurface.activeDisplayId() } returns display.displayId
+        val gestureBar = mockk<CoverComposeSurface>(relaxed = true)
+
+        CoverAccessibilityService::class.java.getDeclaredField("launcherSurface").apply {
+            isAccessible = true
+        }.set(service, attachedLauncherSurface)
+        CoverAccessibilityService::class.java.getDeclaredField("gestureBarSurface").apply {
+            isAccessible = true
+        }.set(service, gestureBar)
+
+        val shown = service.showLauncher(display = display, forceReattach = false)
+
+        assertTrue(shown)
+        io.mockk.verify { attachedLauncherSurface.setTouchable(true) }
+        io.mockk.verify { gestureBar.detach() }
+        val gestureBarField = CoverAccessibilityService::class.java.getDeclaredField("gestureBarSurface").apply {
+            isAccessible = true
+        }
+        assertNull(gestureBarField.get(service))
+    }
+
     // -------------------------------------------------------------------
 
     /**

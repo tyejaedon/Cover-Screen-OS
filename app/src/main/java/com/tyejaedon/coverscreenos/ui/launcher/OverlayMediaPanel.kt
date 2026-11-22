@@ -39,13 +39,14 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -387,7 +388,7 @@ private fun MediaPlayerContent(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .clickable { onLaunchSourceApp(mediaNotification) }
-                    .heightIn(min = 48.dp)
+                    .heightIn(min = 32.dp)
                     .padding(horizontal = 2.dp)
             ) {
                 if (sourceIcon != null) {
@@ -395,7 +396,13 @@ private fun MediaPlayerContent(
                 }
                 Text(text = "Open app", style = MaterialTheme.typography.labelSmall, color = Color.White)
             }
-            IconButton(onClick = onDismiss) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(percent = 50))
+                    .clickable(onClick = onDismiss),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Close",
@@ -416,8 +423,7 @@ private fun MediaPlayerContent(
             style = CoverOneUIType.tileSubtitle,
             color = Color.White.copy(alpha = 0.85f),
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+            overflow = TextOverflow.Ellipsis
         )
         if (media != null && media.durationMs > 0L && media.positionMs >= 0L) {
             MediaProgressSection(
@@ -487,23 +493,23 @@ internal fun expandedPlayerLayoutSpec(height: Dp): ExpandedPlayerLayoutSpec = wh
         panelWidthFraction = 0.97f,
         panelHeightFraction = 0.72f,
         horizontalPadding = 8.dp,
-        verticalPadding = 6.dp,
-        contentSpacing = 5.dp,
+        verticalPadding = 4.dp,
+        contentSpacing = 4.dp,
         sideControlSize = 48.dp,
-        primaryControlSize = 52.dp,
-        actionButtonTopSpacer = 4.dp,
-        actionButtonVerticalPadding = 6.dp
+        primaryControlSize = 48.dp,
+        actionButtonTopSpacer = 2.dp,
+        actionButtonVerticalPadding = 4.dp
     )
     height <= 420.dp -> ExpandedPlayerLayoutSpec(
         panelWidthFraction = 0.96f,
         panelHeightFraction = 0.78f,
         horizontalPadding = 10.dp,
-        verticalPadding = 8.dp,
-        contentSpacing = 6.dp,
+        verticalPadding = 6.dp,
+        contentSpacing = 4.dp,
         sideControlSize = 48.dp,
-        primaryControlSize = 58.dp,
-        actionButtonTopSpacer = 6.dp,
-        actionButtonVerticalPadding = 8.dp
+        primaryControlSize = 50.dp,
+        actionButtonTopSpacer = 4.dp,
+        actionButtonVerticalPadding = 6.dp
     )
     else -> ExpandedPlayerLayoutSpec(
         panelWidthFraction = 0.94f,
@@ -656,27 +662,29 @@ private fun MediaProgressSection(
             .padding(vertical = 2.dp)
     ) {
         if (media.canSeek) {
-            Slider(
-                value = displayedPositionMs.toFloat(),
-                onValueChange = { newValue ->
-                    isScrubbing = true
-                    scrubPositionMs = newValue
-                },
-                onValueChangeFinished = {
-                    val targetMs = scrubPositionMs.toLong().coerceIn(0L, media.durationMs)
-                    isScrubbing = false
-                    onSeekTo(targetMs)
-                },
-                valueRange = 0f..media.durationMs.toFloat(),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = Color.White,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.30f)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(28.dp)
-            )
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 24.dp) {
+                Slider(
+                    value = displayedPositionMs.toFloat(),
+                    onValueChange = { newValue ->
+                        isScrubbing = true
+                        scrubPositionMs = newValue
+                    },
+                    onValueChangeFinished = {
+                        val targetMs = scrubPositionMs.toLong().coerceIn(0L, media.durationMs)
+                        isScrubbing = false
+                        onSeekTo(targetMs)
+                    },
+                    valueRange = 0f..media.durationMs.toFloat(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = Color.White,
+                        inactiveTrackColor = Color.White.copy(alpha = 0.30f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(22.dp)
+                )
+            }
         } else {
             val fraction = (displayedPositionMs.toFloat() / media.durationMs.toFloat()).coerceIn(0f, 1f)
             Box(
@@ -759,7 +767,7 @@ private fun MediaCustomActionButton(
 
     Box(
         modifier = Modifier
-            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            .sizeIn(minWidth = 44.dp, minHeight = 40.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -772,7 +780,7 @@ private fun MediaCustomActionButton(
                 hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
     ) {
         if (iconBitmap != null) {
