@@ -60,8 +60,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.models.CoverMediaModel
+import com.tyejaedon.coverscreenos.models.CoverMediaTransportAction
+import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
 import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUITokens
@@ -70,7 +71,6 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiIconSquircle
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiPanel
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiSlideDown
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiSlideUp
-import java.util.Locale
 
 private val PREFERRED_MEDIA_PACKAGES = listOf(
     "com.spotify.music",
@@ -145,7 +145,7 @@ internal fun CompactNowPlayingCard(
     val isActionEnabled = hasMedia || onOpenMediaApp != null
     val artwork = usableMediaArtwork(mediaNotification?.media?.artworkBitmap)
     val iconBitmap = mediaNotification?.let { rememberPackageIconBitmap(it.packageName) }
-    val playPauseAction = resolveMediaPlayPauseAction(mediaNotification?.media)
+    val isPlaying = mediaNotification?.media?.isPlaying == true
 
     Surface(
         modifier = modifier
@@ -198,7 +198,7 @@ internal fun CompactNowPlayingCard(
                 }
             }
             Icon(
-                imageVector = if (isPauseLikeActionLabel(playPauseAction)) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                 contentDescription = if (hasMedia) "Expand media player" else null,
                 tint = Color.White,
                 modifier = Modifier.size(20.dp)
@@ -213,7 +213,7 @@ fun ExpandedNowPlayingPanel(
     visible: Boolean,
     onDismiss: () -> Unit,
     onLaunchSourceApp: (CoverNotificationModel) -> Unit,
-    onAction: (CoverNotificationModel, String?) -> Unit,
+    onAction: (CoverNotificationModel, CoverMediaTransportAction) -> Unit,
     onOpenNotification: (CoverNotificationModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -225,25 +225,19 @@ fun ExpandedNowPlayingPanel(
     ) {
         if (mediaNotification == null) return@AnimatedVisibility
 
-        val actionLabels = remember(mediaNotification.media) {
-            mediaNotification.media?.actionLabels.orEmpty().filter { it.isNotBlank() }.distinct()
-        }
-        val previousAction = remember(actionLabels) {
-            findMediaActionLabel(actionLabels, "previous", "prev", "rewind", "back")
-        }
-        val playPauseAction = resolveMediaPlayPauseAction(mediaNotification.media)
-        val nextAction = remember(actionLabels) {
-            findMediaActionLabel(actionLabels, "next", "skip", "forward")
-        }
-        val isPauseAction = remember(playPauseAction) { isPauseLikeActionLabel(playPauseAction) }
-        val artworkBitmap = usableMediaArtwork(mediaNotification.media?.artworkBitmap)
+        val media = mediaNotification.media
+        val isPlaying = media?.isPlaying == true
+        val canPlayPause = media?.canPlayPause == true
+        val canSkipPrevious = media?.canSkipPrevious == true
+        val canSkipNext = media?.canSkipNext == true
+        val artworkBitmap = usableMediaArtwork(media?.artworkBitmap)
 
         val sourceIcon =
             rememberPackageIconBitmap(
                 mediaNotification.packageName
             )
-        val titleText = mediaNotification.media?.title ?: mediaNotification.title
-        val subtitleText = mediaNotification.media?.artist ?: mediaNotification.previewText.ifBlank { "Open app" }
+        val titleText = media?.title ?: mediaNotification.title
+        val subtitleText = media?.artist ?: mediaNotification.previewText.ifBlank { "Open app" }
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
@@ -280,10 +274,10 @@ fun ExpandedNowPlayingPanel(
                         titleText = titleText,
                         subtitleText = subtitleText,
                         layoutSpec = layoutSpec,
-                        previousAction = previousAction,
-                        playPauseAction = playPauseAction,
-                        nextAction = nextAction,
-                        isPauseAction = isPauseAction,
+                        isPlaying = isPlaying,
+                        canPlayPause = canPlayPause,
+                        canSkipPrevious = canSkipPrevious,
+                        canSkipNext = canSkipNext,
                         onDismiss = onDismiss,
                         onLaunchSourceApp = onLaunchSourceApp,
                         onAction = onAction,
@@ -302,13 +296,13 @@ private fun MediaPlayerContent(
     titleText: String,
     subtitleText: String,
     layoutSpec: ExpandedPlayerLayoutSpec,
-    previousAction: String?,
-    playPauseAction: String?,
-    nextAction: String?,
-    isPauseAction: Boolean,
+    isPlaying: Boolean,
+    canPlayPause: Boolean,
+    canSkipPrevious: Boolean,
+    canSkipNext: Boolean,
     onDismiss: () -> Unit,
     onLaunchSourceApp: (CoverNotificationModel) -> Unit,
-    onAction: (CoverNotificationModel, String?) -> Unit,
+    onAction: (CoverNotificationModel, CoverMediaTransportAction) -> Unit,
     onOpenNotification: (CoverNotificationModel) -> Unit
 ) {
     Column(
@@ -367,23 +361,23 @@ private fun MediaPlayerContent(
         ) {
             MediaControlIconButton(
                 icon = Icons.Filled.SkipPrevious,
-                contentDescription = previousAction ?: "Previous",
-                enabled = previousAction != null,
-                onClick = { previousAction?.let { onAction(mediaNotification, it) } },
+                contentDescription = "Previous",
+                enabled = canSkipPrevious,
+                onClick = { onAction(mediaNotification, CoverMediaTransportAction.PREVIOUS) },
                 modifier = Modifier.size(layoutSpec.sideControlSize)
             )
             MediaControlIconButton(
-                icon = if (isPauseAction) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = playPauseAction ?: "Play/Pause",
-                enabled = playPauseAction != null,
-                onClick = { playPauseAction?.let { onAction(mediaNotification, it) } },
+                icon = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (isPlaying) "Pause" else "Play",
+                enabled = canPlayPause,
+                onClick = { onAction(mediaNotification, CoverMediaTransportAction.PLAY_PAUSE) },
                 modifier = Modifier.size(layoutSpec.primaryControlSize)
             )
             MediaControlIconButton(
                 icon = Icons.Filled.SkipNext,
-                contentDescription = nextAction ?: "Next",
-                enabled = nextAction != null,
-                onClick = { nextAction?.let { onAction(mediaNotification, it) } },
+                contentDescription = "Next",
+                enabled = canSkipNext,
+                onClick = { onAction(mediaNotification, CoverMediaTransportAction.NEXT) },
                 modifier = Modifier.size(layoutSpec.sideControlSize)
             )
         }
@@ -461,10 +455,6 @@ private fun MediaArtworkBackground(artwork: Bitmap?) {
 internal fun usableMediaArtwork(artwork: Bitmap?): Bitmap? =
     artwork?.takeUnless { it.isRecycled || it.width <= 0 || it.height <= 0 }
 
-internal fun resolveMediaPlayPauseAction(media: CoverMediaModel?): String? =
-    media?.playPauseActionLabel?.trim()?.takeIf { it.isNotEmpty() }
-        ?: findMediaActionLabel(media?.actionLabels.orEmpty(), "play", "pause", "resume")
-
 @Composable
 private fun MediaControlIconButton(
     icon: ImageVector,
@@ -506,18 +496,4 @@ private fun MediaControlIconButton(
             modifier = Modifier.size(24.dp)
         )
     }
-}
-
-private fun findMediaActionLabel(actionLabels: List<String>, vararg keywords: String): String? {
-    if (actionLabels.isEmpty()) return null
-    val normalizedKeywords = keywords.map { it.lowercase(Locale.getDefault()) }
-    return actionLabels.firstOrNull { label ->
-        val normalizedLabel = label.lowercase(Locale.getDefault())
-        normalizedKeywords.any { keyword -> normalizedLabel.contains(keyword) }
-    }
-}
-
-private fun isPauseLikeActionLabel(actionLabel: String?): Boolean {
-    val normalized = actionLabel?.trim()?.lowercase(Locale.getDefault()).orEmpty()
-    return normalized.contains("pause") || normalized.contains("stop")
 }

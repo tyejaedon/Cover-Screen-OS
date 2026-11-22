@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tyejaedon.coverscreenos.models.AppModel
+import com.tyejaedon.coverscreenos.models.CoverMediaTransportAction
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.ui.CompactNowPlayingCard
@@ -204,10 +205,10 @@ internal fun LockAndDockTile(
                     media.packageName
                 )
             },
-            onAction = { media, actionLabel ->
-                CoverNotificationListenerService.performNotificationAction(
+            onAction = { media, action ->
+                CoverNotificationListenerService.performMediaTransportAction(
                     media.notificationKey,
-                    actionLabel
+                    action
                 )
             },
             onOpenNotification = { media ->

@@ -2,11 +2,19 @@ package com.tyejaedon.coverscreenos.models
 
 import android.graphics.Bitmap
 
+enum class CoverMediaTransportAction {
+    PLAY_PAUSE,
+    PREVIOUS,
+    NEXT
+}
+
 data class CoverMediaModel(
     val title: String?,
     val artist: String?,
-    val actionLabels: List<String>,
-    val playPauseActionLabel: String?,
+    val isPlaying: Boolean,
+    val canPlayPause: Boolean,
+    val canSkipPrevious: Boolean,
+    val canSkipNext: Boolean,
     val artworkBitmap: Bitmap?
 )
 

@@ -13,6 +13,7 @@ import android.graphics.drawable.Icon
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -21,6 +22,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.annotation.RequiresApi
 import com.tyejaedon.coverscreenos.models.CoverMediaModel
+import com.tyejaedon.coverscreenos.models.CoverMediaTransportAction
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
 import com.tyejaedon.coverscreenos.receivers.LockStatusReceiver
 import com.tyejaedon.coverscreenos.notifications.CallPackageMatchers
@@ -33,7 +35,14 @@ import androidx.core.graphics.createBitmap
 
 class CoverNotificationListenerService : NotificationListenerService() {
 
+    private data class RegisteredMediaController(
+        val token: MediaSession.Token,
+        val controller: MediaController,
+        val callback: MediaController.Callback
+    )
+
     private val callbackHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val mediaControllers = mutableMapOf<String, RegisteredMediaController>()
     @Volatile
     private var refreshScheduled = false
 
@@ -44,10 +53,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
     }
 
     companion object {
-        private const val MEDIA_STYLE_TEMPLATE_CLASS = "android.app.Notification\$MediaStyle"
         private const val NOTIFICATION_LOG_TAG = "CoverNotifListener"
-        private val PLAY_PAUSE_WORD_REGEX = Regex("\\b(play|pause|resume)\\b")
-        private val TRACK_STEP_WORD_REGEX = Regex("\\b(next|previous|prev|skip)\\b")
         private val NON_MEDIA_CATEGORIES = setOf(
             Notification.CATEGORY_CALL,
             Notification.CATEGORY_ALARM,
@@ -60,35 +66,40 @@ class CoverNotificationListenerService : NotificationListenerService() {
             "stopwatch"
         )
 
+        internal data class MediaPlaybackCapabilities(
+            val isPlaying: Boolean,
+            val canPlayPause: Boolean,
+            val canSkipPrevious: Boolean,
+            val canSkipNext: Boolean
+        )
+
         internal fun isMediaNotification(
             category: String?,
-            templateClassName: String?,
-            hasMediaSessionToken: Boolean,
-            hasProgressBar: Boolean,
-            hasPlaybackSemanticAction: Boolean,
-            actionLabels: List<String>
+            hasMediaSessionToken: Boolean
         ): Boolean {
             if (category in NON_MEDIA_CATEGORIES) return false
+            return hasMediaSessionToken
+        }
 
-            val isTransportCategory = category == Notification.CATEGORY_TRANSPORT
-            val hasMediaStyleTemplate = templateClassName == MEDIA_STYLE_TEMPLATE_CLASS
-            if (hasMediaSessionToken || hasMediaStyleTemplate || isTransportCategory) {
-                return true
-            }
-
-            if (hasProgressBar) return false
-
-            val normalizedLabels = actionLabels
-                .asSequence()
-                .map { it.trim().lowercase() }
-                .filter { it.isNotEmpty() }
-                .toList()
-
-            val hasPlayPauseControl = hasPlaybackSemanticAction ||
-                normalizedLabels.any { PLAY_PAUSE_WORD_REGEX.containsMatchIn(it) }
-            val hasTrackStepControl = normalizedLabels.any { TRACK_STEP_WORD_REGEX.containsMatchIn(it) }
-
-            return hasPlayPauseControl && hasTrackStepControl
+        internal fun resolvePlaybackCapabilities(
+            state: Int?,
+            actions: Long
+        ): MediaPlaybackCapabilities {
+            val isPlaying = state == PlaybackState.STATE_PLAYING ||
+                state == PlaybackState.STATE_BUFFERING
+            val canPlayPause = (actions and (
+                PlaybackState.ACTION_PLAY or
+                    PlaybackState.ACTION_PAUSE or
+                    PlaybackState.ACTION_PLAY_PAUSE
+                )) != 0L
+            val canSkipPrevious = (actions and PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0L
+            val canSkipNext = (actions and PlaybackState.ACTION_SKIP_TO_NEXT) != 0L
+            return MediaPlaybackCapabilities(
+                isPlaying = isPlaying,
+                canPlayPause = canPlayPause,
+                canSkipPrevious = canSkipPrevious,
+                canSkipNext = canSkipNext
+            )
         }
 
         @Volatile
@@ -202,40 +213,30 @@ class CoverNotificationListenerService : NotificationListenerService() {
             )
         }
 
-        fun performNotificationAction(notificationKey: String, actionLabel: String? = null): Boolean {
+        fun performMediaTransportAction(
+            notificationKey: String,
+            action: CoverMediaTransportAction
+        ): Boolean {
             val service = activeService ?: return false
-            val sbn = service.findNotificationByKey(notificationKey) ?: return false
-            val actions = sbn.notification.actions ?: return false
-            if (actions.isEmpty()) return false
-
-            val requestedLabel = actionLabel
-                ?.trim()
-                ?.takeUnless { it.isEmpty() }
-
-            val targetAction = actionLabel
-                ?.let { label ->
-                    actions.firstOrNull { action ->
-                        action.title
-                            ?.toString()
-                            ?.trim()
-                            ?.equals(label, ignoreCase = true) == true
-                    }
-                }
-                ?: actions.firstOrNull { action -> action.actionIntent != null }
-                ?: return false
-
-            val intent = targetAction.actionIntent ?: return false
+            val controller = service.resolveMediaController(notificationKey) ?: return false
+            val controls = controller.transportControls
+            val playbackState = runCatching { controller.playbackState }.getOrNull()
+            val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING ||
+                playbackState?.state == PlaybackState.STATE_BUFFERING
             return runCatching {
-                val options = createPendingIntentLaunchOptions()
-                intent.send(service, 0, null, null, null, null, options)
+                when (action) {
+                    CoverMediaTransportAction.PLAY_PAUSE -> {
+                        if (isPlaying) controls.pause() else controls.play()
+                    }
+                    CoverMediaTransportAction.PREVIOUS -> controls.skipToPrevious()
+                    CoverMediaTransportAction.NEXT -> controls.skipToNext()
+                }
                 true
             }.getOrElse { error ->
-                val message = if (error is PendingIntent.CanceledException) {
-                    "Notification action canceled key=$notificationKey requestedLabel=$requestedLabel resolvedLabel=${targetAction.title}"
-                } else {
-                    "Notification action failed key=$notificationKey requestedLabel=$requestedLabel resolvedLabel=${targetAction.title} error=${error.message}"
-                }
-                Log.w(NOTIFICATION_LOG_TAG, message)
+                Log.w(
+                    NOTIFICATION_LOG_TAG,
+                    "Media transport action failed key=$notificationKey action=$action error=${error.message}"
+                )
                 false
             }
         }
@@ -258,6 +259,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
     override fun onDestroy() {
         callbackHandler.removeCallbacks(refreshRunnable)
         refreshScheduled = false
+        unregisterAllMediaControllers()
         if (activeService === this) {
             activeService = null
         }
@@ -280,6 +282,7 @@ class CoverNotificationListenerService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         callbackHandler.removeCallbacks(refreshRunnable)
         refreshScheduled = false
+        unregisterAllMediaControllers()
         if (activeService === this) {
             activeService = null
         }
@@ -320,6 +323,8 @@ class CoverNotificationListenerService : NotificationListenerService() {
             emptyList()
         }
 
+        syncMediaControllers(activeSbns)
+
         val snapshot = runCatching {
             activeSbns
                 .asSequence()
@@ -356,6 +361,76 @@ class CoverNotificationListenerService : NotificationListenerService() {
             isActive = isActive,
             packageName = normalizedPackage
         )
+    }
+
+    @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
+    private fun syncMediaControllers(activeSbns: List<StatusBarNotification>) {
+        val desiredTokens = mutableMapOf<String, MediaSession.Token>()
+        for (sbn in activeSbns) {
+            if (sbn.isLikelyActiveCallNotification()) continue
+            val token = sbn.extractMediaSessionToken()
+            if (isMediaNotification(category = sbn.notification.category, hasMediaSessionToken = token != null) && token != null) {
+                desiredTokens[sbn.key] = token
+            }
+        }
+
+        val iterator = mediaControllers.entries.iterator()
+        while (iterator.hasNext()) {
+            val (key, entry) = iterator.next()
+            val desiredToken = desiredTokens[key]
+            if (desiredToken == null || desiredToken != entry.token) {
+                runCatching { entry.controller.unregisterCallback(entry.callback) }
+                iterator.remove()
+            }
+        }
+
+        for ((key, token) in desiredTokens) {
+            if (mediaControllers.containsKey(key)) continue
+            val controller = runCatching { MediaController(this, token) }.getOrNull() ?: continue
+            val callback = object : MediaController.Callback() {
+                override fun onPlaybackStateChanged(state: PlaybackState?) {
+                    scheduleNotificationRefresh()
+                }
+
+                override fun onMetadataChanged(metadata: MediaMetadata?) {
+                    scheduleNotificationRefresh()
+                }
+
+                override fun onSessionDestroyed() {
+                    scheduleNotificationRefresh()
+                }
+            }
+            runCatching {
+                controller.registerCallback(callback, callbackHandler)
+                mediaControllers[key] = RegisteredMediaController(
+                    token = token,
+                    controller = controller,
+                    callback = callback
+                )
+            }.onFailure { error ->
+                Log.w(NOTIFICATION_LOG_TAG, "Unable to register MediaController callback key=$key: ${error.message}")
+            }
+        }
+    }
+
+    private fun unregisterAllMediaControllers() {
+        mediaControllers.values.forEach { entry ->
+            runCatching { entry.controller.unregisterCallback(entry.callback) }
+        }
+        mediaControllers.clear()
+    }
+
+    private fun resolveMediaController(notificationKey: String): MediaController? {
+        mediaControllers[notificationKey]?.let { return it.controller }
+        val token = findNotificationByKey(notificationKey)?.extractMediaSessionToken() ?: return null
+        return runCatching { MediaController(this, token) }.getOrNull()
+    }
+
+    private fun StatusBarNotification.extractMediaSessionToken(): MediaSession.Token? {
+        val extras = notification.extras ?: return null
+        return runCatching {
+            extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, MediaSession.Token::class.java)
+        }.getOrNull()
     }
 
     private fun findNotificationByKey(notificationKey: String): StatusBarNotification? {
@@ -399,7 +474,6 @@ class CoverNotificationListenerService : NotificationListenerService() {
     @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     private fun StatusBarNotification.toCoverNotificationModel(): CoverNotificationModel? {
         val extras = notification.extras ?: return null
-        val actions = notification.actions.orEmpty()
         val resolvedTitle = extras.getCharSequence(Notification.EXTRA_TITLE)
             ?.toString()
             ?.trim()
@@ -419,24 +493,10 @@ class CoverNotificationListenerService : NotificationListenerService() {
             }.getOrDefault(packageName)
         }
 
-        val templateClassName = extras.getString(Notification.EXTRA_TEMPLATE).orEmpty()
-        val hasMediaSessionToken = runCatching {
-            extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, MediaSession.Token::class.java) != null
-        }.getOrDefault(false)
-        val hasProgressBar = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0) > 0 ||
-            extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
-        val hasPlaybackSemanticAction = actions.any { action ->
-            action.semanticAction == Notification.Action.SEMANTIC_ACTION_PLAY ||
-                action.semanticAction == Notification.Action.SEMANTIC_ACTION_PAUSE
-        }
-        val rawActionLabels = actions.mapNotNull { it.title?.toString() }
+        val mediaToken = extractMediaSessionToken()
         val isMediaNotification = !isLikelyActiveCallNotification() && isMediaNotification(
             category = notification.category,
-            templateClassName = templateClassName,
-            hasMediaSessionToken = hasMediaSessionToken,
-            hasProgressBar = hasProgressBar,
-            hasPlaybackSemanticAction = hasPlaybackSemanticAction,
-            actionLabels = rawActionLabels
+            hasMediaSessionToken = mediaToken != null
         )
 
         val mediaArtistExtra = extras.getCharSequence(Notification.EXTRA_TEXT)
@@ -450,41 +510,39 @@ class CoverNotificationListenerService : NotificationListenerService() {
                     .orEmpty()
             }
 
-        val mediaTitle = if (isMediaNotification) {
-            resolvedTitle.ifEmpty { null }
-        } else {
-            null
-        }
-        val mediaArtist = if (isMediaNotification) {
-            mediaArtistExtra.ifEmpty { resolvedText.ifEmpty { null } }
-        } else {
-            null
-        }
-
-        val actionLabels = actions
-            .mapNotNull { action ->
-                action.title
-                    ?.toString()
-                    ?.trim()
-                    ?.takeUnless { it.isEmpty() }
-            }
-            .distinct()
-            .take(4)
-
-        val playPauseActionLabel = resolvePlayPauseActionLabel(actions)
-
-        val mediaArtwork = if (isMediaNotification) {
-            resolveMediaArtwork(notification, extras)
-        } else {
-            null
-        }
-
         val media = if (isMediaNotification) {
+            val controller = mediaControllers[key]?.controller
+                ?: mediaToken?.let {
+                    runCatching { MediaController(this@CoverNotificationListenerService, it) }.getOrNull()
+                }
+            val metadata = runCatching { controller?.metadata }.getOrNull()
+            val playbackState = runCatching { controller?.playbackState }.getOrNull()
+            val capabilities = resolvePlaybackCapabilities(
+                state = playbackState?.state,
+                actions = playbackState?.actions ?: 0L
+            )
+            val mediaTitle = metadata
+                ?.firstNonBlankString(
+                    MediaMetadata.METADATA_KEY_DISPLAY_TITLE,
+                    MediaMetadata.METADATA_KEY_TITLE
+                )
+                ?: resolvedTitle.ifEmpty { null }
+            val mediaArtist = metadata
+                ?.firstNonBlankString(
+                    MediaMetadata.METADATA_KEY_ARTIST,
+                    MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE,
+                    MediaMetadata.METADATA_KEY_ALBUM_ARTIST
+                )
+                ?: mediaArtistExtra.ifEmpty { resolvedText.ifEmpty { null } }
+            val mediaArtwork = resolveMediaArtwork(notification, extras, metadata)
+
             CoverMediaModel(
                 title = mediaTitle,
                 artist = mediaArtist,
-                actionLabels = actionLabels,
-                playPauseActionLabel = playPauseActionLabel,
+                isPlaying = capabilities.isPlaying,
+                canPlayPause = capabilities.canPlayPause,
+                canSkipPrevious = capabilities.canSkipPrevious,
+                canSkipNext = capabilities.canSkipNext,
                 artworkBitmap = mediaArtwork
             )
         } else {
@@ -508,8 +566,19 @@ class CoverNotificationListenerService : NotificationListenerService() {
         )
     }
 
-    private fun resolveMediaArtwork(notification: Notification, extras: android.os.Bundle): Bitmap? {
-        val metadataArtwork = resolveMediaArtworkFromSession(extras)
+    private fun MediaMetadata.firstNonBlankString(vararg keys: String): String? {
+        return keys
+            .asSequence()
+            .mapNotNull { key -> getString(key)?.trim()?.takeIf { it.isNotEmpty() } }
+            .firstOrNull()
+    }
+
+    private fun resolveMediaArtwork(
+        notification: Notification,
+        extras: android.os.Bundle,
+        metadata: MediaMetadata?
+    ): Bitmap? {
+        val metadataArtwork = resolveMediaArtworkFromMetadata(metadata)
         if (metadataArtwork != null) return metadataArtwork
 
         val pictureArtwork = getParcelableBitmap(extras, Notification.EXTRA_PICTURE)
@@ -522,16 +591,8 @@ class CoverNotificationListenerService : NotificationListenerService() {
         return notificationLargeIcon?.let { icon -> iconToBitmap(icon) }
     }
 
-    private fun resolveMediaArtworkFromSession(extras: android.os.Bundle): Bitmap? {
-        val token = runCatching {
-            extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, MediaSession.Token::class.java)
-        }.getOrNull() ?: return null
-
-        val metadata = runCatching { MediaController(this, token).metadata }
-            .getOrElse { error ->
-                Log.d(NOTIFICATION_LOG_TAG, "Unable to read media metadata from session: ${error.message}")
-                null
-            } ?: return null
+    private fun resolveMediaArtworkFromMetadata(metadata: MediaMetadata?): Bitmap? {
+        if (metadata == null) return null
 
         val artKeys = listOf(
             MediaMetadata.METADATA_KEY_ALBUM_ART,
@@ -607,29 +668,6 @@ class CoverNotificationListenerService : NotificationListenerService() {
         }
         if (scaled.config == Bitmap.Config.ARGB_8888) return scaled
         return scaled.copy(Bitmap.Config.ARGB_8888, false) ?: scaled
-    }
-
-    @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
-    private fun resolvePlayPauseActionLabel(actions: Array<out Notification.Action>): String? {
-        val semanticMatch = actions.firstOrNull { action ->
-            action.semanticAction == Notification.Action.SEMANTIC_ACTION_PLAY ||
-                action.semanticAction == Notification.Action.SEMANTIC_ACTION_PAUSE
-        }?.title?.toString()?.trim().orEmpty()
-        if (semanticMatch.isNotEmpty()) return semanticMatch
-
-        // Fallback when apps don't publish semanticAction: keep OEM-provided label text.
-        val keywordMatch = actions.firstOrNull { action ->
-            val label = action.title?.toString()?.trim()?.lowercase().orEmpty()
-            label.contains("play") || label.contains("pause") || label.contains("resume")
-        }?.title?.toString()?.trim().orEmpty()
-        if (keywordMatch.isNotEmpty()) return keywordMatch
-
-        return actions
-            .firstOrNull { action -> action.actionIntent != null }
-            ?.title
-            ?.toString()
-            ?.trim()
-            ?.takeUnless { it.isEmpty() }
     }
 
 }
