@@ -14,35 +14,66 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+// Default outer margin kept compact (8dp) for small outer cover displays.
 private val CoverScreenHorizontalPadding = 8.dp
 private val CoverScreenVerticalPadding = 8.dp
+
+// Follows Android's 48dp minimum accessible touch-target guideline for reliable thumb taps.
 private val CoverScreenMinTouchTarget = 48.dp
 
 /** One UI uses noticeably larger, "continuous" corner radii than stock Material. */
 val CoverOSCornerRadiusLarge = 34.dp
+/** Medium continuous corner radius used for standard overlay cards and inner panels. */
 val CoverOSCornerRadiusMedium = 24.dp
+/** Small continuous corner radius used for compact tiles, badges, and chips. */
 val CoverOSCornerRadiusSmall = 16.dp
 
+/**
+ * Applies standard cover-screen outer padding around a layout element.
+ *
+ * Keeps spacing uniform across compact outer displays while allowing individual
+ * callers to override [horizontal] or [vertical] margins when needed.
+ */
 fun Modifier.coverScreenPadding(
     horizontal: Dp = CoverScreenHorizontalPadding,
     vertical: Dp = CoverScreenVerticalPadding
 ): Modifier = this.padding(horizontal = horizontal, vertical = vertical)
 
+/**
+ * Enforces a minimum accessible hit target size ([minSize], defaulting to 48dp)
+ * using [Modifier.sizeIn] without forcing smaller visual icons to stretch.
+ */
 fun Modifier.coverMinimumTouchTarget(minSize: Dp = CoverScreenMinTouchTarget): Modifier =
     this.sizeIn(minWidth = minSize, minHeight = minSize)
 
+/**
+ * Insets top-level cover screen content away from system status bars and hardware
+ * display cutouts along the top and horizontal edges.
+ *
+ * Uses Compose's [WindowInsets.safeDrawing] filtered with [WindowInsetsSides.only] so
+ * bottom edges remain unobstructed for overlays or scrollable content.
+ */
 @Composable
 fun Modifier.coverTopLevelSafeInsets(): Modifier =
     this.windowInsetsPadding(
         WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)
     )
 
+/**
+ * Adds top padding matching the system status bar height ([WindowInsets.statusBars]
+ * constrained to [WindowInsetsSides.Top]) so top navigation bars sit cleanly below
+ * status icons without applying bottom or side insets.
+ */
 @Composable
 fun Modifier.navbarPadding(): Modifier =
     this.windowInsetsPadding(
         WindowInsets.statusBars.only(WindowInsetsSides.Top)
     )
 
+/**
+ * Creates [PaddingValues] suitable for scrollable containers (`LazyColumn`, grids)
+ * so list content can scroll edge-to-edge while resting with standard cover-screen margins.
+ */
 fun coverScreenContentPadding(
     horizontal: Dp = CoverScreenHorizontalPadding,
     vertical: Dp = CoverScreenVerticalPadding

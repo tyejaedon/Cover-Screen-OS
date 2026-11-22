@@ -32,12 +32,17 @@ import kotlinx.coroutines.launch
  *
  * [ForegroundService] supplies dependencies through [LauncherOverlayHost] and
  * sends window commands through [OverlayWindowController]. This connected
- * service provides the token for [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY];
- * the shared [CoverComposeSurface] handles the display-scoped WindowManager,
- * Compose lifecycle, and view cleanup. No draw-over-other-apps grant is needed.
+ * [AccessibilityService] provides the privileged system token for
+ * [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY] (which requires no
+ * `SYSTEM_ALERT_WINDOW` draw-over-other-apps grant); the shared
+ * [CoverComposeSurface] handles the display-scoped `WindowManager`,
+ * Compose lifecycle, and view cleanup.
  *
- * Foreground and navigation events feed runtime suppression/reclaim policy.
- * Unbinding or destroying this service detaches its launcher surface.
+ * Foreground window events (`onAccessibilityEvent`), accessibility gestures
+ * (`onGesture`), and hardware back keys (`onKeyEvent`) feed runtime
+ * suppression/reclaim policy and global navigation actions while the cover
+ * overlay is active. Unbinding or destroying this service detaches its
+ * launcher surface.
  */
 @SuppressLint("AccessibilityPolicy")
 class CoverAccessibilityService : AccessibilityService() {
@@ -74,10 +79,13 @@ class CoverAccessibilityService : AccessibilityService() {
         @Volatile
         private var latestForegroundEventElapsedMs: Long = 0L
 
+        /** Latest non-self foreground package observed on the active cover display, or `null`. */
         fun currentForegroundPackage(): String? = latestForegroundPackage
 
+        /** Latest foreground component class name paired with [currentForegroundPackage], or `null`. */
         fun currentForegroundClassName(): String? = latestForegroundClassName
 
+        /** Snapshot of live interactive windows on a cover display from [inspectDisplayWindowState]. */
         internal data class CoverWindowSnapshot(
             val hasLaunchedAppWindow: Boolean,
             val coverHomePackage: String?,
@@ -92,6 +100,7 @@ class CoverAccessibilityService : AccessibilityService() {
             displayId: Int,
             launchedPackage: String?
         ): CoverWindowSnapshot? {
+            // AccessibilityService.getWindowsOnAllDisplays() requires Android 11 (API 30).
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
             val service = activeServiceRef?.get() ?: return null
             val windows = runCatching { service.windowsOnAllDisplays.get(displayId) }.getOrNull()
@@ -109,6 +118,7 @@ class CoverAccessibilityService : AccessibilityService() {
                     .getOrNull()
                     ?.takeUnless { it.isEmpty() }
                     ?: continue
+                // Ignore our own overlay windows so they never count as foreground targets.
                 if (windowPkg == selfPackage) continue
 
                 if (launchedPackage != null &&
@@ -118,6 +128,7 @@ class CoverAccessibilityService : AccessibilityService() {
                     hasLaunchedAppWindow = true
                 }
 
+                // Track the top-most (highest z-order layer) cover-home application window.
                 if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
                     window.layer > highestHomeLayer
                 ) {
@@ -150,6 +161,10 @@ class CoverAccessibilityService : AccessibilityService() {
             )
         }
 
+        /**
+         * Returns milliseconds elapsed since the most recent foreground window update
+         * (or [Long.MAX_VALUE] if no foreground event has been observed yet).
+         */
         fun currentForegroundPackageEventAgeMs(nowElapsedMs: Long = SystemClock.elapsedRealtime()): Long {
             val eventElapsedMs = latestForegroundEventElapsedMs
             if (eventElapsedMs <= 0L) return Long.MAX_VALUE
@@ -236,6 +251,10 @@ class CoverAccessibilityService : AccessibilityService() {
         fun isLauncherAttachedOnActiveService(): Boolean =
             activeServiceRef?.get()?.isLauncherAttached() == true
 
+        /**
+         * Launches [launchIntent] with optional [launchOptions] (such as target display ID)
+         * from the bound [AccessibilityService] context, catching missing or restricted targets.
+         */
         fun startActivityFromLauncherService(launchIntent: Intent, launchOptions: Bundle?): Boolean {
             val service = activeServiceRef?.get() ?: return false
             return try {
@@ -285,6 +304,13 @@ class CoverAccessibilityService : AccessibilityService() {
      */
     private var launcherSurface: CoverComposeSurface? = null
 
+    /**
+     * Called by Android when the accessibility service binds and receives its system window token.
+     *
+     * Registers [activeServiceRef], resets stale foreground tracking, re-installs any
+     * [pendingLauncherHost] supplied by [ForegroundService], and triggers overlay attachment
+     * if a host is already present.
+     */
     override fun onServiceConnected() {
         super.onServiceConnected()
         latestForegroundPackage = null
@@ -297,6 +323,12 @@ class CoverAccessibilityService : AccessibilityService() {
         if (launcherHost != null) ForegroundService.onLauncherAccessibilityConnected()
     }
 
+    /**
+     * Called when the system unbinds this accessibility service instance.
+     *
+     * Tears down the live surface and clears [activeServiceRef], while intentionally keeping
+     * [pendingLauncherHost] so toggling the service back on reconnects seamlessly.
+     */
     override fun onUnbind(intent: Intent?): Boolean {
         // Live instance is going away. Clear our reference and the static
         // pointer — but keep `pendingLauncherHost` intact so the next
@@ -313,6 +345,7 @@ class CoverAccessibilityService : AccessibilityService() {
         return super.onUnbind(intent)
     }
 
+    /** Final cleanup releasing any hosted Compose surface, pending reclaim timers, and static reference. */
     override fun onDestroy() {
         releaseLauncherHost()
         resetReclaimCandidate()
@@ -478,6 +511,7 @@ class CoverAccessibilityService : AccessibilityService() {
         launcherSurface?.setTouchable(touchable)
     }
 
+    /** Returns the [Display] ID currently hosting [launcherSurface], or `null` if detached. */
     fun launcherActiveDisplayId(): Int? = launcherSurface?.activeDisplayId()
 
     /** Turns the screen off and locks the device, like a power-key press. */
@@ -494,8 +528,10 @@ class CoverAccessibilityService : AccessibilityService() {
         logDebug { "System shade swipe down result=$result" }
     }
 
+    /** Returns `true` when [launcherSurface] is actively attached to its display window. */
     fun isLauncherAttached(): Boolean = launcherSurface?.isAttached() == true
 
+    /** Safely detaches [launcherSurface] and clears the local surface reference. */
     private fun detachLauncherSurface(reason: String) {
         val surface = launcherSurface ?: return
         launcherSurface = null
@@ -509,6 +545,19 @@ class CoverAccessibilityService : AccessibilityService() {
         logDebug { "Launcher surface detached reason=$reason" }
     }
 
+    /**
+     * Monitors window transitions on the active cover display to feed suppression and
+     * overlay-reclaim policies.
+     *
+     * Handles:
+     * 1. Filtering to `TYPE_WINDOW_STATE_CHANGED` / `TYPE_WINDOWS_CHANGED` on [launcherActiveDisplayId].
+     * 2. Updating [latestForegroundPackage] while ignoring our own package so Cover-Screen-OS
+     *    overlays (keyboard, media panel, launcher) never self-trigger overlay resumption.
+     * 3. Tracking recently active user apps (`lastKnownUserAppPackage`) to guard against premature reclaim.
+     * 4. Delegating incoming-call UI detection to [ForegroundService.requestIncomingCallPassthrough].
+     * 5. Running a two-stage debounced reclaim ([RECLAIM_STABILITY_DEBOUNCE_MS] +
+     *    [scheduleDelayedReclaimCheck]) when a native cover-home destination stabilizes on top.
+     */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
 
@@ -622,6 +671,11 @@ class CoverAccessibilityService : AccessibilityService() {
         ForegroundService.requestOverlayReclaim(reason = foregroundPackage)
     }
 
+    /**
+     * Routes accessibility swipe gestures to system navigation (`GLOBAL_ACTION_BACK`,
+     * `HOME`, `RECENTS`, `NOTIFICATIONS`) while the cover overlay is active, applying
+     * gesture debounce and action throttling.
+     */
     override fun onGesture(gestureEvent: AccessibilityGestureEvent): Boolean {
         if (!ForegroundService.isOverlayActive) return false
 
@@ -642,6 +696,11 @@ class CoverAccessibilityService : AccessibilityService() {
         return result
     }
 
+    /**
+     * Intercepts hardware `KEYCODE_BACK` presses when [ForegroundService.isOverlayActive]
+     * is `true` so back navigation is routed through [handleHardwareBackPress] rather than
+     * leaking to an underlying window.
+     */
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (!ForegroundService.isOverlayActive) return super.onKeyEvent(event)
 
@@ -652,6 +711,10 @@ class CoverAccessibilityService : AccessibilityService() {
         return super.onKeyEvent(event)
     }
 
+    /**
+     * Dispatches [GLOBAL_ACTION_BACK] (throttled) and falls back to requesting overlay
+     * reclaim if the system rejects or does not support global back.
+     */
     private fun handleHardwareBackPress(): Boolean {
         if (shouldThrottleGlobalAction()) {
             logDebug { "Hardware back press throttled while overlay is active" }
@@ -668,10 +731,12 @@ class CoverAccessibilityService : AccessibilityService() {
         return true
     }
 
+    /** Called by the system when accessibility feedback/processing is interrupted. */
     override fun onInterrupt() {
         logDebug { "Accessibility service interrupted" }
     }
 
+    /** Prevents duplicate global actions when Android dispatches rapid repeated gesture callbacks. */
     private fun shouldDebounceGesture(gestureId: Int): Boolean {
         val now = SystemClock.elapsedRealtime()
         val isRepeated = lastGestureId == gestureId && (now - lastGestureAtMs) < GESTURE_DEBOUNCE_MS
@@ -683,6 +748,7 @@ class CoverAccessibilityService : AccessibilityService() {
         return isRepeated
     }
 
+    /** Rate-limits `performGlobalAction` calls to at most once per [ACTION_THROTTLE_MS]. */
     private fun shouldThrottleGlobalAction(): Boolean {
         val now = SystemClock.elapsedRealtime()
         val throttled = (now - lastActionAtMs) < ACTION_THROTTLE_MS
@@ -694,6 +760,7 @@ class CoverAccessibilityService : AccessibilityService() {
         return throttled
     }
 
+    /** Returns `true` if [packageName]/[className] identifies a native home surface eligible to reclaim the overlay. */
     private fun shouldRequestOverlayReclaim(packageName: String, className: String? = null): Boolean {
         return CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className) ||
             OVERLAY_RECLAIM_PACKAGE_PREFIXES.any { prefix ->
@@ -701,6 +768,7 @@ class CoverAccessibilityService : AccessibilityService() {
             }
     }
 
+    /** Returns `true` for third-party / user-launched apps (excluding SystemUI, AOD, launcher, and self). */
     private fun shouldTrackAsUserForegroundApp(packageName: String, className: String? = null): Boolean {
         if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
             return false
@@ -710,6 +778,7 @@ class CoverAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Returns `true` for transient SystemUI or AOD surfaces that are not cover-home destinations. */
     private fun isTransientSystemUiPackage(packageName: String, className: String? = null): Boolean {
         if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
             return false
@@ -719,6 +788,10 @@ class CoverAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Schedules a post-debounce check after [RECLAIM_STABILITY_DEBOUNCE_MS] to verify via
+     * [inspectDisplayWindowState] that no launched user app remains visible before reclaiming.
+     */
     private fun scheduleDelayedReclaimCheck(candidatePackage: String, candidateClassName: String?) {
         pendingReclaimCheck?.let { reclaimHandler.removeCallbacks(it) }
         val targetDisplayId = launcherActiveDisplayId() ?: Display.DEFAULT_DISPLAY
@@ -750,6 +823,7 @@ class CoverAccessibilityService : AccessibilityService() {
         reclaimHandler.postDelayed(runnable, RECLAIM_STABILITY_DEBOUNCE_MS)
     }
 
+    /** Cancels any pending [scheduleDelayedReclaimCheck] runnable and clears reclaim candidate state. */
     private fun resetReclaimCandidate() {
         pendingReclaimCheck?.let { reclaimHandler.removeCallbacks(it) }
         pendingReclaimCheck = null
@@ -793,6 +867,7 @@ class CoverAccessibilityService : AccessibilityService() {
         )
     }
 
+    /** Returns `true` if [packageName] matches a known dialer / incoming-call surface. */
     private fun shouldAllowIncomingCallSurface(packageName: String): Boolean {
         return CallPackageMatchers.isIncomingCallPackage(packageName)
     }

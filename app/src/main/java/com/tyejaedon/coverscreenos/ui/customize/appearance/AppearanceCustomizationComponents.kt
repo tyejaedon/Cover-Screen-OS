@@ -22,6 +22,12 @@ import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusMedium
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
 
+/**
+ * Card allowing the user to select the cover UI [ThemePreference] (System, Light, or Dark).
+ *
+ * Supports rendering either a Material 3 [SingleChoiceSegmentedButtonRow] ([useSegmentedButtons] = true)
+ * or a row of equal-weight action buttons sized to cover-screen touch target minimums.
+ */
 @Composable
 internal fun AppearanceCustomizationCard(
     themePreference: ThemePreference,
@@ -47,6 +53,7 @@ internal fun AppearanceCustomizationCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            // Render compact segmented controls when embedded in AppearanceScreen, or full buttons otherwise.
             if (useSegmentedButtons) {
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     ThemePreference.entries.forEachIndexed { index, option ->

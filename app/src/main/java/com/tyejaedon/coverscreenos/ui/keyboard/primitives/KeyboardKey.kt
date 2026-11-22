@@ -46,7 +46,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 
 /**
- * Visual + haptic + gesture colours for a [KeyboardKey].
+ * Visual color tokens for a [KeyboardKey] across idle, pressed, and disabled states.
  */
 data class KeyboardKeyColors(
     val idleBackground: Color,
@@ -55,7 +55,9 @@ data class KeyboardKeyColors(
     val disabledBackground: Color,
     val disabledContent: Color
 ) {
+    /** Factory helpers returning Material 3 theme-aligned [KeyboardKeyColors] presets. */
     companion object {
+        /** Standard surface-variant key colors with subtle white press highlight. */
         @Composable
         fun default(): KeyboardKeyColors = KeyboardKeyColors(
             idleBackground = MaterialTheme.colorScheme.surfaceVariant,
@@ -65,6 +67,7 @@ data class KeyboardKeyColors(
             disabledContent = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
         )
 
+        /** Primary-tinted accent colors used for action keys (Enter/Send, active toggles). */
         @Composable
         fun accent(): KeyboardKeyColors = default().copy(
             idleBackground = MaterialTheme.colorScheme.primary,
@@ -77,29 +80,42 @@ data class KeyboardKeyColors(
  * Shared keyboard-key primitive used by every cover-screen keypad (QWERTY,
  * numeric PIN, T9, IME service, launcher search).
  *
+ * Uses a custom `pointerInput` / `awaitEachGesture` loop instead of `detectTapGestures` so
+ * feedback, hold-repeat, long-press, and horizontal drag scrubbing (e.g. spacebar cursor control)
+ * all start immediately on pointer-down without waiting for tap confirmation.
+ *
  * Features:
- *  - Text label or [ImageVector] icon (mutually exclusive; label wins if both
- *    are supplied).
- *  - Press-state scale-down + colour swap animation via
- *    [animateFloatAsState].
+ *  - Text [label] or [ImageVector] [icon] (mutually exclusive; [label] wins if both are supplied).
+ *  - Press-state scale-down + colour swap animation via [animateFloatAsState] / [animateColorAsState].
  *  - Optional [onLongPress].
- *  - Optional [repeatOnHold] that re-fires [onClick] on an interval while the
- *    finger stays down (backspace / arrow-key semantics).
- *  - Tiered haptic feedback ([HapticTier]) fired on every discrete emission.
- *  - Optional built-in [KeyPreview] popup shown while pressed
+ *  - Optional [repeatOnHold] that re-fires [onClick] on an interval while the finger stays down
+ *    (backspace / arrow-key semantics).
+ *  - Optional [onHorizontalDragStart] / [onHorizontalDrag] for trackpad-like drag gestures.
+ *  - Tiered haptic feedback ([HapticTier]) and key-click sound ([rememberKeySoundPerformer]) fired
+ *    on every discrete emission.
+ *  - Optional built-in [KeyPreview] [androidx.compose.ui.window.Popup] anchored while pressed
  *    ([showKeyPreview]). Requires [label] to render — icons skip the popup.
  *
- * @param label text label; also used as the key-preview text.
- * @param icon icon; ignored if [label] is non-null.
  * @param onClick invoked on tap release AND on each hold-repeat tick.
- * @param onLongPress invoked once when the long-press threshold expires;
- *   suppresses the release [onClick] if consumed.
- * @param repeatOnHold when true, [onClick] fires repeatedly while pressed
- *   after [repeatInitialDelayMillis], every [repeatIntervalMillis].
+ * @param modifier layout and semantics modifier applied to the key container.
+ * @param label text label; also used as the key-preview text.
+ * @param icon vector icon; ignored if [label] is non-null.
+ * @param contentDescription accessibility label exposed to TalkBack; defaults to [label].
+ * @param enabled disables the key visually and drops all gestures when `false`.
+ * @param onLongPress invoked once when [longPressThresholdMillis] expires; suppresses the release
+ *   [onClick] if consumed.
+ * @param onHorizontalDragStart invoked once when horizontal movement exceeds the 24px drag slop.
+ * @param onHorizontalDrag invoked on each subsequent move event with the incremental X delta (px).
+ * @param repeatOnHold when `true`, [onClick] fires repeatedly while pressed after
+ *   [repeatInitialDelayMillis], every [repeatIntervalMillis].
+ * @param repeatInitialDelayMillis delay before the first hold-repeat emission begins.
+ * @param repeatIntervalMillis interval between repeated emissions while held.
+ * @param longPressThresholdMillis duration required to trigger [onLongPress].
  * @param hapticTier tier for the tap / hold / long-press haptic events.
- * @param showKeyPreview when true and [label] is non-null, a [KeyPreview]
- *   popup is shown while the key is pressed.
- * @param enabled disables the key visually and drops all gestures when false.
+ * @param showKeyPreview when `true` and [label] is non-null, a [KeyPreview] popup is shown while
+ *   the key is pressed.
+ * @param shape background clipping shape for the key tile.
+ * @param colors color palette across idle, pressed, and disabled states.
  */
 @Composable
 fun KeyboardKey(
@@ -135,6 +151,7 @@ fun KeyboardKey(
         }
     }
 
+    // Keep latest callbacks accessible inside pointerInput without restarting active gestures.
     val onClickState = rememberUpdatedState(onClick)
     val onLongPressState = rememberUpdatedState(onLongPress)
     val onDragStartState = rememberUpdatedState(onHorizontalDragStart)
@@ -161,6 +178,7 @@ fun KeyboardKey(
             .scale(scale)
             .clip(shape)
             .background(bg)
+            // Merge child text/icon into a single accessibility Button node for TalkBack & UI tests.
             .semantics(mergeDescendants = true) {
                 role = Role.Button
                 this.contentDescription = accessibleLabel
@@ -169,6 +187,7 @@ fun KeyboardKey(
                     true
                 }
             }
+            // Re-key gesture detector only on structural behavior flags, not lambda identities.
             .pointerInput(enabled, repeatOnHold, onHorizontalDrag != null, onHorizontalDragStart != null,
                 longPressThresholdMillis,
                 repeatInitialDelayMillis, repeatIntervalMillis) {
@@ -176,6 +195,7 @@ fun KeyboardKey(
                 val scope = CoroutineScope(currentCoroutineContext())
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    // Trigger press state, haptics, and key sound immediately on touch-down.
                     isPressed = true
                     performFeedback()
                     var held = false
@@ -183,10 +203,12 @@ fun KeyboardKey(
                     var emitted = false
                     var released = false
                     var lastX = down.position.x
+                    // Repeatable keys without drag (e.g. Backspace) emit once immediately on press.
                     if (repeatOnHold && onHorizontalDragStart == null) {
                         emitted = true
                         onClickState.value.invoke()
                     }
+                    // Background timer driving either hold-to-repeat (e.g. key deletion) or long-press.
                     val holdJob: Job = scope.launch {
                         if (repeatOnHold) {
                             delay(repeatInitialDelayMillis)
@@ -205,6 +227,7 @@ fun KeyboardKey(
                             }
                         }
                     }
+                    // Track the active pointer until release or cancellation.
                     while (!released) {
                         val event = awaitPointerEvent()
                         val pointer = event.changes.firstOrNull { it.id == down.id }
@@ -213,18 +236,21 @@ fun KeyboardKey(
                             val inBoundsOnRelease = pointer != null &&
                                 pointer.position.x in 0f..size.width.toFloat() &&
                                 pointer.position.y in 0f..size.height.toFloat()
+                            // Only treat release as a tap if the finger lifted inside key bounds unconsumed.
                             val wasTap = inBoundsOnRelease && pointer.previousPressed && !pointer.isConsumed
                             isPressed = false
                             holdJob.cancel()
                             if (wasTap && !held && !dragged && !repeatOnHold) {
                                 onClickState.value.invoke()
                             } else if (wasTap && !dragged && repeatOnHold && !emitted) {
+                                // Fires deferred tap for repeat keys that also support horizontal drag (e.g. Space).
                                 onClickState.value.invoke()
                             }
                         } else {
                             val inBounds = pointer.position.x in 0f..size.width.toFloat() &&
                                 pointer.position.y in 0f..size.height.toFloat()
                             if (onHorizontalDrag != null || onHorizontalDragStart != null) {
+                                // Enter horizontal drag mode after 24px slop and cancel pending hold/repeat jobs.
                                 if (kotlin.math.abs(pointer.position.x - down.position.x) >= 24f) {
                                     if (!dragged) onDragStartState.value?.invoke(
                                         pointer.position.x - down.position.x
@@ -261,16 +287,24 @@ fun KeyboardKey(
             )
         }
 
+        // Anchor the floating KeyPreview Popup to this key's bounds while pressed; autoDismiss=0L
+        // binds dismissal directly to isPressed rather than a timer.
         if (showKeyPreview && label != null && isPressed && enabled) {
             KeyPreview(label = label, autoDismissMillis = 0L)
         }
     }
 }
 
+/** Default hold duration (in ms) before [KeyboardKey] triggers `onLongPress`. */
 internal const val DefaultLongPressThresholdMillis: Long = 400L
+
+/** Default initial hold delay (in ms) before `repeatOnHold` begins repeating. */
 internal const val DefaultRepeatInitialDelayMillis: Long = 450L
+
+/** Default interval (in ms) between consecutive `repeatOnHold` emissions. */
 internal const val DefaultRepeatIntervalMillis: Long = 55L
 
+/** Compose preview of a standard text-labeled [KeyboardKey]. */
 @Preview(showBackground = true, name = "Key — text label")
 @Composable
 private fun KeyboardKeyLabelPreview() {
@@ -285,6 +319,7 @@ private fun KeyboardKeyLabelPreview() {
     }
 }
 
+/** Compose preview of an accent-colored action [KeyboardKey]. */
 @Preview(showBackground = true, name = "Key — accent")
 @Composable
 private fun KeyboardKeyAccentPreview() {

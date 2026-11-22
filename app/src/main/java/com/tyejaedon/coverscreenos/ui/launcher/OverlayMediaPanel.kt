@@ -82,6 +82,9 @@ private val PREFERRED_MEDIA_PACKAGES = listOf(
     "com.samsung.android.app.music"
 )
 
+/**
+ * Responsive layout dimensions and transport icon sizes for [ExpandedNowPlayingPanel].
+ */
 internal data class ExpandedPlayerLayoutSpec(
     val panelWidthFraction: Float,
     val panelHeightFraction: Float,
@@ -94,6 +97,13 @@ internal data class ExpandedPlayerLayoutSpec(
     val actionButtonVerticalPadding: Dp
 )
 
+/**
+ * Resolves and launches a media player app from the cover overlay.
+ *
+ * Checks candidate packages in priority order: (1) the active media notification's source
+ * package, (2) well-known music apps in [PREFERRED_MEDIA_PACKAGES], and (3) Android's default
+ * [Intent.CATEGORY_APP_MUSIC] handler via `PackageManager.resolveActivity`.
+ */
 internal fun openMediaApplicationFromOverlay(
     context: Context,
     notifications: List<CoverNotificationModel>
@@ -118,6 +128,7 @@ internal fun openMediaApplicationFromOverlay(
         }
     }
 
+    // Fall back to whichever app handles the standard Android music category intent.
     val categoryMusicIntent = Intent(Intent.ACTION_MAIN).apply {
         addCategory(Intent.CATEGORY_APP_MUSIC)
     }
@@ -133,6 +144,13 @@ internal fun openMediaApplicationFromOverlay(
     } ?: false
 }
 
+/**
+ * Compact pill-shaped now-playing strip anchored above the dock on the lockscreen tile.
+ *
+ * Displays active track artwork (validated via [usableMediaArtwork]) or the source app's icon,
+ * title/artist metadata, and current playback state; tapping opens [ExpandedNowPlayingPanel]
+ * when media is active or falls back to [onOpenMediaApp] when idle.
+ */
 @Composable
 internal fun CompactNowPlayingCard(
     mediaNotification: CoverNotificationModel?,
@@ -207,6 +225,14 @@ internal fun CompactNowPlayingCard(
     }
 }
 
+/**
+ * Modal expanded media player overlay rendered over the lockscreen tile.
+ *
+ * Uses [AnimatedVisibility] with One UI slide transitions and adapts sizing via
+ * [BoxWithConstraints] + [expandedPlayerLayoutSpec]. Reads `MediaController` transport state and
+ * capability flags (`isPlaying`, `canPlayPause`, `canSkipPrevious`, `canSkipNext`) from
+ * [CoverNotificationModel.media] and forwards user taps as [CoverMediaTransportAction] commands.
+ */
 @Composable
 fun ExpandedNowPlayingPanel(
     mediaNotification: CoverNotificationModel?,
@@ -225,6 +251,7 @@ fun ExpandedNowPlayingPanel(
     ) {
         if (mediaNotification == null) return@AnimatedVisibility
 
+        // Mirror active MediaSession transport capabilities so unsupported actions render disabled.
         val media = mediaNotification.media
         val isPlaying = media?.isPlaying == true
         val canPlayPause = media?.canPlayPause == true
@@ -289,6 +316,10 @@ fun ExpandedNowPlayingPanel(
     }
 }
 
+/**
+ * Scrollable inner content of [ExpandedNowPlayingPanel], including header actions, track
+ * metadata, transport controls (`PREVIOUS`, `PLAY_PAUSE`, `NEXT`), and full-app launch action.
+ */
 @Composable
 private fun MediaPlayerContent(
     mediaNotification: CoverNotificationModel,
@@ -395,6 +426,10 @@ private fun MediaPlayerContent(
     }
 }
 
+/**
+ * Selects an [ExpandedPlayerLayoutSpec] scaled to the cover viewport [height] so controls keep
+ * comfortable touch targets (`>= 48.dp`) on compact cover displays without vertical clipping.
+ */
 internal fun expandedPlayerLayoutSpec(height: Dp): ExpandedPlayerLayoutSpec = when {
     height <= 340.dp -> ExpandedPlayerLayoutSpec(
         panelWidthFraction = 0.97f,
@@ -431,6 +466,10 @@ internal fun expandedPlayerLayoutSpec(height: Dp): ExpandedPlayerLayoutSpec = wh
     )
 }
 
+/**
+ * Full-bleed album artwork (or dark neutral fallback) layered under a vertical dark scrim so
+ * foreground transport icons and track labels remain legible.
+ */
 @Composable
 private fun MediaArtworkBackground(artwork: Bitmap?) {
     if (artwork != null) {
@@ -452,9 +491,17 @@ private fun MediaArtworkBackground(artwork: Bitmap?) {
     )
 }
 
+/**
+ * Guards against recycled or zero-dimension [Bitmap] instances before converting to `ImageBitmap`.
+ */
 internal fun usableMediaArtwork(artwork: Bitmap?): Bitmap? =
     artwork?.takeUnless { it.isRecycled || it.width <= 0 || it.height <= 0 }
 
+/**
+ * Press-scaled (`0.94f`) and haptic-enabled transport control button for [MediaPlayerContent].
+ *
+ * Dims icon alpha to `0.45f` and suppresses press animation when [enabled] is `false`.
+ */
 @Composable
 private fun MediaControlIconButton(
     icon: ImageVector,

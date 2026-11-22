@@ -74,6 +74,15 @@ private const val INDICATOR_SCRUB_INTERVAL_MS = 42L
 private val GRID_TILE_GAP = 6.dp
 private val GRID_CONTENT_PADDING = PaddingValues(start = 6.dp, top = 14.dp, end = 6.dp, bottom = 2.dp)
 
+/**
+ * Renders one fixed 4x3 (`GRID_COLUMNS` x `GRID_ROWS`) non-scrollable app grid page inside the
+ * cover screen's `HorizontalPager`.
+ *
+ * Shows [APPS_PER_GRID_PAGE] lightweight placeholder dots while [deferHydration] is `true` so the
+ * initial overlay frame commits quickly, displays [emptyStateLabel] when no apps match, and pads
+ * partial trailing pages with [AppGridPlaceholderTile]s to preserve consistent row/column spacing.
+ * Accepts [hazeState] to match the shared pager tile signature.
+ */
 @Composable
 internal fun AppGridPageTile(
     apps: List<AppModel>,
@@ -110,6 +119,7 @@ internal fun AppGridPageTile(
         return
     }
 
+    // Pad remaining grid cells with nulls so partial final pages keep uniform 4x3 tile geometry.
     val displaySlots = remember(apps) {
         val placeholderCount = (APPS_PER_GRID_PAGE - apps.size).coerceAtLeast(0)
         apps.map { it as AppModel? } + List(placeholderCount) { null }
@@ -140,6 +150,10 @@ internal fun AppGridPageTile(
     }
 }
 
+/**
+ * Floating circular alphabetical badge shown during pager swipes or indicator scrubbing to
+ * preview the starting letter of the target app grid page.
+ */
 @Composable
 internal fun GridPageLetterTooltip(letter: String?, visible: Boolean, modifier: Modifier = Modifier) {
     if (!visible || letter == null) return
@@ -159,6 +173,10 @@ internal fun GridPageLetterTooltip(letter: String?, visible: Boolean, modifier: 
     }
 }
 
+/**
+ * Returns the uppercase leading character of the first app on [pagerPageIndex], or `null` when
+ * [pagerPageIndex] points to a non-grid page (notifications, lockscreen, or widget host).
+ */
 internal fun gridPageStartLetterForPagerPage(
     pagerPageIndex: Int,
     appPages: List<List<AppModel>>,
@@ -172,6 +190,14 @@ internal fun gridPageStartLetterForPagerPage(
     return if (firstChar.isLetter()) firstChar.uppercaseChar().toString() else firstChar.toString()
 }
 
+/**
+ * Interactive dot-and-pill pager indicator synchronized with [pagerState].
+ *
+ * Tracks continuous scroll progress (`currentPage + currentPageOffsetFraction`) to glide the
+ * accent pill across dots, and supports both tap-to-jump and accelerated horizontal drag
+ * scrubbing ([INDICATOR_SCRUB_SENSITIVITY], throttled by [INDICATOR_SCRUB_INTERVAL_MS]) while
+ * reporting scrub state via [onScrubActiveChanged].
+ */
 @Composable
 internal fun PageIndicator(
     pagerState: PagerState,
@@ -184,6 +210,7 @@ internal fun PageIndicator(
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val hapticFeedback = LocalHapticFeedback.current
+    // Keep pointerInput coroutines reading the latest callback without restarting gesture detectors.
     val latestOnScrubActiveChanged by androidx.compose.runtime.rememberUpdatedState(onScrubActiveChanged)
 
     var isDragging by remember { mutableStateOf(false) }
@@ -305,6 +332,7 @@ internal fun PageIndicator(
                 }
             }
 
+            // Center the wider active pill over the interpolated dot position for smooth page transitions.
             val stepDistancePx = with(density) { (dotDiameter + dotSpacing).toPx() }
             val activePillWidthPx = with(density) { activePillWidth.toPx() }
             val dotDiameterPx = with(density) { dotDiameter.toPx() }
@@ -322,6 +350,13 @@ internal fun PageIndicator(
     }
 }
 
+/**
+ * Pill-shaped bottom dock hosting [DOCK_SLOT_COUNT] (4) pinned application slots on the
+ * lockscreen tile.
+ *
+ * When [slotFourAllApps] is enabled, the fourth slot acts as an `"All apps"` shortcut invoking
+ * [onOpenAllApps] instead of launching a pinned package.
+ */
 @Composable
 internal fun OneUiDockRow(
     dockSlots: List<AppModel?>,
@@ -384,6 +419,9 @@ internal fun OneUiDockRow(
     }
 }
 
+/**
+ * Minimal dot placeholder occupying an unhydrated or trailing empty slot in the 4x3 grid.
+ */
 @Composable
 private fun AppGridPlaceholderTile() {
     Box(
@@ -402,6 +440,10 @@ private fun AppGridPlaceholderTile() {
     }
 }
 
+/**
+ * Individual app launcher cell displaying a cached package icon (`rememberPackageIconBitmap`)
+ * and single-line label backed by a translucent pill for contrast over arbitrary wallpapers.
+ */
 @Composable
 private fun AppGridTile(
     app: AppModel,

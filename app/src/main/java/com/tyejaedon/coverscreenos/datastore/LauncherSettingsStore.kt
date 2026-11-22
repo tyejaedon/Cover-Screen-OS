@@ -42,10 +42,12 @@ import java.io.InputStream
 import java.util.UUID
 import kotlin.math.max
 
+/** Fixed number of quick-launch slots rendered in the cover-screen dock. */
 const val COVER_DOCK_SLOT_COUNT = 4
 const val MIN_PANEL_CORNER_RADIUS_DP = 0f
 const val MAX_PANEL_CORNER_RADIUS_DP = 32f
 const val DEFAULT_PANEL_CORNER_RADIUS_DP = 16f
+/** Clamps [radiusDp] into `[MIN_PANEL_CORNER_RADIUS_DP, MAX_PANEL_CORNER_RADIUS_DP]`, falling back to default for non-finite values. */
 internal fun normalizePanelCornerRadius(radiusDp: Float): Float =
 	if (radiusDp.isFinite()) radiusDp.coerceIn(MIN_PANEL_CORNER_RADIUS_DP, MAX_PANEL_CORNER_RADIUS_DP)
 	else DEFAULT_PANEL_CORNER_RADIUS_DP
@@ -64,27 +66,35 @@ const val DEFAULT_WALLPAPER_ZOOM = 1f
 const val DEFAULT_WALLPAPER_ROTATION = 0
 val DEFAULT_WALLPAPER_SCALE_MODE: WallpaperScaleMode = WallpaperScaleMode.CROP
 
+/** Clamps a normalized horizontal or vertical wallpaper crop offset to `[-1f, 1f]`. */
 internal fun normalizeWallpaperCropOffset(value: Float): Float =
 	if (value.isFinite()) value.coerceIn(MIN_WALLPAPER_CROP_OFFSET, MAX_WALLPAPER_CROP_OFFSET)
 	else DEFAULT_WALLPAPER_CROP_OFFSET
 
+/** Clamps wallpaper zoom factor to `[MIN_WALLPAPER_ZOOM, MAX_WALLPAPER_ZOOM]`. */
 internal fun normalizeWallpaperZoom(value: Float): Float =
 	if (value.isFinite()) value.coerceIn(MIN_WALLPAPER_ZOOM, MAX_WALLPAPER_ZOOM)
 	else DEFAULT_WALLPAPER_ZOOM
 
+/** Normalizes any signed degree angle into a 90-degree clockwise step in `{0, 90, 180, 270}`. */
 internal fun normalizeWallpaperRotation(value: Int): Int = ((value % 360) + 360) % 360 / 90 * 90
 
+/** Controls how custom wallpaper media fills the cover-screen viewport bounds. */
 enum class WallpaperScaleMode {
+	/** Center-crop to fill the display without letterboxing. */
 	CROP,
+	/** Scale to fit completely inside the viewport bounds. */
 	FIT
 }
 
+/** Cover-screen UI color-theme mode preference. */
 enum class ThemePreference {
 	SYSTEM,
 	LIGHT,
 	DARK
 }
 
+/** Accent color palette applied across Cover-Screen-OS UI surfaces and controls. */
 enum class AccentColor {
 	DEFAULT,
 	MINT,
@@ -114,12 +124,25 @@ const val MAX_EXTRA_KEY_HEIGHT_DP = 24f
 const val COMPACT_EXTRA_KEY_HEIGHT_DP = 0f
 const val STANDARD_EXTRA_KEY_HEIGHT_DP = 12f
 const val TALL_EXTRA_KEY_HEIGHT_DP = 24f
+/** Clamps extra keyboard key height in dp into `[MIN_EXTRA_KEY_HEIGHT_DP, MAX_EXTRA_KEY_HEIGHT_DP]`. */
 internal fun normalizeExtraKeyHeightDp(extraDp: Float): Float =
 	if (extraDp.isFinite()) extraDp.coerceIn(MIN_EXTRA_KEY_HEIGHT_DP, MAX_EXTRA_KEY_HEIGHT_DP)
 	else COMPACT_EXTRA_KEY_HEIGHT_DP
 
+/**
+ * Process-wide Jetpack `preferencesDataStore` delegate persisted to
+ * `files/datastore/cover_launcher_settings.preferences_pb`.
+ */
 private val Context.coverLauncherSettingsDataStore by preferencesDataStore(name = "cover_launcher_settings")
 
+/**
+ * Strongly-typed Jetpack DataStore [Preferences.Key] registry for launcher settings.
+ *
+ * Complex structures are encoded cleanly within flat primitive preferences:
+ * - [dockSlots]: four indexed string keys (`dock_slot_0`..`dock_slot_3`).
+ * - [keyboardModeByPackage]: JSON object mapping package names to [CoverKeyboardMode] names.
+ * - [widgetIds]: comma-separated integer AppWidget IDs preserving user ordering.
+ */
 private object LauncherPreferencesKeys {
 	val welcomeTourSeen = booleanPreferencesKey("welcome_tour_seen")
 	val wallpaperUri = stringPreferencesKey("wallpaper_uri")
@@ -151,6 +174,10 @@ private object LauncherPreferencesKeys {
 	}
 }
 
+/**
+ * Immutable snapshot of all user-configurable cover-screen launcher, dock, wallpaper, appearance,
+ * widget, and built-in keyboard preferences.
+ */
 data class LauncherSettings(
 	val dockPackages: List<String?> = List(COVER_DOCK_SLOT_COUNT) { null },
 	val wallpaperUri: String? = null,
@@ -185,8 +212,15 @@ private const val MANAGED_WALLPAPER_FILE_PREFIX = "selected_wallpaper_"
 private const val MANAGED_WALLPAPER_FILE_LEGACY = "selected_wallpaper"
 private const val MANAGED_WALLPAPER_FALLBACK_EXTENSION = ".img"
 private const val WALLPAPER_VALIDATION_TARGET_SIZE_PX = 512
+/** Process-wide mutex serializing wallpaper file storage mutations and DataStore URI updates. */
 private val wallpaperMutationMutex = Mutex()
 
+/**
+ * Atomically commits a validated wallpaper URI and runs post-commit cleanup inside [NonCancellable].
+ *
+ * Checks coroutine cancellation beforehand so a cancelled import aborts cleanly, then prevents
+ * mid-commit cancellation from leaving DataStore pointing at an uncommitted file or skipping cleanup.
+ */
 internal suspend fun finalizeWallpaperImport(
 	commit: suspend () -> Unit,
 	afterCommit: () -> Unit
@@ -198,6 +232,10 @@ internal suspend fun finalizeWallpaperImport(
 	}
 }
 
+/**
+ * Best-effort `org.json` parser for per-package [CoverKeyboardMode] overrides, silently dropping
+ * unrecognized enum values and returning an empty map if the stored JSON is missing or malformed.
+ */
 private fun decodeKeyboardModes(raw: String?): Map<String, CoverKeyboardMode> {
 	if (raw.isNullOrBlank()) return emptyMap()
 	return runCatching {
@@ -209,15 +247,28 @@ private fun decodeKeyboardModes(raw: String?): Map<String, CoverKeyboardMode> {
 	}.getOrDefault(emptyMap())
 }
 
+/**
+ * Primary Jetpack DataStore `<Preferences>` repository for Cover-Screen-OS settings and managed
+ * wallpaper media.
+ *
+ * Exposes reactive [Flow] streams ([settings], [welcomeTourSeen]) mapped from DataStore preferences,
+ * JSON backup import/export via [LauncherSettingsJson], and mutex-serialized wallpaper file import,
+ * binary/media validation, and legacy file migration on [ioDispatcher].
+ *
+ * @param context Android context; only [Context.getApplicationContext] is retained.
+ * @param ioDispatcher Coroutine dispatcher used for DataStore mutations and disk/media I/O.
+ */
 class LauncherSettingsStore(
 	context: Context,
 	private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
 	private val appContext = context.applicationContext
 
+	/** Reactive stream indicating whether the user has completed the initial onboarding tour. */
 	val welcomeTourSeen: Flow<Boolean> = appContext.coverLauncherSettingsDataStore.data
 		.map { preferences -> preferences[LauncherPreferencesKeys.welcomeTourSeen] ?: false }
 
+	/** Persists completion of the onboarding welcome tour in DataStore. */
 	suspend fun markWelcomeTourSeen() {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -226,6 +277,12 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/**
+	 * Reactive stream of validated [LauncherSettings] snapshots from Jetpack DataStore.
+	 *
+	 * On [IOException] or unexpected read errors, logs a warning and emits `emptyPreferences()`
+	 * so downstream UI receives safe defaults; [CancellationException] is always re-thrown.
+	 */
 	val settings: Flow<LauncherSettings> = appContext.coverLauncherSettingsDataStore.data
 		.catch { throwable ->
 			if (throwable is CancellationException) throw throwable
@@ -239,6 +296,11 @@ class LauncherSettingsStore(
 		}
 		.map(::mapStoredPreferences)
 
+	/**
+	 * Maps raw DataStore [Preferences] into a sanitized [LauncherSettings] domain model,
+	 * clamping out-of-range numbers, deduplicating dock slots, migrating legacy managed wallpaper
+	 * paths, and falling back to default [LauncherSettings] on unexpected mapping failures.
+	 */
 	internal fun mapStoredPreferences(preferences: Preferences): LauncherSettings {
 		return runCatching {
 				val storedWallpaperUri = preferences[LauncherPreferencesKeys.wallpaperUri]
@@ -318,6 +380,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Appends an Android AppWidget ID to the persisted cover widget list if not already present. */
 	suspend fun addWidgetId(widgetId: Int) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -333,6 +396,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Removes an AppWidget ID from the persisted cover widget list if present. */
 	suspend fun removeWidgetId(widgetId: Int) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -347,6 +411,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Replaces the ordered list of persisted cover AppWidget IDs. */
 	suspend fun setWidgetIds(widgetIds: List<Int>) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -355,6 +420,10 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/**
+	 * Assigns or clears a dock slot (`0 until COVER_DOCK_SLOT_COUNT`), removing any duplicate
+	 * occurrence of [packageName] from other slots so every docked app appears at most once.
+	 */
 	suspend fun setDockPackage(slotIndex: Int, packageName: String?) {
 		require(slotIndex in 0 until COVER_DOCK_SLOT_COUNT) {
 			"slotIndex must be between 0 and ${COVER_DOCK_SLOT_COUNT - 1}"
@@ -381,6 +450,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Replaces all dock slot assignments atomically after normalizing length and uniqueness. */
 	suspend fun setDockPackages(dockPackages: List<String?>) {
 		withContext(ioDispatcher) {
 			val normalized = normalizeDockPackages(dockPackages)
@@ -390,6 +460,12 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/**
+	 * Applies a full [LauncherSettings] snapshot atomically under [wallpaperMutationMutex].
+	 *
+	 * @param restoreKeyboardModes When `true` (e.g. JSON backup restore), overwrites persisted
+	 * per-package keyboard mode overrides in addition to layout/appearance fields.
+	 */
 	suspend fun setLauncherLayout(settings: LauncherSettings, restoreKeyboardModes: Boolean = false) {
 		wallpaperMutationMutex.withLock {
 			withContext(ioDispatcher) {
@@ -438,8 +514,15 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Serializes the current [settings] snapshot into a versioned JSON export string. */
 	suspend fun exportSettingsJson(): String = LauncherSettingsJson.encode(settings.first())
 
+	/**
+	 * Validates and restores a JSON backup created by [exportSettingsJson].
+	 *
+	 * Verifies that any referenced wallpaper URI is readable and decodable on the current device
+	 * before committing the restored layout to DataStore.
+	 */
 	suspend fun importSettingsJson(raw: String) {
 		val imported = LauncherSettingsJson.decode(raw)
 		val wallpaperUri = imported.wallpaperUri
@@ -458,6 +541,10 @@ class LauncherSettingsStore(
 		setLauncherLayout(imported, restoreKeyboardModes = true)
 	}
 
+	/**
+	 * Resolves and validates a wallpaper URI during layout restore, migrating legacy file locations
+	 * and falling back to the latest managed wallpaper file (or `null`) if stale.
+	 */
 	private fun resolveWallpaperUriForPersistedLayout(rawWallpaperUri: String?): String? {
 		if (rawWallpaperUri.isNullOrBlank()) return null
 
@@ -497,6 +584,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Shows or hides the bottom quick-launch dock on the cover homescreen. */
 	suspend fun setDockVisible(isVisible: Boolean) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -505,6 +593,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Updates the cover UI color-theme preference (`SYSTEM`, `LIGHT`, or `DARK`). */
 	suspend fun setThemePreference(themePreference: ThemePreference) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -513,12 +602,14 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Updates the accent color palette applied across Cover-Screen-OS surfaces. */
 	suspend fun setAccentColor(accentColor: AccentColor) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { it[LauncherPreferencesKeys.accentColor] = accentColor.name }
 		}
 	}
 
+	/** Persists normalized corner rounding in dp for cover panels and cards. */
 	suspend fun setPanelCornerRadiusDp(radiusDp: Float) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit {
@@ -527,6 +618,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Toggles whether the 4th dock slot acts as an All Apps launcher button. */
 	suspend fun setDockSlotFourAllApps(enabled: Boolean) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit {
@@ -535,6 +627,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Selects between the built-in T9 keypad and the Android system IME for drawer search. */
 	suspend fun setKeyboardStrategy(keyboardStrategy: KeyboardStrategy) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -543,6 +636,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Persists haptic feedback strength for keys on the cover keyboard. */
 	suspend fun setHapticStrength(hapticStrength: HapticStrength) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -551,6 +645,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Enables or disables audible key-press feedback on the cover keyboard. */
 	suspend fun setKeyPressSoundEnabled(enabled: Boolean) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit {
@@ -559,6 +654,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Shows or hides the word suggestion strip above the built-in cover keyboard. */
 	suspend fun setSuggestionStripVisible(visible: Boolean) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit {
@@ -567,6 +663,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Enables or disables automatic word correction on the built-in cover keyboard. */
 	suspend fun setAutocorrectEnabled(enabled: Boolean) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit {
@@ -575,6 +672,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Enables or disables enlarged key pop-up previews on touch. */
 	suspend fun setPopupKeyPreviewEnabled(enabled: Boolean) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit {
@@ -583,6 +681,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Persists clamped additional key height in dp above the automatic base height. */
 	suspend fun setKeyboardExtraHeightDp(extraDp: Float) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit {
@@ -591,6 +690,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Enables or disables compact one-handed layout mode for the built-in cover keyboard. */
 	suspend fun setKeyboardOneHandedEnabled(enabled: Boolean) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit {
@@ -599,6 +699,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Anchors the one-handed keyboard layout to the [KeyboardAnchor.Left] or [KeyboardAnchor.Right] edge. */
 	suspend fun setKeyboardOneHandedAnchor(anchor: KeyboardAnchor) {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit {
@@ -607,6 +708,10 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/**
+	 * Remembers the user's preferred [CoverKeyboardMode] for a specific foreground [packageName]
+	 * by updating the serialized JSON map stored in DataStore.
+	 */
 	suspend fun setKeyboardModeForPackage(packageName: String, mode: CoverKeyboardMode) {
 		if (packageName.isBlank()) return
 		withContext(ioDispatcher) {
@@ -620,6 +725,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Clears all remembered per-package cover keyboard mode overrides. */
 	suspend fun clearSavedKeyboardModes() {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -628,6 +734,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Reorders a dock slot from [fromIndex] to [toIndex] while preserving slot uniqueness. */
 	suspend fun moveDockPackage(fromIndex: Int, toIndex: Int) {
 		require(fromIndex in 0 until COVER_DOCK_SLOT_COUNT) {
 			"fromIndex must be between 0 and ${COVER_DOCK_SLOT_COUNT - 1}"
@@ -659,14 +766,21 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Clears any app shortcut assigned to [slotIndex]. */
 	suspend fun clearDockPackage(slotIndex: Int) {
 		setDockPackage(slotIndex = slotIndex, packageName = null)
 	}
 
+	/**
+	 * Validates and persists a wallpaper [uri] (or clears the wallpaper when `null`/blank).
+	 *
+	 * @return `true` if saved or cleared, `false` if the URI was unreadable or failed media decoding.
+	 */
 	suspend fun setWallpaperUri(uri: String?): Boolean {
 		return wallpaperMutationMutex.withLock { setWallpaperUriUnlocked(uri) }
 	}
 
+	/** Internal unlocked implementation; callers must hold [wallpaperMutationMutex]. */
 	private suspend fun setWallpaperUriUnlocked(uri: String?): Boolean {
 		return withContext(ioDispatcher) {
 			val normalizedUri = uri?.trim().takeUnless { it.isNullOrEmpty() }
@@ -699,14 +813,27 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/**
+	 * Copies, validates, and activates a user-picked wallpaper (image, GIF, or video) from [sourceUri]
+	 * into app-private storage so future restarts never depend on transient picker grants.
+	 */
 	suspend fun importWallpaperFromUri(sourceUri: Uri) {
 		importWallpaper(sourceUri) { openUriInputStream(sourceUri) }
 	}
 
+	/** Test seam for importing a wallpaper directly from a caller-provided [InputStream]. */
 	internal suspend fun importWallpaperFromStream(sourceUri: Uri, input: InputStream) {
 		importWallpaper(sourceUri) { input }
 	}
 
+	/**
+	 * Transactional wallpaper import pipeline guarded by [wallpaperMutationMutex]:
+	 * 1. Requests persistable URI permission when applicable and clears stale `.part` staging files.
+	 * 2. Streams into a `.part` temp file using bounded copy and `fd.sync()` durability flush.
+	 * 3. Validates magic bytes, dimensions, frame rate/duration, and hardware/software decodability.
+	 * 4. Renames atomically to a versioned file, commits DataStore inside [finalizeWallpaperImport],
+	 *    and prunes superseded managed wallpaper files.
+	 */
 	private suspend fun importWallpaper(sourceUri: Uri, openInput: () -> InputStream?) {
 		wallpaperMutationMutex.withLock {
 			withContext(ioDispatcher) {
@@ -753,6 +880,10 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/**
+	 * Streams [source] into [tempWallpaperFile] within [WallpaperMediaLimits.MAX_FILE_BYTES],
+	 * flushing OS buffers via `fd.sync()` and deleting the partial file if copying fails or cancels.
+	 */
 	internal suspend fun copyWallpaperImportStream(source: InputStream, tempWallpaperFile: File) {
 		try {
 			FileOutputStream(tempWallpaperFile, false).use { output ->
@@ -776,6 +907,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Deletes leftover `.part` staging files from previously interrupted wallpaper imports. */
 	private fun cleanInterruptedWallpaperImports(wallpaperDirectory: File) {
 		val managedFiles = wallpaperDirectory.listFiles()
 			?: throw IOException("Could not inspect wallpaper storage.")
@@ -786,6 +918,12 @@ class LauncherSettingsStore(
 			}
 	}
 
+	/**
+	 * Performs full format-specific verification on a staged wallpaper [file]:
+	 * - [WallpaperMediaType.GIF]: binary block validation + [ImageDecoder.decodeDrawable] check.
+	 * - [WallpaperMediaType.IMAGE]: two-pass [BitmapFactory] bounds check + downsampled decode check.
+	 * - [WallpaperMediaType.VIDEO]: container/track/codec/timestamp/frame decode checks via [validateVideoFile].
+	 */
 	private fun validateWallpaperFile(file: File): WallpaperMediaType {
 		require(file.isFile && file.canRead() && file.length() in 1..WallpaperMediaLimits.MAX_FILE_BYTES) {
 			"Wallpaper must be a readable file no larger than ${WallpaperMediaLimits.MAX_FILE_BYTES / (1024 * 1024)} MB."
@@ -802,11 +940,13 @@ class LauncherSettingsStore(
 				}
 			}
 			WallpaperMediaType.IMAGE -> {
+				// Pass 1: inspect dimensions with inJustDecodeBounds=true before allocating pixel memory.
 				val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
 				BitmapFactory.decodeFile(file.absolutePath, bounds)
 				require(WallpaperMediaLimits.hasValidDimensions(bounds.outWidth, bounds.outHeight, animated = false)) {
 					"Image dimensions exceed ${WallpaperMediaLimits.MAX_WIDTH}x${WallpaperMediaLimits.MAX_HEIGHT} or ${WallpaperMediaLimits.MAX_IMAGE_PIXELS / 1_000_000} megapixels."
 				}
+				// Pass 2: decode a subsampled ARGB_8888 thumbnail to confirm pixel data is intact.
 				val options = BitmapFactory.Options().apply {
 					inSampleSize = calculateValidationInSampleSize(
 						bounds.outWidth,
@@ -827,12 +967,17 @@ class LauncherSettingsStore(
 		return type
 	}
 
+	/** Sniffs the first 4 KB of [file] to classify it via [WallpaperMediaLimits.detectMediaType]. */
 	private fun detectWallpaperType(file: File): WallpaperMediaType {
 		return file.inputStream().use { stream ->
 			WallpaperMediaLimits.detectMediaType(stream.readNBytes(4096))
 		}
 	}
 
+	/**
+	 * Validates video duration, resolution, codec, frame rate, frame count, and decodability using
+	 * Android's [MediaMetadataRetriever] and [MediaExtractor], releasing both in `finally` blocks.
+	 */
 	private fun validateVideoFile(file: File) {
 		val retriever = MediaMetadataRetriever()
 		try {
@@ -859,6 +1004,7 @@ class LauncherSettingsStore(
 					videoTrack.getInteger(MediaFormat.KEY_FRAME_RATE) else 0
 				WallpaperMediaLimits.validateVideoFrameRate(fps)
 				extractor.selectTrack(videoTrackIndex)
+				// Walk sample timestamps (sorting to handle B-frame presentation reordering) to verify frame count & cadence.
 				val frameTimestampsUs = ArrayList<Long>(WallpaperMediaLimits.MAX_FRAME_COUNT + 1)
 				while (extractor.sampleTrackIndex >= 0) {
 					frameTimestampsUs.add(extractor.sampleTime)
@@ -889,6 +1035,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Decoded pixel dimensions from a lightweight `inJustDecodeBounds` probe. */
 	private data class BitmapBoundsProbe(
 		val width: Int,
 		val height: Int
@@ -897,6 +1044,7 @@ class LauncherSettingsStore(
 			get() = width > 0 && height > 0
 	}
 
+	/** Logs structured URI and dimension diagnostics when wallpaper validation fails. */
 	private fun logWallpaperDiagnostics(
 		stage: String,
 		uri: Uri,
@@ -911,6 +1059,7 @@ class LauncherSettingsStore(
 		)
 	}
 
+	/** Formats URI scheme and local file existence/readability metadata for log diagnostics. */
 	private fun wallpaperUriDiagnostics(uri: Uri): String {
 		val scheme = uri.scheme ?: "<none>"
 		if (scheme != "file") {
@@ -926,6 +1075,7 @@ class LauncherSettingsStore(
 		return "uri=$uri scheme=file exists=${file.exists()} isFile=${file.isFile} canRead=${file.canRead()} length=${file.length()}"
 	}
 
+	/** Probes bitmap dimensions via [BitmapFactory.Options.inJustDecodeBounds] without allocating pixels. */
 	private fun probeBitmapBounds(openInputStream: () -> InputStream?): BitmapBoundsProbe? {
 		return runCatching {
 			openInputStream()?.use { stream ->
@@ -941,6 +1091,7 @@ class LauncherSettingsStore(
 		}.getOrNull()
 	}
 
+	/** Updates how custom wallpaper media scales to the cover viewport (`CROP` vs `FIT`). */
 	suspend fun setWallpaperScaleMode(scaleMode: WallpaperScaleMode) {
 		wallpaperMutationMutex.withLock {
 			withContext(ioDispatcher) {
@@ -951,6 +1102,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Persists normalized pan offsets (`cropX`/`cropY`), zoom scale, and 90-degree rotation. */
 	suspend fun setWallpaperCrop(cropX: Float, cropY: Float, zoom: Float, rotation: Int) {
 		wallpaperMutationMutex.withLock {
 			withContext(ioDispatcher) {
@@ -964,6 +1116,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Persists normalized wallpaper rotation snapped to 90-degree steps (`0`, `90`, `180`, `270`). */
 	suspend fun setWallpaperRotation(rotation: Int) {
 		wallpaperMutationMutex.withLock {
 			withContext(ioDispatcher) {
@@ -974,6 +1127,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Sets the scrim dimming opacity overlaid on top of the wallpaper (`0.0f`..`0.8f`). */
 	suspend fun setWallpaperDimAmount(dimAmount: Float) {
 		val normalized = dimAmount.coerceIn(MIN_WALLPAPER_DIM_AMOUNT, MAX_WALLPAPER_DIM_AMOUNT)
 		wallpaperMutationMutex.withLock {
@@ -985,6 +1139,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Sets the Gaussian blur radius in dp applied behind cover launcher panels (`0f`..`18f`). */
 	suspend fun setWallpaperBlurRadiusDp(blurRadiusDp: Float) {
 		val normalized = blurRadiusDp.coerceIn(MIN_WALLPAPER_BLUR_RADIUS_DP, MAX_WALLPAPER_BLUR_RADIUS_DP)
 		wallpaperMutationMutex.withLock {
@@ -996,6 +1151,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Clears the active wallpaper URI preference and deletes managed wallpaper files from disk. */
 	suspend fun clearWallpaper() {
 		wallpaperMutationMutex.withLock {
 			setWallpaperUriUnlocked(uri = null)
@@ -1005,6 +1161,10 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/**
+	 * Resets dock shortcuts, wallpaper state, and keyboard strategy back to defaults while
+	 * intentionally preserving theme preference.
+	 */
 	suspend fun resetLauncherLayout() {
 		wallpaperMutationMutex.withLock {
 			withContext(ioDispatcher) {
@@ -1036,6 +1196,7 @@ class LauncherSettingsStore(
 	}
 	}
 
+	/** Resets wallpaper URI, transform settings, and managed disk files without modifying dock or theme. */
 	suspend fun resetWallpaperCustomization() {
 		wallpaperMutationMutex.withLock {
 			withContext(ioDispatcher) {
@@ -1054,6 +1215,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Clears all dock slots, restores dock visibility, and resets slot-4 All Apps mode. */
 	suspend fun resetDockCustomization() {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -1064,6 +1226,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Resets theme mode, accent color, and panel corner radius back to defaults. */
 	suspend fun resetAppearanceCustomization() {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -1074,6 +1237,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Resets keyboard input strategy to [DEFAULT_KEYBOARD_STRATEGY] and clears per-package mode memory. */
 	suspend fun resetInputCustomization() {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
@@ -1083,6 +1247,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Writes all [COVER_DOCK_SLOT_COUNT] dock slot keys into [preferences], removing cleared slots. */
 	private fun writeDockSlots(
 		preferences: MutablePreferences,
 		dockPackages: List<String?>
@@ -1097,6 +1262,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Produces a fixed-size [COVER_DOCK_SLOT_COUNT] list with trimmed, non-blank, unique packages. */
 	private fun normalizeDockPackages(raw: List<String?>): List<String?> {
 		val normalized = MutableList<String?>(COVER_DOCK_SLOT_COUNT) { null }
 		val seenPackages = linkedSetOf<String>()
@@ -1111,6 +1277,10 @@ class LauncherSettingsStore(
 		return normalized
 	}
 
+	/**
+	 * Validates a persisted wallpaper URI on read, migrating legacy app-files paths and recovering
+	 * the newest managed file (or clearing to `null`) if the referenced file is missing or empty.
+	 */
 	private fun sanitizeWallpaperUri(storedUri: String?): String? {
 		if (storedUri.isNullOrBlank()) return null
 
@@ -1149,6 +1319,7 @@ class LauncherSettingsStore(
 		return null
 	}
 
+	/** Generates a timestamped, UUID-suffixed destination file inside [wallpaperDirectory]. */
 	private fun buildVersionedManagedWallpaperFile(
 		wallpaperDirectory: File,
 		sourceUri: Uri
@@ -1162,6 +1333,7 @@ class LauncherSettingsStore(
 		)
 	}
 
+	/** Extracts a short alphanumeric file extension from [sourceUri], falling back to `.img`. */
 	private fun extractWallpaperFileExtension(sourceUri: Uri): String {
 		val segment = sourceUri.lastPathSegment ?: return MANAGED_WALLPAPER_FALLBACK_EXTENSION
 		val dotIndex = segment.lastIndexOf('.')
@@ -1180,6 +1352,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Deletes previously imported managed wallpaper files, optionally keeping [keepFileName]. */
 	private fun pruneManagedWallpaperFiles(
 		wallpaperDirectory: File,
 		keepFileName: String?
@@ -1195,6 +1368,7 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Removes all managed wallpaper files and deletes the directory if it becomes empty. */
 	private fun deleteManagedWallpaperFiles() {
 		val wallpaperDirectory = File(appContext.filesDir, MANAGED_WALLPAPER_DIR)
 		if (!wallpaperDirectory.exists()) return
@@ -1206,11 +1380,13 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Returns true when [file] matches either the legacy or versioned managed wallpaper naming scheme. */
 	private fun isManagedWallpaperFile(file: File): Boolean {
 		return file.name == MANAGED_WALLPAPER_FILE_LEGACY ||
 			file.name.startsWith(MANAGED_WALLPAPER_FILE_PREFIX)
 	}
 
+	/** Returns true if [uri] is a `file://` URI residing inside `filesDir/cover_wallpaper`. */
 	private fun isManagedWallpaperUri(uri: Uri): Boolean {
 		if (uri.scheme != "file") return false
 		val path = uri.path ?: return false
@@ -1219,6 +1395,7 @@ class LauncherSettingsStore(
 		return file.parentFile?.absolutePath == wallpaperDirectory.absolutePath
 	}
 
+	/** Finds the most recently modified non-empty managed wallpaper file on disk, if any. */
 	private fun resolveLatestManagedWallpaperUri(): String? {
 		val wallpaperDirectory = File(appContext.filesDir, MANAGED_WALLPAPER_DIR)
 		if (!wallpaperDirectory.exists()) return null
@@ -1232,6 +1409,10 @@ class LauncherSettingsStore(
 		return Uri.fromFile(latestManagedFile).toString()
 	}
 
+	/**
+	 * Migrates legacy managed wallpaper files previously saved directly under `appContext.filesDir`
+	 * into the dedicated `filesDir/cover_wallpaper/` subdirectory after verifying decodability.
+	 */
 	private fun migrateLegacyManagedWallpaperUriIfNeeded(uri: Uri): String? {
 		if (uri.scheme != "file") return null
 		if (isManagedWallpaperUri(uri)) return null
@@ -1296,6 +1477,7 @@ class LauncherSettingsStore(
 			.getOrDefault(false)
 	}
 
+	/** Attempts to persist read access across reboots for `content://` picker URIs. */
 	private fun takeSourceUriReadPermission(sourceUri: Uri) {
 		if (sourceUri.scheme != "content") return
 
@@ -1309,12 +1491,17 @@ class LauncherSettingsStore(
 		}
 	}
 
+	/** Verifies that an external `content://` or `file://` image URI has valid bounds and decodable pixels. */
 	private fun isWallpaperUriReadableAndDecodable(uri: Uri): Boolean {
 		return isBitmapDecodable {
 			openUriInputStream(uri)
 		} && canDecodeBitmapPixels(uri)
 	}
 
+	/**
+	 * Performs a downsampled pixel decode check via [BitmapFactory] and falls back to Android's
+	 * [ImageDecoder] (handling newer formats like HEIF/AVIF when [BitmapFactory] cannot decode them).
+	 */
 	private fun canDecodeBitmapPixels(uri: Uri): Boolean {
 		val bounds = probeBitmapBounds {
 			openUriInputStream(uri)
@@ -1352,6 +1539,7 @@ class LauncherSettingsStore(
 		return imageDecoderDecoded
 	}
 
+	/** Subsampled software-bitmap decode fallback using [ImageDecoder]. */
 	private fun decodeBitmapWithImageDecoder(uri: Uri): Boolean {
 		val source = when (uri.scheme) {
 			"file" -> {
@@ -1383,6 +1571,7 @@ class LauncherSettingsStore(
 		}.getOrDefault(false)
 	}
 
+	/** Computes an integer subsampling factor (`>= 1`) targeting [requestedWidthPx] x [requestedHeightPx]. */
 	private fun calculateValidationInSampleSize(
 		outWidth: Int,
 		outHeight: Int,
@@ -1408,6 +1597,10 @@ class LauncherSettingsStore(
 		}.getOrDefault(false)
 	}
 
+	/**
+	 * Opens an [InputStream] for either a local `file://` path or a `content://` URI, falling
+	 * back to [ParcelFileDescriptor.AutoCloseInputStream] if `openInputStream` fails.
+	 */
 	private fun openUriInputStream(uri: Uri): InputStream? {
 		return when (uri.scheme) {
 			"file" -> uri.path?.let { path ->

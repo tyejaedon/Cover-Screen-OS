@@ -16,14 +16,29 @@ import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
 import com.tyejaedon.coverscreenos.notifications.CoverNotificationListenerService
 import com.tyejaedon.coverscreenos.overlay.CoverAccessibilityService
 
+/**
+ * Centralizes permission checks, special system-service enablement queries, and settings intents
+ * required by Cover-Screen-OS.
+ *
+ * Because the cover-screen overlay is hosted via an [AccessibilityService] window
+ * (`TYPE_ACCESSIBILITY_OVERLAY`) rather than `SYSTEM_ALERT_WINDOW`, the primary gating checks
+ * inspect `Settings.Secure` for enabled accessibility services and notification listeners alongside
+ * standard runtime permissions and Doze/battery-optimization exemptions.
+ */
 object AppPermissionHelper {
 
+    // Raw Settings.Secure key backing NotificationListenerService enablement; not exposed as a
+    // public constant on android.provider.Settings.Secure across all SDK levels.
     private const val ENABLED_NOTIFICATION_LISTENERS_KEY = "enabled_notification_listeners"
 
     private val galleryMediaPermissions = arrayOf(
         Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
     )
 
+    /**
+     * Returns true when the app holds [Manifest.permission.POST_NOTIFICATIONS] (required on
+     * Android 13+ / API 33+ to display the foreground service notification).
+     */
     fun hasNotificationPermission(context: Context): Boolean {
         return ContextCompat.checkSelfPermission(
             context,
@@ -31,32 +46,51 @@ object AppPermissionHelper {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    /** Returns the runtime media permission array used for gallery/photo selection flows. */
     fun galleryMediaPermissionsToRequest(): Array<String> {
         return galleryMediaPermissions
     }
 
+    /** Returns true when all permissions in [galleryMediaPermissionsToRequest] are granted. */
     fun hasGalleryMediaPermissions(context: Context): Boolean {
         return galleryMediaPermissionsToRequest().all { permission ->
             ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
         }
     }
 
+    /** Returns true when [Manifest.permission.RECORD_AUDIO] is granted for voice/audio features. */
     fun hasMicrophonePermission(context: Context): Boolean {
         return ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * Returns true when [Manifest.permission.BLUETOOTH_CONNECT] is granted (required on Android 12+
+     * / API 31+ before querying or toggling Bluetooth state).
+     */
     fun hasBluetoothConnectPermission(context: Context): Boolean {
         return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * Returns true when [CoverAccessibilityService] (which hosts the cover-display overlay window)
+     * is enabled in system Accessibility settings.
+     */
     fun isAccessibilityServiceEnabled(context: Context): Boolean {
         return isAccessibilityServiceEnabled(context, CoverAccessibilityService::class.java)
     }
 
+    /**
+     * Returns true when [CoverInputAccessibilityService] (used for input/navigation gestures and
+     * BAL-exempt activity launches) is enabled in system Accessibility settings.
+     */
     fun isInputAccessibilityServiceEnabled(context: Context): Boolean {
         return isAccessibilityServiceEnabled(context, CoverInputAccessibilityService::class.java)
     }
 
+    /**
+     * Returns true when [CoverNotificationListenerService] appears in the colon-delimited
+     * `enabled_notification_listeners` [Settings.Secure] entry.
+     */
     fun isNotificationListenerEnabled(context: Context): Boolean {
         val enabledListeners = Settings.Secure.getString(
             context.contentResolver,
@@ -67,10 +101,16 @@ object AppPermissionHelper {
         return enabledListeners.split(':').any { it.equals(targetListener, ignoreCase = true) }
     }
 
+    /**
+     * Checks whether [serviceClass] is active by verifying both the master
+     * [Settings.Secure.ACCESSIBILITY_ENABLED] flag and membership in the colon-separated
+     * [Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES] list.
+     */
     private fun isAccessibilityServiceEnabled(
         context: Context,
         serviceClass: Class<out AccessibilityService>
     ): Boolean {
+        // Master toggle must be 1; Android can retain service entries even when accessibility is off.
         val accessibilityEnabled = Settings.Secure.getInt(
             context.contentResolver,
             Settings.Secure.ACCESSIBILITY_ENABLED,
@@ -87,18 +127,25 @@ object AppPermissionHelper {
         return enabledServices.split(':').any { it.equals(targetService, ignoreCase = true) }
     }
 
+    /** Builds an [Intent] to open the system Accessibility settings screen. */
     fun createAccessibilitySettingsIntent(): Intent {
         return Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
     }
 
+    /** Builds an [Intent] to open the system Notification Access listener settings screen. */
     fun createNotificationListenerSettingsIntent(): Intent {
         return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
     }
 
+    /** Builds an [Intent] to open the system On-screen Keyboard / Input Method settings screen. */
     fun createInputMethodSettingsIntent(): Intent {
         return Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
     }
 
+    /**
+     * Displays the system Input Method (IME) chooser dialog via [InputMethodManager], returning
+     * false if the service is unavailable or the call fails.
+     */
     fun showInputMethodPicker(context: Context): Boolean {
         val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             ?: return false
@@ -108,6 +155,7 @@ object AppPermissionHelper {
         }.getOrDefault(false)
     }
 
+    /** Builds an [Intent] pointing directly to this app's system App Info screen. */
     fun createAppDetailsSettingsIntent(context: Context): Intent {
         return Intent(
             Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -115,6 +163,10 @@ object AppPermissionHelper {
         )
     }
 
+    /**
+     * Returns true when the app is exempted from Doze / App Standby battery optimizations via
+     * [PowerManager.isIgnoringBatteryOptimizations], preventing background overlay termination.
+     */
     fun isBatteryOptimizationDisabled(context: Context): Boolean {
         val powerManager = context.getSystemService(PowerManager::class.java) ?: return false
         return powerManager.isIgnoringBatteryOptimizations(context.packageName)

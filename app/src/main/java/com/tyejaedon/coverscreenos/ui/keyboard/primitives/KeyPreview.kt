@@ -29,15 +29,17 @@ import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import kotlinx.coroutines.delay
 
 /**
- * Floating key-preview label. Renders [label] at roughly 1.6× the pressed
- * key's visual scale and offsets it ~40dp above the anchor position — the
- * ergonomic sweet spot on a cover-screen that keeps the fingertip clear of
- * the label. Auto-dismisses after [autoDismissMillis] via [onDismiss].
+ * Floating key-preview label rendered inside a non-focusable Compose [Popup].
  *
- * Positioning uses a custom [PopupPositionProvider] that centers the popup
- * horizontally over the anchor and offsets it upward by
- * [verticalOffsetDp]. The caller is expected to anchor the [Popup] to the
- * pressed key by wrapping this composable inside the key's layout.
+ * Displays [label] at roughly 1.6× the pressed key's visual scale and offsets it ~40dp above the
+ * anchor position — the ergonomic sweet spot on a cover-screen that keeps the fingertip clear of
+ * the label. Auto-dismisses after [autoDismissMillis] via [onDismiss] (pass `0L` when the
+ * caller manages visibility directly via pressed state, such as [KeyboardKey]).
+ *
+ * Positioning uses a custom [PopupPositionProvider] that centers the popup horizontally over the
+ * anchor and offsets it upward by [verticalOffsetDp]. [PopupProperties] keeps `focusable = false`
+ * so the popup never steals IME/editor focus or interrupts pointer tracking, and
+ * `clippingEnabled = false` so the bubble can rise above the top edge of the keyboard container.
  */
 @Composable
 fun KeyPreview(
@@ -57,6 +59,7 @@ fun KeyPreview(
                 layoutDirection: androidx.compose.ui.unit.LayoutDirection,
                 popupContentSize: androidx.compose.ui.unit.IntSize
             ): IntOffset {
+                // Center horizontally over the key and position completely above it by verticalOffsetPx.
                 val x = anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2
                 val y = anchorBounds.top - popupContentSize.height - verticalOffsetPx
                 return IntOffset(x, y)
@@ -64,6 +67,7 @@ fun KeyPreview(
         }
     }
 
+    // Optional timed dismissal; restarted if the previewed label changes while visible.
     if (autoDismissMillis > 0) {
         LaunchedEffect(label) {
             delay(autoDismissMillis)
@@ -75,9 +79,11 @@ fun KeyPreview(
         popupPositionProvider = positionProvider,
         onDismissRequest = onDismiss,
         properties = PopupProperties(
+            // Non-focusable + non-dismissing so touch tracking on the underlying key is undisturbed.
             focusable = false,
             dismissOnBackPress = false,
             dismissOnClickOutside = false,
+            // Allow the popup to overhang above the keyboard root bounds on compact cover screens.
             clippingEnabled = false
         )
     ) {
@@ -106,19 +112,28 @@ fun KeyPreview(
  * a caller can drive one shared [KeyPreview] from many keys.
  */
 class KeyPreviewController internal constructor() {
+    /** Currently active preview label, or `null` when hidden. */
     var label: String? by mutableStateOf(null)
         private set
 
+    /** Shows [KeyPreview] for [label]. */
     fun show(label: String) { this.label = label }
+
+    /** Hides any active [KeyPreview]. */
     fun dismiss() { this.label = null }
 }
 
+/** Creates and remembers a [KeyPreviewController] across recompositions. */
 @Composable
 fun rememberKeyPreviewController(): KeyPreviewController = remember { KeyPreviewController() }
 
+/** Default vertical clearance (in dp) between the key top edge and the preview bubble bottom. */
 internal const val DefaultVerticalOffsetDp: Int = 40
+
+/** Default duration (in ms) before a standalone [KeyPreview] auto-dismisses. */
 internal const val DefaultAutoDismissMillis: Long = 550L
 
+/** Compose preview showing a static [KeyPreview] bubble. */
 @Preview(showBackground = true)
 @Composable
 private fun KeyPreviewPreview() {

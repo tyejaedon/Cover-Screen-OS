@@ -62,12 +62,24 @@ import java.util.Locale
 private val SEARCH_GRID_TILE_GAP = 6.dp
 private val SEARCH_GRID_CONTENT_PADDING = coverScreenContentPadding(horizontal = 6.dp, vertical = 2.dp)
 
+/**
+ * Handle exposing Android `SpeechRecognizer` availability and listening controls to the
+ * cover-screen search UI.
+ */
 internal data class OverlayVoiceInputHandle(
     val isAvailable: Boolean,
     val startListening: () -> Unit,
     val stopListening: () -> Unit
 )
 
+/**
+ * Full-page search and widget container inside the cover overlay (`SEARCH_WIDGET_GRID_PAGE`).
+ *
+ * Hosts [SearchWidgetTile] with bottom `WindowInsets.safeDrawing` padding (intentionally
+ * omitting IME insets because typing is handled by the embedded in-overlay keyboard), supports
+ * tapping the background scrim to dismiss keyboard focus, and detects upward drags exceeding
+ * [swipeThresholdPx] to return to the lock page.
+ */
 @Composable
 internal fun WidgetGridPageTile(
     searchQuery: String,
@@ -146,6 +158,14 @@ internal fun WidgetGridPageTile(
     }
 }
 
+/**
+ * Frosted-glass search container (`oneUiPanel` backed by [hazeState]) housing the search input
+ * row and the embedded Floris keyboard (`SearchFlorisKeyboardHost`).
+ *
+ * Uses `Color.Transparent` on the outer `Surface` so Haze's blur effect supplies the translucent
+ * panel wash, and wraps contents in `verticalScroll` so keyboard keys stay reachable on small
+ * cover screens.
+ */
 @Composable
 private fun SearchWidgetTile(
     searchQuery: String,
@@ -219,6 +239,10 @@ private fun SearchWidgetTile(
     }
 }
 
+/**
+ * Search bar row displaying either the `"Search apps"` placeholder or a tail-scrolled
+ * [ComposingTextPreview] alongside the voice-search microphone chip and keyboard dismiss button.
+ */
 @Composable
 private fun CoverSearchInputRow(
     query: String,
@@ -320,6 +344,14 @@ private fun CoverSearchInputRow(
 }
 
 
+/**
+ * Creates and lifecycle-manages an Android [SpeechRecognizer] bound to Compose, returning an
+ * [OverlayVoiceInputHandle] for starting and stopping free-form voice search inside the overlay.
+ *
+ * Uses `rememberUpdatedState` so the registered [RecognitionListener] delivers partial and final
+ * transcripts to the latest callbacks without tearing down the recognizer on recomposition, and
+ * calls `stopListening()` + `destroy()` when leaving composition.
+ */
 @Composable
 internal fun rememberVoiceInputHandle(
     onPartialResult: (String) -> Unit,
@@ -341,6 +373,7 @@ internal fun rememberVoiceInputHandle(
         }
     }
 
+    // Attach RecognitionListener and destroy the native SpeechRecognizer when leaving composition.
     DisposableEffect(speechRecognizer) {
         val recognizer = speechRecognizer
         if (recognizer == null) {
@@ -401,6 +434,7 @@ internal fun rememberVoiceInputHandle(
                     latestOnListeningStateChanged.value(false)
                     latestOnError.value("Voice recognition unavailable on this device.")
                 } else {
+                    // Request live partial transcripts in the device's default locale.
                     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                         putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
@@ -424,6 +458,7 @@ internal fun rememberVoiceInputHandle(
     }
 }
 
+/** Extracts and trims the highest-confidence hypothesis from `SpeechRecognizer.RESULTS_RECOGNITION`. */
 private fun extractBestSpeechMatch(results: Bundle?): String? {
     val firstResult = results
         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -433,6 +468,7 @@ private fun extractBestSpeechMatch(results: Bundle?): String? {
     return firstResult.takeUnless { it.isEmpty() }
 }
 
+/** Maps Android `SpeechRecognizer.ERROR_*` codes to concise user-facing status hints. */
 private fun mapSpeechRecognizerError(errorCode: Int): String {
     return when (errorCode) {
         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required for voice search."

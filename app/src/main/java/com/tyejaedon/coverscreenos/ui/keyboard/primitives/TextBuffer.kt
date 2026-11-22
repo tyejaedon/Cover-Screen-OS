@@ -5,12 +5,13 @@ package com.tyejaedon.coverscreenos.ui.keyboard.primitives
  * overlay keypad paths. The three concurrent regions:
  *
  * - [text] — the current buffer.
- * - [selection] — the caret / selection expressed as `first..last` where
- *   both are *cursor positions* in `0..text.length`. `first == last` means
- *   an empty caret at that position. `first < last` means a range selection.
+ * - [selection] — the caret / selection expressed as half-open cursor boundaries
+ *   `first..last` in `0..text.length` (matching `String.substring(first, last)`).
+ *   `first == last` means a collapsed caret at that position; `first < last` means
+ *   an active range selection.
  * - [composing] — optional composing / soft-editable region using the same
- *   position semantics as [selection]. `null` when no composition is in
- *   progress.
+ *   boundary semantics as [selection] (parallel to Android `InputConnection`
+ *   composing spans). `null` when no composition is in progress.
  *
  * All mutator methods return a new [TextBuffer]; instances are safe to hold
  * as Compose state.
@@ -22,6 +23,7 @@ data class TextBuffer(
 ) {
 
     init {
+        // Enforce valid half-open bounds [0, text.length] for selection and composing spans.
         require(selection.first in 0..text.length && selection.last in 0..text.length) {
             "selection $selection out of bounds for text length ${text.length}"
         }
@@ -38,7 +40,7 @@ data class TextBuffer(
         }
     }
 
-    /** True when [selection] is a zero-length caret. */
+    /** True when [selection] spans one or more characters (not a collapsed zero-length caret). */
     val hasSelection: Boolean get() = selection.first < selection.last
 
     /** True when a composing region is active. */
@@ -51,7 +53,8 @@ data class TextBuffer(
     /**
      * Replaces the current [selection] with [insert] and returns the result.
      * The new caret is placed immediately after the inserted text. Any active
-     * [composing] region that overlaps the affected range is cleared.
+     * [composing] region is shifted if it lies after the edit, preserved if before
+     * it, or cleared if the edit overlaps it.
      *
      * Passing an empty [insert] performs a delete of the current selection.
      */
@@ -74,6 +77,7 @@ data class TextBuffer(
      */
     fun backspace(count: Int = 1): TextBuffer {
         require(count >= 0) { "count must be >= 0" }
+        // Deleting an active range selection collapses it without deleting extra characters.
         if (hasSelection) return applyDelta("")
         if (count == 0) return this
         val caret = selection.first
@@ -90,17 +94,19 @@ data class TextBuffer(
     }
 
     /**
-     * Replaces the current composing region with [newComposing]. If there is
-     * no active composing region, one is started at the current caret /
-     * selection. The composing region and caret both move to enclose the
-     * newly inserted text: composing = `start..(start + newComposing.length)`,
-     * selection = `(start + newComposing.length)..(start + newComposing.length)`.
+     * Replaces the current composing region with [newComposing] (mirrors
+     * `InputConnection.setComposingText`). If there is no active composing region,
+     * one is started at the current caret / selection. The composing region and caret
+     * both move to enclose the newly inserted text: composing =
+     * `start..(start + newComposing.length)`, selection =
+     * `(start + newComposing.length)..(start + newComposing.length)`.
      */
     fun replaceComposing(newComposing: String): TextBuffer {
         val start = composing?.first ?: selection.first
         val end = composing?.last ?: selection.last
         val newText = text.substring(0, start) + newComposing + text.substring(end)
         val composeEnd = start + newComposing.length
+        // Empty replacement ends composition cleanly instead of retaining a 0-length span.
         val newComposingRange = if (newComposing.isEmpty()) null else start..composeEnd
         return TextBuffer(
             text = newText,
@@ -137,6 +143,7 @@ data class TextBuffer(
         if (isComposing || hasSelection) return commit(candidate)
         val caret = selection.first
         val prefix = text.substring(0, caret)
+        // indexOfLast returns -1 when all preceding characters are letters, yielding start = 0.
         val start = prefix.indexOfLast { !it.isLetter() } + 1
         return withSelection(start, caret).commit(candidate)
     }
@@ -160,6 +167,10 @@ data class TextBuffer(
         return copy(selection = lo..hi)
     }
 
+    /**
+     * Re-indexes [range] after replacing `[editStart, editEnd)` with [insertLength] characters,
+     * returning `null` if the edit overlaps [range].
+     */
     private fun adjustRange(
         range: IntRange,
         editStart: Int,
@@ -178,7 +189,9 @@ data class TextBuffer(
         }
     }
 
+    /** Default empty [TextBuffer] instance. */
     companion object {
+        /** Empty buffer with caret at index 0 and no active composing span. */
         val Empty = TextBuffer()
     }
 }

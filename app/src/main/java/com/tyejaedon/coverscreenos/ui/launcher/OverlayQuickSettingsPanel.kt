@@ -87,6 +87,7 @@ internal fun QuickSettingsPanelTile(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // Snapshot initial hardware/system states synchronously so the first frame reflects current values.
     var wifiEnabled by remember { mutableStateOf(QuickSettingsController.isWifiEnabled(context)) }
     var bluetoothEnabled by remember { mutableStateOf(QuickSettingsController.isBluetoothEnabled(context)) }
     var flashlightEnabled by remember { mutableStateOf(false) }
@@ -103,6 +104,7 @@ internal fun QuickSettingsPanelTile(
         brightnessPercent = QuickSettingsController.getBrightnessPercent(context)
     }
 
+    // Observe Compose lifecycle ON_RESUME to resync toggles after user returns from Android Settings.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) refreshSystemState()
@@ -122,6 +124,7 @@ internal fun QuickSettingsPanelTile(
                     if (cameraId == torchCameraId) flashlightEnabled = enabled
                 }
             }
+            // Passing null Handler delivers callbacks on the current looper/main thread.
             cameraManager.registerTorchCallback(callback, null)
             onDispose { cameraManager.unregisterTorchCallback(callback) }
         }
@@ -149,6 +152,7 @@ internal fun QuickSettingsPanelTile(
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
                 .padding(12.dp)
+                // Apply One UI frosted-glass backdrop blur sourced from the parent HazeState.
                 .oneUiPanel(shape = cardShape, hazeState = hazeState, blurRadius = 26.dp)
                 // Swallow taps on the sheet itself so they don't fall through to the scrim.
                 .clickable(
@@ -156,6 +160,7 @@ internal fun QuickSettingsPanelTile(
                     indication = null,
                     onClick = {}
                 )
+                // Allow a quick swipe-up gesture on the panel to close the sheet.
                 .pointerInput(swipeUpThresholdPx) {
                     var cumulativeDrag = 0f
                     detectVerticalDragGestures(
@@ -271,6 +276,10 @@ internal fun QuickSettingsPanelTile(
     }
 }
 
+/**
+ * Individual One-UI-styled square toggle chip in the Quick Settings grid, adjusting background,
+ * border, and icon/text alpha across unavailable, off, and active states.
+ */
 @Composable
 private fun QuickSettingsToggleTile(
     label: String,
@@ -322,6 +331,13 @@ private fun QuickSettingsToggleTile(
     }
 }
 
+/**
+ * Screen brightness row inside [QuickSettingsPanelTile].
+ *
+ * Displays a live Material 3 [Slider] when `Settings.System.canWrite` ([canWriteSettings]) is
+ * granted; otherwise renders a prompt chip that launches Android's `ACTION_MANAGE_WRITE_SETTINGS`
+ * permission screen via [onRequestWritePermission].
+ */
 @Composable
 private fun QuickSettingsBrightnessControl(
     brightnessPercent: Float,

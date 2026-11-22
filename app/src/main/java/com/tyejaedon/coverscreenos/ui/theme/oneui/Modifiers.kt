@@ -37,27 +37,33 @@ fun Modifier.oneUiPanel(
     blurRadius: Dp = 24.dp
 ): Modifier {
     val scheme = MaterialTheme.colorScheme
+    // Border priority: explicit per-panel signal -> user-customized accent border -> neutral outline.
     val borderColor = signal?.copy(alpha = 0.9f)
         ?: LocalCoverOverlayPanelBorder.current
         ?: scheme.outline.copy(alpha = CoverOneUITokens.tier1BorderAlpha)
 
     val fillModifier = if (hazeState != null) {
+        // Clip before hazeEffect so the live GPU backdrop blur stays confined to the rounded card bounds.
         Modifier
             .clip(shape)
             .hazeEffect(
                 state = hazeState,
                 style = HazeStyle(
+                    // Dark translucent tint ensures foreground typography stays legible over bright wallpapers.
                     tints = listOf(HazeTint(Color.Black.copy(alpha = 0.40f))),
                     blurRadius = blurRadius,
+                    // Subtle grain/dithering reduces color banding across smooth dark blur gradients.
                     noiseFactor = 0.04f
                 )
             )
     } else {
+        // Flat translucent fallback when no HazeState source layer is available (e.g., previews).
         Modifier
             .clip(shape)
             .background(scheme.surface.copy(alpha = CoverOneUITokens.tier1FillAlpha))
     }
 
+    // Apply the 1dp hairline border after clipping/filling so the stroke frames the outer perimeter cleanly.
     return this
         .then(fillModifier)
         .border(1.dp, borderColor, shape)
@@ -77,6 +83,7 @@ fun Modifier.oneUiElevatedPanel(
         ?: LocalCoverOverlayPanelBorder.current
         ?: scheme.outline.copy(alpha = CoverOneUITokens.tier2BorderAlpha)
 
+    // Clip before drawing the tier-2 translucent fill, then frame with the higher-contrast border.
     return this
         .clip(shape)
         .background(scheme.surface.copy(alpha = CoverOneUITokens.tier2FillAlpha))

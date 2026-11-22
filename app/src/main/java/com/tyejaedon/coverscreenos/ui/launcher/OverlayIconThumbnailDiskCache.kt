@@ -18,7 +18,18 @@ private const val ICON_THUMBNAIL_CACHE_DIR_NAME = "cover_icon_thumbs"
 private const val ICON_THUMBNAIL_EDGE_PX = 128
 private const val ICON_THUMBNAIL_CACHE_MAX_BYTES = 36L * 1024L * 1024L
 
+/**
+ * Disk-backed PNG thumbnail cache for app launcher icons under `cacheDir/cover_icon_thumbs`.
+ *
+ * Complements the in-memory `LruCache` (`OverlayBitmapIconCache`) by persisting pre-rasterized
+ * `128x128` px square bitmaps keyed by package name and app version token, avoiding expensive
+ * `PackageManager` adaptive-icon loading across overlay restarts while staying within a 36 MiB cap.
+ */
 internal object OverlayIconThumbnailDiskCache {
+    /**
+     * Decodes a cached icon [Bitmap] from disk via [android.graphics.BitmapFactory.decodeFile],
+     * touching `lastModified` on hit to preserve approximate LRU eviction order.
+     */
     fun getBitmap(context: Context, packageName: String, versionToken: String?): Bitmap? {
         val cacheFile = cacheFileFor(
             context = context,
@@ -29,6 +40,7 @@ internal object OverlayIconThumbnailDiskCache {
 
         return runCatching {
             val bitmap = android.graphics.BitmapFactory.decodeFile(cacheFile.absolutePath) ?: return null
+            // Refresh mtime so frequently accessed icons survive age-based disk trimming.
             cacheFile.setLastModified(System.currentTimeMillis())
             bitmap
         }.onFailure { error ->
@@ -39,10 +51,17 @@ internal object OverlayIconThumbnailDiskCache {
         }.getOrNull()
     }
 
+    /**
+     * Convenience wrapper around [getBitmap] that wraps the decoded bitmap in a [Drawable].
+     */
     fun get(context: Context, packageName: String, versionToken: String?): Drawable? {
         return getBitmap(context, packageName, versionToken)?.toDrawable(context.resources)
     }
 
+    /**
+     * Rasterizes [drawable] into a square `128x128` px bitmap, writes it losslessly with
+     * [Bitmap.CompressFormat.PNG], and trims older cache files if total usage exceeds the budget.
+     */
     fun put(context: Context, packageName: String, versionToken: String?, drawable: Drawable) {
         val cacheFile = cacheFileFor(
             context = context,
@@ -71,6 +90,10 @@ internal object OverlayIconThumbnailDiskCache {
         }
     }
 
+    /**
+     * Builds a deterministic SHA-256 filename from `packageName|versionToken` so app updates
+     * automatically miss stale icon thumbnails.
+     */
     private fun cacheFileFor(context: Context, packageName: String, versionToken: String?): File {
         val cacheRoot = File(context.cacheDir, ICON_THUMBNAIL_CACHE_DIR_NAME)
         val safeVersionToken = versionToken?.takeUnless { it.isBlank() } ?: "unknown"
@@ -79,6 +102,10 @@ internal object OverlayIconThumbnailDiskCache {
         return File(cacheRoot, "$hashedName.png")
     }
 
+    /**
+     * Deletes the oldest cached files by `lastModified` timestamp until the cache directory
+     * drops within [ICON_THUMBNAIL_CACHE_MAX_BYTES].
+     */
     private fun trimToBudget(cacheDir: File) {
         val files = cacheDir.listFiles { file -> file.isFile }?.toList().orEmpty()
         var totalBytes = files.sumOf { file -> file.length() }
@@ -94,6 +121,7 @@ internal object OverlayIconThumbnailDiskCache {
         }
     }
 
+    /** Computes a lowercase SHA-256 hex digest used as a filesystem-safe cache key. */
     private fun String.sha256Hex(): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(toByteArray())
         return buildString(digest.size * 2) {
@@ -104,6 +132,10 @@ internal object OverlayIconThumbnailDiskCache {
         }
     }
 
+    /**
+     * Renders any [Drawable] centered and aspect-fitted onto an [edgePx] square [Bitmap],
+     * reusing an existing [BitmapDrawable] bitmap directly when dimensions already match.
+     */
     private fun Drawable.toSquareBitmap(edgePx: Int): Bitmap {
         if (this is BitmapDrawable) {
             val existing = bitmap
@@ -123,6 +155,7 @@ internal object OverlayIconThumbnailDiskCache {
         val left = (edgePx - drawWidth) / 2
         val top = (edgePx - drawHeight) / 2
 
+        // Temporarily mutate bounds to center-fit on the target canvas, then restore original bounds.
         val previousBounds = bounds
         setBounds(left, top, left + drawWidth, top + drawHeight)
         draw(canvas)

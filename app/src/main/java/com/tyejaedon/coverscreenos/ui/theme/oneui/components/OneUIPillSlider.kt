@@ -55,6 +55,7 @@ fun OneUIPillSlider(
     leadingIcon: ImageVector? = null,
     enabled: Boolean = true
 ) {
+    // Guard against degenerate zero-width ranges so division never produces NaN/Infinity.
     val rangeSpan = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.0001f)
     val normalizedFraction = ((value - valueRange.start) / rangeSpan).coerceIn(0f, 1f)
 
@@ -72,6 +73,7 @@ fun OneUIPillSlider(
             .height(OneUITheme.dimensions.sliderHeight)
             .clip(CircleShape)
             .background(OneUITheme.colors.cardSurfaceVariant)
+            // Handle discrete taps anywhere along the slider track; re-key pointerInput if enabled/range changes.
             .pointerInput(enabled, valueRange) {
                 if (!enabled) return@pointerInput
                 detectTapGestures { offset ->
@@ -80,6 +82,7 @@ fun OneUIPillSlider(
                     onValueChange(newValue)
                 }
             }
+            // Handle continuous horizontal scrubbing; consume events so outer scroll containers do not steal drags.
             .pointerInput(enabled, valueRange) {
                 if (!enabled) return@pointerInput
                 detectDragGestures(
@@ -124,6 +127,7 @@ fun OneUIPillSlider(
         }
 
         // Tactile Thumb Indicator (Flush pill handle)
+        // Subtract 20dp from track width so the 24dp thumb remains nestled inside the pill edges at 0% and 100%.
         val thumbOffset = ((totalWidth - 20.dp) * normalizedFraction)
         Box(
             modifier = Modifier
@@ -137,6 +141,9 @@ fun OneUIPillSlider(
     }
 }
 
+/**
+ * Interactive dual-mode `@Preview` for [OneUIPillSlider] in Light and OLED Dark themes.
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable

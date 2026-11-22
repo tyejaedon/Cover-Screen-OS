@@ -16,6 +16,10 @@ object CoverHomeSurfaceMatcher {
         "com.google.android.apps.nexuslauncher"
     )
 
+    /**
+     * Returns `true` when [packageName] and optional [className] identify a native
+     * home/cover-home activity rather than a user application.
+     */
     fun isCoverHomeDestination(packageName: String, className: String? = null): Boolean {
         if (LAUNCHER_HOME_PREFIXES.any { packageName.startsWith(it) }) {
             return true
@@ -26,6 +30,7 @@ object CoverHomeSurfaceMatcher {
         return false
     }
 
+    /** Returns `true` if [className] refers to Samsung One UI's cover `SubHomeActivity`. */
     fun isSubscreenHomeClassName(className: String): Boolean {
         val trimmed = className.trim()
         return trimmed == "com.android.systemui.subscreen.SubHomeActivity" ||
@@ -33,6 +38,18 @@ object CoverHomeSurfaceMatcher {
     }
 }
 
+/**
+ * Classifies transient SystemUI, Always-On Display (AOD), and launcher window signals
+ * while the cover overlay is suppressed during an app launch.
+ *
+ * Distinguishes brief system chrome (notification shade, volume/AOD flashes) from genuine
+ * exits back to the cover home surface using two recovery mechanisms:
+ * - **Sustained transient dwell**: holding on a resume-safe SystemUI/AOD package for at least
+ *   [transientSystemUiResumeGraceMs].
+ * - **Transient exit pattern**: observing both `com.android.systemui` and
+ *   `com.samsung.android.app.aodservice` within [transientExitPatternWindowMs] after
+ *   [transientExitFailsafeMinSuppressionMs].
+ */
 internal class OverlayTransientSignalPolicy(
     private val transientSystemUiPrefixes: Array<String>,
     private val transientSystemUiResumeSafePrefixes: Array<String>,
@@ -47,6 +64,10 @@ internal class OverlayTransientSignalPolicy(
     private var transientSystemUiSeenElapsedMs: Long = 0L
     private var transientAodSeenElapsedMs: Long = 0L
 
+    /**
+     * Returns `true` for transient SystemUI / AOD windows, excluding explicit cover-home
+     * destinations such as `SubHomeActivity`.
+     */
     fun isTransientSystemUiPackage(packageName: String, className: String? = null): Boolean {
         if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
             return false
@@ -54,6 +75,10 @@ internal class OverlayTransientSignalPolicy(
         return transientSystemUiPrefixes.any { packageName.startsWith(it) }
     }
 
+    /**
+     * Returns `true` if dwelling on [packageName]/[className] is safe to resume the overlay
+     * once the grace period elapses (cover home or allowlisted Samsung SystemUI/AOD packages).
+     */
     fun isTransientForegroundSafeForResume(packageName: String, className: String? = null): Boolean {
         if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
             return true
@@ -61,6 +86,7 @@ internal class OverlayTransientSignalPolicy(
         return transientSystemUiResumeSafePrefixes.any { packageName.startsWith(it) }
     }
 
+    /** Returns `true` if [packageName]/[className] represents a system launcher or cover home. */
     fun isLauncherPackageForResume(packageName: String, className: String? = null): Boolean {
         if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
             return true
@@ -68,6 +94,10 @@ internal class OverlayTransientSignalPolicy(
         return launcherPackagePrefixes.any { packageName.startsWith(it) }
     }
 
+    /**
+     * Determines whether an accessibility foreground observation of [packageName]/[className]
+     * is an eligible signal to un-suppress the cover launcher overlay.
+     */
     fun shouldResumeOverlayForPackage(
         packageName: String,
         className: String? = null,
@@ -88,6 +118,10 @@ internal class OverlayTransientSignalPolicy(
         return overlayResumePackagePrefixes.any { packageName.startsWith(it) }
     }
 
+    /**
+     * Returns `true` once [packageName] has continuously held transient foreground focus for
+     * at least [transientSystemUiResumeGraceMs].
+     */
     fun shouldResumeFromTransientForeground(packageName: String, nowElapsedMs: Long = SystemClock.elapsedRealtime()): Boolean {
         if (transientForegroundPackage != packageName) {
             transientForegroundPackage = packageName
@@ -99,6 +133,7 @@ internal class OverlayTransientSignalPolicy(
         return seenForMs >= transientSystemUiResumeGraceMs
     }
 
+    /** Resets transient foreground dwell and exit-pattern timestamps. */
     fun resetTransientForegroundTracking() {
         transientForegroundPackage = null
         transientForegroundSinceElapsedMs = 0L
@@ -106,6 +141,7 @@ internal class OverlayTransientSignalPolicy(
         transientAodSeenElapsedMs = 0L
     }
 
+    /** Records timestamps for SystemUI and AOD appearances used by [shouldResumeFromTransientExitPattern]. */
     fun trackTransientExitPattern(packageName: String, nowElapsedMs: Long = SystemClock.elapsedRealtime()) {
         when {
             packageName.startsWith("com.android.systemui") -> transientSystemUiSeenElapsedMs = nowElapsedMs
@@ -113,6 +149,10 @@ internal class OverlayTransientSignalPolicy(
         }
     }
 
+    /**
+     * Failsafe check that resumes an [OverlaySuppressionReason.APP_LAUNCH] overlay when both
+     * SystemUI and Samsung AOD events occurred recently within [transientExitPatternWindowMs].
+     */
     fun shouldResumeFromTransientExitPattern(
         suppressionReason: OverlaySuppressionReason,
         suppressedForMs: Long,

@@ -7,10 +7,13 @@ import androidx.compose.ui.unit.sp
 /**
  * One UI 8 type scale (see plan section 4.3). Content-first typography: oversized headings,
  * tight leading, weight contrast carries hierarchy instead of color or decoration.
+ *
+ * All sizes use `sp` (scale-independent pixels) so overlay typography honors user font-scale
+ * accessibility settings.
  */
 object CoverOneUIType {
 
-    /** Hero numeric — clock, media artist/track on the expanded player. */
+    /** Hero numeric — clock, media artist/track on the expanded player. Tight negative tracking (`-1.5.sp`) keeps large light-weight glyphs cohesive. */
     val displayHero = TextStyle(
         fontSize = 48.sp,
         fontWeight = FontWeight.Light,
@@ -18,7 +21,7 @@ object CoverOneUIType {
         lineHeight = 54.sp
     )
 
-    /** Section headings — "Notifications", "Now", "Earlier", "Media". */
+    /** Section headings — "Notifications", "Now", "Earlier", "Media". Semi-bold weight establishes clear visual anchors without extra color. */
     val sectionTitle = TextStyle(
         fontSize = 22.sp,
         fontWeight = FontWeight.SemiBold,
@@ -37,7 +40,7 @@ object CoverOneUIType {
         fontWeight = FontWeight.Normal
     )
 
-    /** Chip / pill label — status pills, mode toggles. */
+    /** Chip / pill label — status pills, mode toggles. Wide tracking (`0.8.sp`) improves small-size legibility on frosted surfaces. */
     val chipLabel = TextStyle(
         fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,

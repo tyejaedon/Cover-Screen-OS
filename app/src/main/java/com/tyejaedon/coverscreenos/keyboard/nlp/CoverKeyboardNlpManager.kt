@@ -35,12 +35,15 @@ object CoverKeyboardNlpManager {
     private const val KEY_SUPPRESSED = "suppressed"
     private const val KEY_INCLUDE_CONTACTS = "include_contact_names"
 
+    // Dedicated background scope so corpus decompression and ContactProvider queries never block IME startup.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val initMutex = Mutex()
 
+    /** Guards asynchronous asset initialization so it executes once per process. */
     @Volatile
     private var isInitialized = false
 
+    // Minimal high-frequency English seed used immediately before async asset loading finishes.
     private val defaultCorpus: Map<String, Long> = mapOf(
         "the" to 1000000L, "and" to 800000L, "to" to 700000L, "of" to 600000L,
         "a" to 550000L, "in" to 500000L, "is" to 450000L, "that" to 400000L,
@@ -53,20 +56,32 @@ object CoverKeyboardNlpManager {
         "call" to 100000L, "message" to 95000L, "work" to 90000L, "time" to 85000L
     )
 
+    /** In-memory prefix Trie supporting dynamic insertion of learned and contact tokens. */
     var trieDictionary: CompactTrieDictionary = CompactTrieDictionary(defaultCorpus)
         private set
+
+    // Memory-mapped read-only Trie cache (`trie_mmap_v1.bin`) used to reduce Java heap overhead.
     private var binaryTrie: BinaryTrieDictionary? = null
+
+    /** Symmetric-delete fuzzy spelling corrector used for QWERTY autocorrection. */
     var symSpellAutocorrect: SymSpellAutocorrect = SymSpellAutocorrect(defaultCorpus)
         private set
+
+    /** Numeric keypad (2-9) predictive candidate engine. */
     var t9Engine: T9PredictiveEngine = T9PredictiveEngine(trieDictionary)
         private set
+
+    /** Dynamic Time Warping gesture decoder for continuous swipe typing on QWERTY. */
     var glideDecoder: DTWGlideDecoder = DTWGlideDecoder(trieDictionary)
         private set
 
+    // Maps each lowercase antecedent word to up to 5 highest-frequency follower words.
     private var bigramFollowers: Map<String, List<String>> = emptyMap()
     private val baseCorpusWords = mutableSetOf<String>()
+    // Tracks tokens introduced exclusively via Contacts so revoking consent hides them immediately.
     private val contactOnlyWords = mutableSetOf<String>()
     private var contactsAllowedProvider: () -> Boolean = { true }
+    // Also acts as the mutex protecting `learnedWords`, `suppressedWords`, and `contactOnlyWords`.
     private val learnedWords = mutableSetOf<String>()
     private val suppressedWords = mutableSetOf<String>()
     private var sharedPreferences: SharedPreferences? = null
@@ -85,6 +100,7 @@ object CoverKeyboardNlpManager {
             throw IllegalStateException("Contact suggestions require READ_CONTACTS permission")
         }
         val shouldIncludeContacts = (includeContactNames ?: true) && savedConsent && hasPermission
+        // Re-check both preference and runtime permission dynamically at suggestion query time.
         contactsAllowedProvider = {
             preferences.getBoolean(KEY_INCLUDE_CONTACTS, false) &&
                 context.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
@@ -142,6 +158,7 @@ object CoverKeyboardNlpManager {
                     val frequencies = HashMap<String, Long>(20000)
                     frequencies.putAll(defaultCorpus)
 
+                    // 1. Load the GZIP-compressed base English frequency lexicon (`word freq` lines).
                     runCatching {
                         appContext.assets.open("english_words.bin").use { stream ->
                             GZIPInputStream(stream).bufferedReader().forEachLine { line ->
@@ -157,7 +174,7 @@ object CoverKeyboardNlpManager {
                         Log.w(TAG, "Bundled english_words.bin not loaded, using fallback default vocabulary", e)
                     }
 
-                    // Enrich with installed application labels
+                    // 2. Enrich with installed application labels so launcher/app names rank well.
                     runCatching {
                         appContext.packageManager.getInstalledApplications(0).forEach { info ->
                             val label = appContext.packageManager.getApplicationLabel(info).toString()
@@ -170,7 +187,7 @@ object CoverKeyboardNlpManager {
                         }
                     }
 
-                    // Enrich with opt-in contact names if consented & permitted
+                    // 3. Enrich with opt-in contact names if consented & permitted.
                     runCatching {
                         val consented = prefs.getBoolean(KEY_INCLUDE_CONTACTS, false)
                         val permitted = appContext.checkSelfPermission(Manifest.permission.READ_CONTACTS) ==
@@ -193,6 +210,7 @@ object CoverKeyboardNlpManager {
                         }
                     }
 
+                    // 4. Boost user-learned words above typical dictionary frequencies.
                     val currentLearned = synchronized(learnedWords) { learnedWords.toSet() }
                     val currentSuppressed = synchronized(learnedWords) { suppressedWords.toSet() }
                     currentLearned.forEach { word ->
@@ -204,6 +222,7 @@ object CoverKeyboardNlpManager {
                     val newT9 = T9PredictiveEngine(newTrie, currentLearned, currentSuppressed)
                     val newGlide = DTWGlideDecoder(newTrie)
 
+                    // Persist and memory-map the compiled Trie for fast lookups across IME restarts.
                     runCatching {
                         if (!cacheFile.exists() || cacheFile.length() < BinaryTrieDictionary.HEADER_SIZE) {
                             BinaryTrieDictionary.writeToFile(newTrie, cacheFile)
@@ -226,6 +245,10 @@ object CoverKeyboardNlpManager {
         }
     }
 
+    /**
+     * Parses GZIP-compressed `word1 word2 freq` bigram records from `english_bigrams.bin`
+     * and retains the top 5 followers per antecedent word.
+     */
     private fun loadBigramCorpus(context: Context) {
         val bigramCandidates = mutableMapOf<String, MutableList<Pair<String, Long>>>()
         runCatching {
@@ -256,6 +279,7 @@ object CoverKeyboardNlpManager {
         val learned = synchronized(learnedWords) { learnedWords.toSet() }
         val results = LinkedHashSet<String>()
 
+        // Stage 1: Prioritize personal learned words matching the typed prefix.
         for (word in learned) {
             if (isWordAvailable(word) && word.startsWith(query)) {
                 results.add(word)
@@ -263,6 +287,7 @@ object CoverKeyboardNlpManager {
             }
         }
 
+        // Stage 2: Query Trie prefix completions (preferring the memory-mapped cache once ready).
         val completions = binaryTrie?.predictForPrefix(query, limit = limit + 4)
             ?: trieDictionary.predictForPrefix(query, limit = limit + 4)
         for (c in completions) {
@@ -272,6 +297,7 @@ object CoverKeyboardNlpManager {
             }
         }
 
+        // Stage 3: Backfill remaining slots with SymSpell edit-distance corrections for typos.
         if (results.size < limit) {
             val corrections = symSpellAutocorrect.suggest(query, limit = limit + 4)
             for (c in corrections) {
@@ -293,6 +319,7 @@ object CoverKeyboardNlpManager {
         val fromBigrams = bigramFollowers[key].orEmpty().filter(::isWordAvailable)
         if (fromBigrams.isNotEmpty()) return fromBigrams.take(limit)
 
+        // Fallback conversational followers when bigram data lacks the previous word.
         return when (key) {
             "hello", "hi", "hey" -> listOf("there", "world", "everyone")
             "thank" -> listOf("you", "them", "god")
@@ -310,6 +337,7 @@ object CoverKeyboardNlpManager {
         if (normalized.isEmpty() || !normalized.all { it in 'a'..'z' }) return input
         val learned = synchronized(learnedWords) { learnedWords.toSet() }
         if (!isWordAvailable(normalized)) return input
+        // Leave valid dictionary or user-learned words untouched.
         if ((normalized in learned || trieDictionary.contains(normalized)) && isWordAvailable(normalized)) {
             return input
         }
@@ -331,6 +359,7 @@ object CoverKeyboardNlpManager {
     fun getT9Suggestions(digits: String, limit: Int = 3): List<String> {
         if (digits.isEmpty() || limit <= 0) return emptyList()
 
+        // Collapse hyphen-delimited multi-tap key sequences (e.g. "44-33-55") into base T9 digits ("435").
         if ('-' in digits) {
             val groups = digits.split('-')
             if (groups.any { group ->
@@ -412,6 +441,10 @@ object CoverKeyboardNlpManager {
         }
     }
 
+    /**
+     * Returns `true` if [word] is not user-suppressed and, when it comes exclusively from
+     * Contacts, contact-name suggestions are still consented and permitted.
+     */
     fun isWordAvailable(word: String): Boolean {
         val normalized = word.lowercase(Locale.ROOT).trim()
         return synchronized(learnedWords) {
@@ -420,6 +453,7 @@ object CoverKeyboardNlpManager {
         }
     }
 
+    /** Writes learned and suppressed word sets asynchronously to `keyboard_words` SharedPreferences. */
     private fun persistPreferences(context: Context?) {
         val prefs = sharedPreferences
             ?: context?.applicationContext?.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)

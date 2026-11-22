@@ -14,15 +14,30 @@ import com.tyejaedon.coverscreenos.overlay.input.CoverInputAccessibilityService
 import com.tyejaedon.coverscreenos.overlay.CoverAccessibilityService
 import com.tyejaedon.coverscreenos.overlay.ForegroundService
 
+/**
+ * Central coordinator for launching apps and intents onto the secondary cover display.
+ *
+ * Handles:
+ * - **Display targeting**: builds [ActivityOptions.makeBasic] with `launchDisplayId` so launched
+ *   activities open on the cover display rather than [Display.DEFAULT_DISPLAY].
+ * - **Lockscreen gating**: checks [KeyguardManager] and delegates locked-device requests to
+ *   [UnlockBridgeActivity] before opening the target app.
+ * - **Background-Activity-Launch (BAL) exemption**: routes starts through bound
+ *   [AccessibilityService] contexts when invoked from background services.
+ * - **Overlay focus handoff**: instructs [ForegroundService] to hide the cover launcher overlay
+ *   once the target activity is dispatched.
+ */
 object CoverAppLauncher {
 
     private const val LOG_TAG = "CoverAppLauncher"
 
+    /** Testable abstraction over the platform activity-launch step for a resolved display ID. */
     internal fun interface ActivityLaunchExecutor {
         fun launch(context: Context, launchIntent: Intent, launchDisplayId: Int)
     }
 
     private val defaultActivityLaunchExecutor = ActivityLaunchExecutor { context, launchIntent, launchDisplayId ->
+        // Pin the launched Activity window to the resolved cover display via ActivityOptions.
         val launchOptions = ActivityOptions.makeBasic().apply {
             this.launchDisplayId = launchDisplayId
         }.toBundle()
@@ -83,6 +98,10 @@ object CoverAppLauncher {
         )
     }
 
+    /**
+     * Launches the main launcher activity for [packageName] onto [displayId] (or the resolved
+     * cover display when null) using [defaultActivityLaunchExecutor].
+     */
     fun launchPackageOnDisplay(
         context: Context,
         packageName: String,
@@ -113,6 +132,10 @@ object CoverAppLauncher {
         )
     }
 
+    /**
+     * Internal [launchIntentOnDisplay] overload allowing test injection of [activityLaunchExecutor]
+     * and [skipUnlockChallenge] bypass when called immediately after unlock.
+     */
     internal fun launchIntentOnDisplay(
         context: Context,
         intent: Intent,
@@ -149,6 +172,11 @@ object CoverAppLauncher {
         }
     }
 
+    /**
+     * Resumes a deferred [packageName] launch on [displayId] from [UnlockBridgeActivity],
+     * passing `skipUnlockChallenge = true` to avoid re-entering the unlock gate while keyguard
+     * dismissal is still settling.
+     */
     internal fun launchPackageOnDisplayAfterUnlock(
         context: Context,
         packageName: String,
@@ -163,6 +191,10 @@ object CoverAppLauncher {
         )
     }
 
+    /**
+     * Validates lock state, package visibility, component enabled/exported flags, and launches
+     * [packageName] onto the target display, hiding the cover overlay on success.
+     */
     internal fun launchPackageOnDisplay(
         context: Context,
         packageName: String,
@@ -248,6 +280,10 @@ object CoverAppLauncher {
         }
     }
 
+    /**
+     * Resolves the destination display ID in priority order: explicit valid [displayId],
+     * [Context.getDisplay] (for display-scoped contexts), or [DisplayManager] default display.
+     */
     internal fun resolveLaunchDisplayId(context: Context, displayId: Int?): Int {
         if (displayId != null && displayId != Display.INVALID_DISPLAY) {
             return displayId
@@ -266,6 +302,7 @@ object CoverAppLauncher {
         return defaultDisplay?.displayId ?: Display.DEFAULT_DISPLAY
     }
 
+    /** Resolves target [android.content.pm.ActivityInfo] under `MATCH_DEFAULT_ONLY` visibility rules. */
     private fun resolveLaunchActivityInfo(
         context: Context,
         packageName: String,
@@ -278,6 +315,7 @@ object CoverAppLauncher {
         }.getOrNull()
     }
 
+    /** Returns true if [KeyguardManager] reports the device or keyguard is currently locked. */
     private fun isDeviceLocked(context: Context): Boolean {
         val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         return keyguardManager?.isDeviceLocked

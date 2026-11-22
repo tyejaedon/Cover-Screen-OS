@@ -9,15 +9,19 @@ package com.tyejaedon.coverscreenos.datastore
  *   Requires IME insets/padding handling on the overlay.
  */
 enum class KeyboardStrategy {
+	/** Built-in compact T9 keypad rendered directly inside the cover overlay window. */
 	T9,
+	/** System soft keyboard (IME) hosted via Android's input method framework. */
 	SYSTEM_IME;
 
+	/** Convenience flag indicating whether input should be routed to the system IME. */
 	val isSystemIme: Boolean
 		get() = this == SYSTEM_IME
 
 	/** Returns the opposite strategy, used by the overlay's quick toggle button. */
 	fun toggled(): KeyboardStrategy = if (this == T9) SYSTEM_IME else T9
 
+	/** Storage serialization helpers using stable enum [name] strings rather than ordinals. */
 	companion object {
 		/**
 		 * Resolves a persisted preference value back into a [KeyboardStrategy],

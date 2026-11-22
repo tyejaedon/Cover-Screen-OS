@@ -46,20 +46,27 @@ class FoldPostureTracker(
 ) {
 
     private val _posture = MutableStateFlow(CoverFoldPosture.CLOSED)
+    /**
+     * Reactive stream of the device's current [CoverFoldPosture]. Defaults to
+     * [CoverFoldPosture.CLOSED] until [WindowInfoTracker] emits an unfolded [FoldingFeature].
+     */
     val posture: StateFlow<CoverFoldPosture> = _posture.asStateFlow()
 
     private var trackingJob: Job? = null
 
     /**
-     * Starts listening for window layout / folding feature updates.
+     * Starts listening for window layout / folding feature updates via
+     * [WindowInfoTracker.windowLayoutInfo] inside [scope].
      */
     fun startMonitoring(scope: CoroutineScope) {
+        // Avoid spawning duplicate collectors if monitoring is already active.
         if (trackingJob != null) return
 
         trackingJob = scope.launch {
             try {
                 windowInfoTracker.windowLayoutInfo(context)
                     .catch { e ->
+                        // Fall back to CLOSED so the cover screen stays usable if the stream errors.
                         Log.w(TAG, "WindowLayoutInfo flow error; defaulting to CLOSED posture", e)
                         _posture.value = CoverFoldPosture.CLOSED
                     }
@@ -71,6 +78,8 @@ class FoldPostureTracker(
                         }
                     }
             } catch (t: Throwable) {
+                // Non-visual contexts or missing Jetpack WindowManager OEM extensions can throw
+                // synchronously when attaching the listener; stay safely in CLOSED.
                 Log.w(TAG, "Could not attach WindowInfoTracker to context; remaining in CLOSED", t)
             }
         }
@@ -85,7 +94,12 @@ class FoldPostureTracker(
     }
 
     /**
-     * Evaluates [WindowLayoutInfo] to deduce posture.
+     * Evaluates [WindowLayoutInfo] to deduce posture from the first [FoldingFeature] in
+     * `displayFeatures`.
+     *
+     * When the device is closed onto the cover display, Jetpack WindowManager typically emits no
+     * [FoldingFeature] (`null`), which maps to [CoverFoldPosture.CLOSED]. [FoldingFeature.State.HALF_OPENED]
+     * and [FoldingFeature.State.FLAT] suppress the cover overlay.
      */
     fun computePosture(layoutInfo: WindowLayoutInfo): CoverFoldPosture {
         val foldingFeature = layoutInfo.displayFeatures

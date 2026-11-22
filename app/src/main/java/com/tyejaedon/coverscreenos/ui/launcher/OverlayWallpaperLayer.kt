@@ -53,6 +53,13 @@ import kotlin.math.sqrt
 private const val WALLPAPER_LOG_TAG = "CoverWallpaper"
 private const val MAX_WALLPAPER_DECODE_PIXELS = 1_800_000L
 
+/**
+ * Root wallpaper surface for the cover screen overlay.
+ *
+ * Resolves the target container dimensions from `LocalWindowInfo`, decodes a scaled
+ * [WallpaperFrame] (or video poster frame) asynchronously on `Dispatchers.IO`, and falls back
+ * to a dark vertical gradient when no wallpaper URI is configured or decoding fails.
+ */
 @Composable
 internal fun CoverWallpaperLayer(
     wallpaperUri: String?,
@@ -71,6 +78,7 @@ internal fun CoverWallpaperLayer(
     val uri = remember(uriValue) { uriValue?.toUri() }
     val requestedWidth = max(containerSize.width, 1)
     val requestedHeight = max(containerSize.height, 1)
+    // Decode metadata and static/poster bitmap off the main thread whenever URI or framing inputs change.
     val media by produceState<WallpaperFrame?>(
         null,
         uri,
@@ -123,6 +131,13 @@ internal fun CoverWallpaperLayer(
     }
 }
 
+/**
+ * Selects the appropriate rendering backend for a decoded [WallpaperFrame]:
+ * - **Video**: Hardware-accelerated looping playback via [WallpaperVideoTextureView] (`TextureView`
+ *   + `MediaPlayer` + `Surface`) inside `AndroidView`, guarded by lifecycle/interactive/power-save state.
+ * - **GIF**: `ImageDecoder.decodeDrawable` (`AnimatedImageDrawable`) rendered inside a legacy `ImageView`.
+ * - **Static / Paused / Fallback**: Renders the pre-decoded poster or still image via [WallpaperStaticFrame].
+ */
 @Composable
 internal fun WallpaperMediaContent(
     uri: Uri,
@@ -139,6 +154,7 @@ internal fun WallpaperMediaContent(
     val context = LocalContext.current
     val playbackActive = rememberWallpaperPlaybackActive()
     val lowEffects = rememberLowEffectsMode()
+    // Pause motion wallpapers when the screen is off, lifecycle is stopped, or Battery Saver is active.
     val shouldPlay by rememberUpdatedState(playbackActive && !lowEffects)
     val animatedDrawable by produceState<AnimatedImageDrawable?>(null, uri, frame.type, shouldPlay) {
         value = if (frame.type != WallpaperMediaType.GIF || !shouldPlay) null else withContext(Dispatchers.IO) {
@@ -154,6 +170,7 @@ internal fun WallpaperMediaContent(
     }
     var videoPlaybackFailed by remember(uri) { mutableStateOf(false) }
 
+    // Synchronize AnimatedImageDrawable start/stop with visibility and power-saving state.
     DisposableEffect(animatedDrawable, playbackActive, lowEffects) {
         val drawable = animatedDrawable
         if (drawable != null) {
@@ -176,11 +193,13 @@ internal fun WallpaperMediaContent(
             blurRadiusDp = blurRadiusDp,
             modifier = modifier
         ) { frameModifier ->
+            // Host TextureView inside AndroidView so MediaPlayer frames receive the same Compose transforms/blur.
             AndroidView(
                 factory = { viewContext -> WallpaperVideoTextureView(viewContext) },
                 update = { view ->
                     view.setPlayback(uri, shouldPlay) { error ->
                         Log.w(WALLPAPER_LOG_TAG, "Wallpaper video playback failed: ${error.message}")
+                        // Trigger recomposition into the static poster fallback if MediaPlayer fails.
                         videoPlaybackFailed = true
                     }
                 },
@@ -201,6 +220,7 @@ internal fun WallpaperMediaContent(
             blurRadiusDp = blurRadiusDp,
             modifier = modifier
         ) { frameModifier ->
+            // FIT_XY matches the pre-computed aspect-scaled bounds supplied by WallpaperTransformFrame.
             AndroidView(
                 factory = { viewContext -> ImageView(viewContext).apply { scaleType = ImageView.ScaleType.FIT_XY } },
                 update = { view -> view.setImageDrawable(animatedDrawable) },
@@ -222,6 +242,10 @@ internal fun WallpaperMediaContent(
     }
 }
 
+/**
+ * Decoded wallpaper payload containing the ready-to-render [bitmap] (or first video poster frame),
+ * detected [type], and upright source pixel dimensions ([width] × [height]).
+ */
 internal data class WallpaperFrame(
     val bitmap: Bitmap,
     val type: WallpaperMediaType,
@@ -229,11 +253,16 @@ internal data class WallpaperFrame(
     val height: Int
 )
 
+/**
+ * Returns visually upright video dimensions by swapping [width] and [height] when the stream's
+ * `METADATA_KEY_VIDEO_ROTATION` is 90° or 270°.
+ */
 internal fun uprightVideoDimensions(width: Int, height: Int, metadataRotation: Int): Pair<Int, Int> {
     val rotation = ((metadataRotation % 360) + 360) % 360
     return if (rotation == 90 || rotation == 270) height to width else width to height
 }
 
+/** Preview-specific alias forwarding to [decodeWallpaperFrame] with caller-supplied preview zoom. */
 internal fun decodeWallpaperPreviewFrame(
     context: Context,
     uri: Uri,
@@ -244,6 +273,15 @@ internal fun decodeWallpaperPreviewFrame(
     scaleMode: WallpaperScaleMode
 ): WallpaperFrame = decodeWallpaperFrame(context, uri, requestedWidth, requestedHeight, zoom, rotation, scaleMode)
 
+/**
+ * Decodes and caches a [WallpaperFrame] for [uri] scaled to fit the cover viewport while staying
+ * within [WallpaperMediaLimits] and [MAX_WALLPAPER_DECODE_PIXELS].
+ *
+ * - **Video**: Uses `MediaMetadataRetriever` to validate duration/dimensions and extract a scaled
+ *   sync keyframe poster at time `0` (`OPTION_CLOSEST_SYNC`).
+ * - **Static image / GIF**: Uses `ImageDecoder.decodeBitmap` with `ALLOCATOR_SOFTWARE` and
+ *   downsamples oversized sources to stay within the pixel budget.
+ */
 internal fun decodeWallpaperFrame(
     context: Context,
     uri: Uri,
@@ -291,6 +329,7 @@ internal fun decodeWallpaperFrame(
             val heightScale = frameHeight.toFloat() / height.coerceAtLeast(1)
             val baseScale = if (scaleMode == WallpaperScaleMode.CROP) max(widthScale, heightScale) else min(widthScale, heightScale)
             val scale = (baseScale * zoom).coerceAtMost(1f)
+            // Extract frame 0 as a scaled poster bitmap shown while paused or in low-effects mode.
             val poster = retriever.getScaledFrameAtTime(
                 0,
                 MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
@@ -323,6 +362,7 @@ internal fun decodeWallpaperFrame(
         val sourcePixels = sourceWidth.toLong() * sourceHeight
         val pixelBudgetScale = sqrt(MAX_WALLPAPER_DECODE_PIXELS / sourcePixels.toFloat())
         val decodeScale = min(targetScale, pixelBudgetScale).coerceAtMost(1f)
+        // Software allocation allows safe Compose Canvas/blur rendering across secondary displays.
         decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
         if (decodeScale < 1f) {
             decoder.setTargetSize(
@@ -336,12 +376,14 @@ internal fun decodeWallpaperFrame(
     }
 }
 
+/** Reads the leading 4 KiB header bytes to sniff static image vs. GIF vs. video formats. */
 private fun detectWallpaperType(context: Context, uri: Uri): WallpaperMediaType {
     val prefix = openWallpaperInputStream(context, uri)?.use { it.readNBytes(4096) }
         ?: error("Wallpaper file cannot be read")
     return WallpaperMediaLimits.detectMediaType(prefix)
 }
 
+/** Creates an [ImageDecoder.Source] supporting both local `file://` paths and `content://` URIs. */
 private fun imageSource(context: Context, uri: Uri): ImageDecoder.Source =
     if (uri.scheme == "file") {
         ImageDecoder.createSource(File(uri.path ?: error("Wallpaper file path is missing")))
@@ -349,15 +391,27 @@ private fun imageSource(context: Context, uri: Uri): ImageDecoder.Source =
         ImageDecoder.createSource(context.contentResolver, uri)
     }
 
+/** Binds [retriever] to [uri], handling direct filesystem paths and `content://` providers. */
 private fun setRetrieverDataSource(context: Context, retriever: MediaMetadataRetriever, uri: Uri) {
     if (uri.scheme == "file") retriever.setDataSource(uri.path ?: error("Video file path is missing"))
     else retriever.setDataSource(context, uri)
 }
 
+/** Opens a raw stream for [uri], dispatching between `File.inputStream()` and `ContentResolver`. */
 private fun openWallpaperInputStream(context: Context, uri: Uri) =
     if (uri.scheme == "file") uri.path?.let { File(it).inputStream() }
     else context.contentResolver.openInputStream(uri)
 
+/**
+ * Hardware-accelerated `TextureView` hosting a muted, looping [MediaPlayer] bound to the view's
+ * `SurfaceTexture` via an Android [Surface].
+ *
+ * `TextureView` (rather than `SurfaceView`) is required here so Compose `AndroidView` +
+ * `WallpaperTransformFrame` can clip, rotate, scale, translate, and blur video frames within the
+ * overlay's view hierarchy. MediaPlayer preparation runs asynchronously via `prepareAsync()`,
+ * automatically starts/pauses on [setPlayback], releases native player/surface handles on
+ * destruction or detachment, and reports playback errors back to Compose for poster fallback.
+ */
 private class WallpaperVideoTextureView(context: Context) : TextureView(context), TextureView.SurfaceTextureListener {
     private var sourceUri: Uri? = null
     private var shouldPlay = false
@@ -370,6 +424,7 @@ private class WallpaperVideoTextureView(context: Context) : TextureView(context)
         surfaceTextureListener = this
     }
 
+    /** Updates the target video [uri] and desired [play] state, preparing or toggling playback. */
     fun setPlayback(uri: Uri, play: Boolean, onFailure: (Throwable) -> Unit) {
         failureCallback = onFailure
         if (sourceUri != uri) {
@@ -395,6 +450,7 @@ private class WallpaperVideoTextureView(context: Context) : TextureView(context)
         val texture = surfaceTexture ?: return
         if (player != null) return
         try {
+            // Wrap the TextureView's SurfaceTexture in a Surface so MediaPlayer renders into Compose's layer tree.
             val output = Surface(texture)
             val mediaPlayer = MediaPlayer()
             surface = output
@@ -435,6 +491,7 @@ private class WallpaperVideoTextureView(context: Context) : TextureView(context)
         surface = null
     }
 
+    /** Tears down all native MediaPlayer/Surface resources when `AndroidView.onRelease` runs. */
     fun release() {
         sourceUri = null
         releasePlayer()
@@ -459,6 +516,11 @@ private class WallpaperVideoTextureView(context: Context) : TextureView(context)
     }
 }
 
+/**
+ * Observes both Compose lifecycle (`Lifecycle.State.STARTED`) and device interactive state
+ * (`PowerManager.isInteractive` via `ACTION_SCREEN_ON` / `ACTION_SCREEN_OFF`) so animated/video
+ * wallpapers pause immediately when the screen turns off or the overlay stops.
+ */
 @Composable
 private fun rememberWallpaperPlaybackActive(): Boolean {
     val context = LocalContext.current
@@ -489,6 +551,11 @@ private fun rememberWallpaperPlaybackActive(): Boolean {
     return active
 }
 
+/**
+ * Tracks Android Battery Saver state (`PowerManager.isPowerSaveMode` via
+ * `ACTION_POWER_SAVE_MODE_CHANGED`) so video/GIF wallpapers degrade to static poster frames to
+ * conserve power.
+ */
 @Composable
 private fun rememberLowEffectsMode(): Boolean {
     val context = LocalContext.current

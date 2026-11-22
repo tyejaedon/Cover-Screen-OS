@@ -69,6 +69,14 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+/**
+ * Primary lockscreen and home page rendered at the center pager slot (`LOCK_PAGER_PAGE_INDEX`).
+ *
+ * Combines the top lock/battery status bar, highlighted notification badges, clock/date readout,
+ * search/widget trigger button, compact media card, optional One UI dock row, and an expandable
+ * modal [ExpandedNowPlayingPanel] routed to [CoverNotificationListenerService] media transport
+ * controls.
+ */
 @Composable
 internal fun LockAndDockTile(
     notifications: List<CoverNotificationModel>,
@@ -88,9 +96,11 @@ internal fun LockAndDockTile(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    // Pick the most recent active media session to drive both the compact card and expanded panel.
     val mediaNotification = remember(notifications) {
         notifications.filter { it.isMediaNotification }.maxByOrNull { it.postTime }
     }
+    // Reset expanded state whenever the active media session changes or disappears.
     var showExpandedMedia by remember(mediaNotification?.notificationKey) { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -227,12 +237,16 @@ private val LOCK_PILL_DIM_RGB_COLORS = listOf(
     Color(0xFFD66A78)
 )
 
+/**
+ * Draws a subtle two-pass RGB gradient halo and crisp inner rim behind a chip via [drawBehind].
+ */
 private fun Modifier.dimRgbGlow(): Modifier = this.drawBehind {
     val cornerPx = CoverOneUITokens.radiusChip.toPx()
     val start = Offset(0f, 0f)
     val end = Offset(size.width, size.height)
     val outerColors = LOCK_PILL_DIM_RGB_COLORS.map { it.copy(alpha = 0.16f) }
     val innerColors = LOCK_PILL_DIM_RGB_COLORS.map { it.copy(alpha = 0.34f) }
+    // Soft outer halo stroke followed by a tighter, brighter inner rim stroke.
     val outerExpandPx = 3.dp.toPx()
     drawRoundRect(
         brush = Brush.linearGradient(colors = outerColors, start = start, end = end),
@@ -251,6 +265,10 @@ private fun Modifier.dimRgbGlow(): Modifier = this.drawBehind {
     )
 }
 
+/**
+ * Interactive lock indicator chip shown when the cover display is locked; tapping invokes
+ * [onClick] to request device unlock.
+ */
 @Composable
 private fun LockStatusPill(isDeviceLocked: Boolean, minHeight: Dp, onClick: () -> Unit) {
     Box(
@@ -307,6 +325,13 @@ private val LOCK_HIGHLIGHT_BANNED_PACKAGES = setOf(
     "com.samsung.systemui"
 )
 
+/**
+ * Filters active notifications down to prioritized lockscreen highlight badges.
+ *
+ * Excludes media sessions and SystemUI noise, then returns up to [MAX_LOCK_ONGOING_HIGHLIGHTS]
+ * ongoing notification (e.g., active calls/timers) followed by up to [MAX_LOCK_NORMAL_HIGHLIGHTS]
+ * newest standard notifications deduplicated by package name.
+ */
 internal fun selectLockHighlightNotifications(
     notifications: List<CoverNotificationModel>
 ): List<CoverNotificationModel> {
@@ -329,6 +354,10 @@ internal fun selectLockHighlightNotifications(
     return ongoing + normal
 }
 
+/**
+ * Row of circular app-icon badges rendered above the lockscreen clock for high-priority
+ * ongoing and recent notifications; tapping a badge dispatches [onNotificationOpen].
+ */
 @Composable
 private fun LockTopNotificationHighlights(
     notifications: List<CoverNotificationModel>,
@@ -374,6 +403,8 @@ private fun LockTopNotificationHighlights(
     }
 }
 
+/** Returns the formatted local wall-clock time string (`h:mm a`) for the lockscreen clock. */
 internal fun currentCoverTime(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
 
+/** Returns the formatted short local date string (`EEE, MMM d`) shown beneath the lockscreen clock. */
 internal fun currentCoverDate(): String = LocalDate.now().format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()))

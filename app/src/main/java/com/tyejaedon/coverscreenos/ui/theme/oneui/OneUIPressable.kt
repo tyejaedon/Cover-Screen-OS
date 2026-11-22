@@ -39,9 +39,12 @@ fun Modifier.oneUIPressable(
 ): Modifier {
     if (!enabled) return this
 
+    // Share the caller's MutableInteractionSource when supplied (typically wired to clickable),
+    // or fall back to a remembered local source so press state persists across recompositions.
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val isPressed by source.collectIsPressedAsState()
 
+    // Asymmetric timing: brisk 100ms tween down for instant touch response, soft spring back on release.
     val scale by animateFloatAsState(
         targetValue = if (isPressed) pressedScale else 1f,
         animationSpec = if (isPressed) {
@@ -53,10 +56,12 @@ fun Modifier.oneUIPressable(
     )
 
     return this
+        // graphicsLayer applies GPU scale transforms during the draw phase, skipping relayout work.
         .graphicsLayer {
             scaleX = scale
             scaleY = scale
         }
+        // drawWithContent renders the child normally, then paints a faint highlight veil while held.
         .drawWithContent {
             drawContent()
             if (isPressed) {

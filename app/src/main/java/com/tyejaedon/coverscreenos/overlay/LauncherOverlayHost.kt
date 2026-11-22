@@ -43,6 +43,12 @@ import kotlinx.coroutines.flow.StateFlow
  *   newly-picked [KeyboardStrategy] through [launcherSettingsStore].
  * @property onRequestUnlock opens the system unlock prompt. Called when the
  *   user taps the lock icon on the lock page.
+ * @property onOpenCustomize dispatches the deep-linked customization screen on
+ *   the cover display via [launchCoordinator]. Returns `true` when launched.
+ * @property widgetHostManager optional `AppWidgetHost` manager used to bind and
+ *   render user home-screen widgets inside the cover overlay.
+ * @property onAddWidgetRequest opens the cover widget picker activity through
+ *   [launchCoordinator]. Returns `true` when launched.
  */
 class LauncherOverlayHost internal constructor(
     val appRepository: PackageManagerAppScannerRepository,

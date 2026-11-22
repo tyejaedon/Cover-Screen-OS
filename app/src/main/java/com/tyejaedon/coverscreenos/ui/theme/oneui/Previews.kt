@@ -28,6 +28,10 @@ private val PreviewWallpaperDark = Color(0xFF000000)
 private val PreviewWallpaperBright = Color(0xFFF5F5F5)
 private val PreviewWallpaperMid = Color(0xFF5B6B8C)
 
+/**
+ * Shared Compose gallery displaying [oneUiPanel], [oneUiElevatedPanel], and all
+ * [OverlayPageAccent] chip variants over a simulated [backgroundColor] wallpaper.
+ */
 @Composable
 private fun OneUiPreviewGallery(backgroundColor: Color) {
     CoverOSTheme {
@@ -53,6 +57,7 @@ private fun OneUiPreviewGallery(backgroundColor: Color) {
                         .oneUiElevatedPanel()
                 )
 
+                // Demonstrate each per-page signal accent by scoping LocalOverlayAccent per chip.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OverlayPageAccent.entries.forEach { accent ->
                         CompositionLocalProvider(LocalOverlayAccent provides accent) {
@@ -72,18 +77,21 @@ private fun OneUiPreviewGallery(backgroundColor: Color) {
     }
 }
 
+/** Android Studio Compose `@Preview` rendering the One UI depth gallery over a pure-black wallpaper. */
 @Preview(name = "One UI tokens — dark wallpaper", widthDp = 360, heightDp = 420)
 @Composable
 private fun OneUiPreviewDarkWallpaper() {
     OneUiPreviewGallery(PreviewWallpaperDark)
 }
 
+/** Android Studio Compose `@Preview` rendering the One UI depth gallery over a bright light wallpaper. */
 @Preview(name = "One UI tokens — bright wallpaper", widthDp = 360, heightDp = 420)
 @Composable
 private fun OneUiPreviewBrightWallpaper() {
     OneUiPreviewGallery(PreviewWallpaperBright)
 }
 
+/** Android Studio Compose `@Preview` rendering the One UI depth gallery over a mid-tone slate wallpaper. */
 @Preview(name = "One UI tokens — mid-tone wallpaper", widthDp = 360, heightDp = 420)
 @Composable
 private fun OneUiPreviewMidWallpaper() {

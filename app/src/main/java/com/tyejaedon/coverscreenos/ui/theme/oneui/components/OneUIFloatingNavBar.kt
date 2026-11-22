@@ -47,6 +47,13 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITheme
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUIPressable
 import kotlin.math.roundToInt
 
+/**
+ * Navigation destination metadata displayed inside [OneUIFloatingNavBar].
+ *
+ * @property route Unique navigation route key matched against `selectedRoute`.
+ * @property title Short tab label rendered below the icon (ellipsized to 1 line).
+ * @property icon Material/custom [ImageVector] shown in the tab slot.
+ */
 data class OneUINavItem(
     val route: String,
     val title: String,
@@ -69,6 +76,7 @@ fun OneUIFloatingNavBar(
 ) {
     val selectedIndex = items.indexOfFirst { it.route == selectedRoute }.coerceAtLeast(0)
     val itemCount = items.size.coerceAtLeast(1)
+    // Adapt bar dimensions when hosted on compact clamshell cover screens (height <= 480dp).
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
     val barHeight = if (isCompactHeight) 52.dp else OneUITheme.dimensions.floatingNavHeight
     val outerHorizontalPadding = if (isCompactHeight) 12.dp else 24.dp
@@ -85,6 +93,7 @@ fun OneUIFloatingNavBar(
             .padding(horizontal = outerHorizontalPadding)
             .fillMaxWidth()
     ) {
+        // BoxWithConstraints exposes measured inner width so each tab slot and the sliding pill share exact geometry.
         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 6.dp)) {
             val itemWidth = maxWidth / itemCount
             val targetOffset = itemWidth * selectedIndex
@@ -96,6 +105,7 @@ fun OneUIFloatingNavBar(
             )
 
             // Tactile Sliding Pill Indicator
+            // Lambda-based offset defers pixel translation to the layout placement phase, avoiding recompositions per frame.
             Box(
                 modifier = Modifier
                     .offset { IntOffset(x = (animatedOffset * density).roundToInt(), y = 0) }
@@ -122,6 +132,7 @@ fun OneUIFloatingNavBar(
                             .weight(1f)
                             .fillMaxHeight()
                             .clip(CircleShape)
+                            // Suppress Material ripple (indication = null) in favor of One UI tactile press scaling.
                             .oneUIPressable(interactionSource = interactionSource)
                             .clickable(
                                 interactionSource = interactionSource,
@@ -151,6 +162,10 @@ fun OneUIFloatingNavBar(
     }
 }
 
+/**
+ * Dual-mode `@Preview` verifying [OneUIFloatingNavBar] pill elevation, hairline border,
+ * and active tab indicator across Light and OLED Dark themes.
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable

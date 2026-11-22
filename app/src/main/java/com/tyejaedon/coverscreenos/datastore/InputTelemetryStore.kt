@@ -16,9 +16,17 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
+/**
+ * Top-level Jetpack `preferencesDataStore` delegate backed by
+ * `files/datastore/cover_input_telemetry.preferences_pb`.
+ *
+ * Declaring this delegate on [Context] guarantees a single [androidx.datastore.core.DataStore]
+ * instance per process for the telemetry file.
+ */
 private val Context.coverInputTelemetryDataStore by preferencesDataStore(name = "cover_input_telemetry")
 private const val INPUT_TELEMETRY_LOG_TAG = "InputTelemetryStore"
 
+/** Strongly-typed DataStore [Preferences.Key] definitions for cover-screen IME telemetry. */
 private object InputTelemetryKeys {
     val imeShowRequestCount = longPreferencesKey("cover_ime_show_request")
     val imeShowSuccessCount = longPreferencesKey("cover_ime_show_success")
@@ -26,12 +34,21 @@ private object InputTelemetryKeys {
     val oemBlockedHintCount = longPreferencesKey("cover_ime_oem_blocked_hint")
 }
 
+/**
+ * Immutable snapshot of persisted cover-screen input telemetry counters.
+ *
+ * @property imeShowRequestCount Total attempts to show the system IME or input method picker on the cover display.
+ * @property imeShowSuccessCount Attempts that succeeded in displaying the IME UI.
+ * @property imeShowFailureCount Attempts that failed or were suppressed (e.g. by OEM window restrictions).
+ * @property oemBlockedHintShownCount Number of times the user was shown an OEM-restriction workaround hint.
+ */
 data class InputTelemetryCounters(
     val imeShowRequestCount: Long = 0L,
     val imeShowSuccessCount: Long = 0L,
     val imeShowFailureCount: Long = 0L,
     val oemBlockedHintShownCount: Long = 0L
 ) {
+    /** Rounded integer percentage `[0, 100]` of successful IME show requests. */
     val imeShowSuccessRatePercent: Int
         get() = imePickerSuccessRatePercent(
             requestCount = imeShowRequestCount,
@@ -39,12 +56,28 @@ data class InputTelemetryCounters(
         )
 }
 
+/**
+ * Jetpack DataStore `<Preferences>` repository that tracks cover-display IME reliability metrics.
+ *
+ * Uses [Flow] mapping for non-blocking reads and atomic [edit] transactions on [ioDispatcher]
+ * for concurrent-safe counter increments.
+ *
+ * @param context Android context; only its [Context.getApplicationContext] is retained.
+ * @param ioDispatcher Coroutine dispatcher used for DataStore disk writes (defaults to [Dispatchers.IO]).
+ */
 class InputTelemetryStore(
     context: Context,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
     private val appContext = context.applicationContext
 
+    /**
+     * Reactive stream of [InputTelemetryCounters] backed by `DataStore.data`.
+     *
+     * Recovers from disk/unexpected read errors by logging and emitting `emptyPreferences()`
+     * (so collectors receive zeroed defaults), while re-throwing [CancellationException] to
+     * preserve structured coroutine cancellation.
+     */
     val counters: Flow<InputTelemetryCounters> = appContext.coverInputTelemetryDataStore.data
         .catch { throwable ->
             if (throwable is CancellationException) throw throwable
@@ -64,6 +97,10 @@ class InputTelemetryStore(
             )
         }
 
+    /**
+     * Atomically increments [InputTelemetryCounters.imeShowRequestCount] and either the success or
+     * failure counter inside a single DataStore `edit` transaction.
+     */
     suspend fun recordImeShowRequest(success: Boolean) {
         withContext(ioDispatcher) {
             appContext.coverInputTelemetryDataStore.edit { preferences ->
@@ -81,6 +118,7 @@ class InputTelemetryStore(
         }
     }
 
+    /** Atomically increments [InputTelemetryCounters.oemBlockedHintShownCount] in DataStore. */
     suspend fun recordOemBlockedHintShown() {
         withContext(ioDispatcher) {
             appContext.coverInputTelemetryDataStore.edit { preferences ->
@@ -91,6 +129,10 @@ class InputTelemetryStore(
     }
 }
 
+/**
+ * Pure helper computing a clamped `[0, 100]` rounded success percentage from raw counter totals,
+ * returning `0` when [requestCount] is non-positive and guarding against out-of-range counts.
+ */
 internal fun imePickerSuccessRatePercent(
     requestCount: Long,
     successCount: Long

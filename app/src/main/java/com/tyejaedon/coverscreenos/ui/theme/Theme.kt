@@ -23,6 +23,7 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUILightColors
 import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUIShapes
 import com.tyejaedon.coverscreenos.ui.theme.oneui.OneUITypography
 
+// Material 3 dark scheme mapping the true-black AMOLED canvas and Galaxy indigo accent tokens.
 private val CoverOSDarkColorScheme = darkColorScheme(
     primary = CoverOSPrimary,
     onPrimary = CoverOSOnPrimary,
@@ -45,6 +46,7 @@ private val CoverOSDarkColorScheme = darkColorScheme(
     outline = CoverOSDarkOutline
 )
 
+// Material 3 light scheme pairing cool off-white backgrounds with elevated white surfaces.
 private val CoverOSLightColorScheme = lightColorScheme(
     primary = CoverOSLightPrimary,
     onPrimary = CoverOSLightOnPrimary,
@@ -68,9 +70,26 @@ private val CoverOSLightColorScheme = lightColorScheme(
 )
 
 /** Overlay panels use this token; outside the launcher theme it retains the original 16dp shape. */
+// staticCompositionLocalOf is used here because theme tokens change infrequently; changing them
+// recomposes the subtree beneath CompositionLocalProvider without per-read snapshot tracking overhead.
 val LocalCoverPanelCornerRadius = staticCompositionLocalOf { DEFAULT_PANEL_CORNER_RADIUS_DP.dp }
+
+/**
+ * Active overlay accent color provided down the composition tree via [staticCompositionLocalOf].
+ * Used by overlay controls and chips when the user selects a custom [AccentColor].
+ */
 val LocalCoverOverlayAccent = staticCompositionLocalOf { CoverOSPrimary }
+
+/**
+ * Foreground ink color paired with [LocalCoverOverlayAccent] for legible text/icons on
+ * accent-filled overlay surfaces.
+ */
 val LocalCoverOverlayOnAccent = staticCompositionLocalOf { Color.Black }
+
+/**
+ * Optional tinted border color applied to overlay panels when the user selects a non-default
+ * accent; `null` lets panels fall back to their neutral outline stroke.
+ */
 val LocalCoverOverlayPanelBorder = staticCompositionLocalOf<Color?> { null }
 
 /**
@@ -80,6 +99,10 @@ val LocalCoverOverlayPanelBorder = staticCompositionLocalOf<Color?> { null }
  */
 val LocalCoverAccentIsCustomized = staticCompositionLocalOf { false }
 
+/**
+ * Builds the Material 3 [ColorScheme][androidx.compose.material3.ColorScheme] for the requested
+ * [accent] and [dark] mode by swapping only the primary accent tokens onto the base canvas.
+ */
 internal fun coverAccentScheme(accent: AccentColor, dark: Boolean): androidx.compose.material3.ColorScheme {
     val base = if (dark) CoverOSDarkColorScheme else CoverOSLightColorScheme
     if (accent == AccentColor.DEFAULT) return base
@@ -97,6 +120,14 @@ internal fun coverAccentScheme(accent: AccentColor, dark: Boolean): androidx.com
     )
 }
 
+/**
+ * Root Compose theme for Cover-Screen-OS.
+ *
+ * Resolves [themePreference] (following [isSystemInDarkTheme] when set to [ThemePreference.SYSTEM]),
+ * builds the Material 3 color scheme for [accentColor], and binds both One UI design tokens and
+ * cover-overlay customization tokens into the tree via [CompositionLocalProvider] before rendering
+ * [MaterialTheme].
+ */
 @Composable
 fun CoverOSTheme(
     themePreference: ThemePreference = ThemePreference.SYSTEM,
@@ -112,12 +143,14 @@ fun CoverOSTheme(
 
     val scheme = coverAccentScheme(accentColor, useDarkTheme)
     val oneUiBaseColors = if (useDarkTheme) OneUIDarkColors else OneUILightColors
+    // Forward custom user accents into OneUIColors so embedded One UI components match MaterialTheme.
     val effectiveOneUiColors = if (accentColor != AccentColor.DEFAULT) {
         oneUiBaseColors.copy(accent = scheme.primary)
     } else {
         oneUiBaseColors
     }
 
+    // Provide all One UI and cover-overlay tokens down the subtree before entering MaterialTheme.
     CompositionLocalProvider(
         LocalOneUIColors provides effectiveOneUiColors,
         LocalOneUIDimensions provides OneUIDimensions(),
@@ -138,6 +171,10 @@ fun CoverOSTheme(
     }
 }
 
+/**
+ * Compatibility alias delegating directly to [CoverOSTheme] for older components that
+ * still reference `CoverScreenOSTheme`.
+ */
 // Alias maintained for backward compatibility with existing components
 @Composable
 fun CoverScreenOSTheme(

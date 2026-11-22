@@ -53,6 +53,7 @@ import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusMedium
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
 
+/** Display metadata for an app-drawer keyboard strategy radio button card. */
 private data class KeyboardStrategyUiOption(
     val mode: KeyboardStrategy,
     val label: String,
@@ -60,6 +61,14 @@ private data class KeyboardStrategyUiOption(
     val icon: ImageVector
 )
 
+/**
+ * Card containing all cover-screen text input and keyboard customization controls.
+ *
+ * Inspects device IME capabilities via [InputCapabilityDetector], displays [InputTelemetryStore]
+ * picker telemetry, lets users toggle between built-in T9 and system IME strategies, configures
+ * haptics/sizing/one-handed anchoring, and provides quick launchers for the system IME picker and
+ * system keyboard settings.
+ */
 @Composable
 internal fun InputCustomizationCard(
     keyboardStrategy: KeyboardStrategy,
@@ -92,6 +101,7 @@ internal fun InputCustomizationCard(
     val telemetryCounters by inputTelemetryStore.counters.collectAsState(initial = InputTelemetryCounters())
     var localRefreshNonce by remember { mutableIntStateOf(0) }
     var capabilityLoadFailed by remember { mutableStateOf(false) }
+    // Re-query installed/default IMEs whenever the parent returns from IME settings or manual refresh runs.
     val capabilitySnapshot by produceState<InputCapabilitySnapshot?>(
         initialValue = null,
         key1 = context,
@@ -108,6 +118,7 @@ internal fun InputCustomizationCard(
     }
     val oemRestrictionHint = capabilitySnapshot?.oemRestrictionHint
 
+    // Track how often OEM cover-display IME restriction warnings are surfaced to the user.
     LaunchedEffect(oemRestrictionHint) {
         if (!oemRestrictionHint.isNullOrBlank()) {
             inputTelemetryStore.recordOemBlockedHintShown()
@@ -284,6 +295,7 @@ internal fun InputCustomizationCard(
     }
 }
 
+/** Segmented selector for key-press [HapticStrength] feedback intensity. */
 @Composable
 private fun HapticStrengthPicker(
     hapticStrength: HapticStrength,
@@ -311,6 +323,7 @@ private fun HapticStrengthPicker(
     }
 }
 
+/** Group of boolean switches controlling T9 sound, suggestions, autocorrect, and key popups. */
 @Composable
 private fun KeyboardCustomizationToggles(
     keyPressSoundEnabled: Boolean,
@@ -352,6 +365,7 @@ private fun KeyboardCustomizationToggles(
     }
 }
 
+/** Accessible labeled switch row tagged for Compose/Robolectric UI tests. */
 @Composable
 private fun CustomizationToggleRow(
     label: String,
@@ -372,6 +386,11 @@ private fun CustomizationToggleRow(
     }
 }
 
+/**
+ * Controls for default keyboard height presets and one-handed horizontal alignment.
+ *
+ * Reveals the [KeyboardAnchor] left/right segmented picker only while one-handed mode is active.
+ */
 @Composable
 private fun KeyboardSizeAndAnchorControls(
     keyboardExtraHeightDp: Float,
@@ -392,6 +411,7 @@ private fun KeyboardSizeAndAnchorControls(
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().coverMinimumTouchTarget()) {
             presets.forEachIndexed { index, (presetDp, label) ->
                 SegmentedButton(
+                    // Match with a 2dp tolerance to absorb minor float serialization/rounding variance.
                     selected = kotlin.math.abs(keyboardExtraHeightDp - presetDp) <= 2f,
                     onClick = { onKeyboardExtraHeightChanged(presetDp) },
                     shape = SegmentedButtonDefaults.itemShape(index = index, count = presets.size),
@@ -427,6 +447,12 @@ private fun KeyboardSizeAndAnchorControls(
     }
 }
 
+/**
+ * Diagnostic subcard summarizing IME readiness, OEM restriction hints, and runtime picker telemetry.
+ *
+ * Blends the static heuristic estimate from [InputCapabilitySnapshot] with observed runtime
+ * `InputMethodManager` picker success rates from [InputTelemetryCounters].
+ */
 @Composable
 private fun InputCapabilityStatusCard(
     capabilitySnapshot: InputCapabilitySnapshot?,
@@ -503,6 +529,7 @@ private fun InputCapabilityStatusCard(
                 }
                 val observedSuccessRate = telemetryCounters.imeShowSuccessRatePercent
                 val hasObservedRuntimeSamples = telemetryCounters.imeShowRequestCount > 0L
+                // Average static capability score with observed picker success once runtime samples exist.
                 val calibratedAvailabilityPercent = if (hasObservedRuntimeSamples) {
                     ((capabilitySnapshot.availabilityEstimatePercent + observedSuccessRate) / 2)
                 } else {

@@ -19,6 +19,13 @@ import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.KeyboardKey
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.SuggestionStrip
 
+/**
+ * Input customization category screen forwarding persisted [LauncherSettings] and update callbacks
+ * to [InputCustomizationCard].
+ *
+ * In [BuildConfig.DEBUG] builds, also exposes an isolated sandbox preview of [SuggestionStrip] and
+ * [KeyboardKey] primitives for QA verification without modifying the active system IME.
+ */
 @Composable
 internal fun InputScreen(
     settings: LauncherSettings,
@@ -60,6 +67,7 @@ internal fun InputScreen(
         onKeyboardOneHandedAnchorChanged = onKeyboardOneHandedAnchorChanged,
         capabilityRefreshNonce = refreshNonce
     )
+    // Debug-only interactive sandbox for testing keyboard primitives directly inside Customize.
     if (BuildConfig.DEBUG) {
         var showPreview by rememberSaveable { mutableStateOf(false) }
         var sampleText by rememberSaveable { mutableStateOf("") }

@@ -42,8 +42,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.lang.ref.WeakReference
 import kotlin.time.Duration.Companion.milliseconds
 
+/** Timestamped runtime milestone recorded in [RuntimeSnapshot.events] for diagnostics. */
 data class OverlayEvent(val description: String, val elapsedRealtimeMs: Long)
 
+/**
+ * Immutable snapshot of [ForegroundService] lifecycle and overlay state exposed via
+ * [ForegroundService.runtime] for UI status displays and diagnostics.
+ */
 data class RuntimeSnapshot(
     val serviceActive: Boolean = false,
     val launcherHostActive: Boolean = false,
@@ -59,13 +64,20 @@ data class RuntimeSnapshot(
  * through [OverlayWindowController]. [CoverAccessibilityService], not this
  * service, owns the launcher Compose window and its accessibility token.
  *
- * A special-use foreground notification supports the started session. Normal
- * start requests use [START_STICKY] for system-managed recovery; explicit stop
- * and rejected setup requests do not. Android and OEM restrictions still apply.
+ * Coordinates [DisplayManager.DisplayListener] topology changes, [PowerManager] /
+ * screen-on/off broadcasts, foldable posture transitions, and a multi-gate
+ * suppression/reclaim state machine ([OverlaySuppressionState],
+ * [OverlayReclaimPolicy], [OverlayTransientSignalPolicy], [OverlayAttachmentPolicy]).
+ *
+ * A [ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE] foreground notification supports
+ * the started session. Normal start requests use [START_STICKY] for system-managed
+ * recovery; explicit stop and rejected setup requests do not. Android and OEM
+ * restrictions still apply.
  */
 class ForegroundService : Service() {
     companion object {
         private val mutableRuntime = MutableStateFlow(RuntimeSnapshot())
+        /** Observable runtime snapshot flow for status screens and instrumentation. */
         val runtime = mutableRuntime.asStateFlow()
 
         private fun publishRuntime(event: String? = null) {
@@ -82,6 +94,7 @@ class ForegroundService : Service() {
             )
         }
 
+        /** Re-publishes [runtime] after [CoverAccessibilityService] attaches or releases a host. */
         fun onLauncherHostChanged() {
             publishRuntime()
         }
@@ -137,6 +150,7 @@ class ForegroundService : Service() {
             "com.google.android.apps.nexuslauncher"
         )
 
+        /** Whether the cover launcher overlay is currently attached and interactive. */
         @Volatile
         var isOverlayActive: Boolean = false
             private set
@@ -151,22 +165,36 @@ class ForegroundService : Service() {
         const val ACTION_HIDE_OVERLAY = "com.tyejaedon.coverscreenos.action.HIDE_OVERLAY"
         private const val EXTRA_LAUNCH_PACKAGE_NAME = "com.tyejaedon.coverscreenos.extra.LAUNCH_PACKAGE_NAME"
 
+        /**
+         * Requests restoration or retargeting of the cover overlay (e.g., when
+         * [CoverAccessibilityService] detects the native cover home stabilized on top).
+         */
         fun requestOverlayReclaim(reason: String = "external") {
             activeServiceRef?.get()?.requestOverlayReclaimInternal(reason)
         }
 
+        /** Notifies the running service that [CoverAccessibilityService] connected with a host. */
         fun onLauncherAccessibilityConnected() {
             activeServiceRef?.get()?.refreshLauncherAccessibilityHost()
         }
 
+        /** Notifies the running service that [CoverAccessibilityService] unbound/disconnected. */
         fun onLauncherAccessibilityDisconnected() {
             activeServiceRef?.get()?.refreshLauncherAccessibilityHost()
         }
 
+        /**
+         * Suppresses the overlay for an incoming or active call UI observed in
+         * [packageName] so the dialer remains interactive on the cover screen.
+         */
         fun requestIncomingCallPassthrough(packageName: String) {
             activeServiceRef?.get()?.requestIncomingCallPassthroughInternal(packageName)
         }
 
+        /**
+         * Updates active call notification state from [CoverNotificationListenerService],
+         * suppressing during active calls and evaluating resume once the call ends.
+         */
         fun updateCallNotificationState(isActive: Boolean, packageName: String?) {
             activeServiceRef?.get()?.updateCallNotificationStateInternal(isActive, packageName)
         }
@@ -180,19 +208,23 @@ class ForegroundService : Service() {
             service.runOnMainThread { service.setUnlockPromptActiveInternal(active) }
         }
 
+        /** Builds an [Intent] that starts [ForegroundService] and activates cover monitoring. */
         fun createStartIntent(context: Context): Intent = Intent(context, ForegroundService::class.java).apply {
             action = ACTION_START
         }
 
+        /** Builds an [Intent] that tears down the overlay and stops [ForegroundService]. */
         fun createStopIntent(context: Context): Intent = Intent(context, ForegroundService::class.java).apply {
             action = ACTION_STOP
         }
 
+        /** Builds an [Intent] that suppresses the overlay for launching [packageName]. */
         fun createHideOverlayIntent(context: Context, packageName: String?): Intent = Intent(context, ForegroundService::class.java).apply {
             action = ACTION_HIDE_OVERLAY
             packageName?.trim()?.takeUnless { it.isEmpty() }?.let { putExtra(EXTRA_LAUNCH_PACKAGE_NAME, it) }
         }
 
+        /** Returns `true` when an active [ForegroundService] instance is live in-process. */
         fun isServiceRuntimeActive(): Boolean {
             return activeServiceRef?.get() != null
         }
@@ -233,6 +265,10 @@ class ForegroundService : Service() {
     private var isScreenInteractive = true
     private var isUnlockPromptActive = false
 
+    /**
+     * Receives system power/display broadcasts (`ACTION_SCREEN_OFF` and `ACTION_SCREEN_ON`)
+     * to detach the overlay during doze/AOD and rebuild it when the screen becomes interactive.
+     */
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
@@ -343,12 +379,17 @@ class ForegroundService : Service() {
         }
     // Transient foreground state is managed by OverlayTransientSignalPolicy.
 
+    /**
+     * Observes [DisplayManager] topology events (`added`, `removed`, `changed`) so the
+     * overlay attaches when the cover display wakes/appears and cleans up if removed.
+     */
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = onDisplayTopologyChanged("added", displayId)
         override fun onDisplayRemoved(displayId: Int) = onDisplayTopologyChanged("removed", displayId)
         override fun onDisplayChanged(displayId: Int) = onDisplayTopologyChanged("changed", displayId)
     }
 
+    /** Registers the low-importance notification channel required for foreground service status on API 26+. */
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
@@ -360,6 +401,7 @@ class ForegroundService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
+    /** Builds the ongoing status notification anchored to [ensureForegroundSession]. */
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Cover Screen OS Running")
@@ -370,6 +412,10 @@ class ForegroundService : Service() {
             .build()
     }
 
+    /**
+     * Initializes runtime dependencies, display/launch helpers, and the [LauncherOverlayHost]
+     * handed off to [CoverAccessibilityService].
+     */
     override fun onCreate() {
         super.onCreate()
         activeServiceRef = WeakReference(this)
@@ -538,8 +584,10 @@ class ForegroundService : Service() {
         return START_STICKY
     }
 
+    /** Returns `null`; this component operates purely as a started service without IPC binding. */
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /** Detaches the host handoff, cancels coroutines, tears down listeners/overlay, and exits foreground mode. */
     override fun onDestroy() {
         if (activeServiceRef?.get() === this) {
             activeServiceRef?.clear()
@@ -558,6 +606,13 @@ class ForegroundService : Service() {
         super.onDestroy()
     }
 
+    /**
+     * Handles an incoming reclaim request after verifying runtime prerequisites,
+     * incoming-call blocks, and [OVERLAY_RECLAIM_MIN_INTERVAL_MS] throttling.
+     *
+     * Routes to [maybeResumeOverlayAfterAppLaunch] when suppressed, or schedules an
+     * immediate display retarget otherwise.
+     */
     private fun requestOverlayReclaimInternal(reason: String) {
         if (!overlayRequested || !hasRuntimePrerequisites()) return
 
@@ -589,12 +644,14 @@ class ForegroundService : Service() {
         }
     }
 
+    /** Re-evaluates display attachment whenever [CoverAccessibilityService] connects or unbinds. */
     private fun refreshLauncherAccessibilityHost() {
         if (overlayRequested && !isOverlaySuppressedForAppLaunch) {
             scheduleRetarget(reason = "launcher_accessibility_connection_changed")
         }
     }
 
+    /** Suppresses the launcher overlay under [OverlaySuppressionReason.INCOMING_CALL] for [packageName]. */
     private fun requestIncomingCallPassthroughInternal(packageName: String) {
         if (!hasRuntimePrerequisites()) return
         val normalizedPackageName = packageName.trim().ifEmpty { "incoming_call" }
@@ -609,6 +666,10 @@ class ForegroundService : Service() {
         }
     }
 
+    /**
+     * Synchronizes notification-driven call state into [suppressionState], suppressing while a
+     * call notification is active and prompting resume evaluation once it ends.
+     */
     private fun updateCallNotificationStateInternal(isActive: Boolean, packageName: String?) {
         val normalizedPackageName = packageName?.trim()?.takeUnless { it.isEmpty() }
         val nowElapsedMs = SystemClock.elapsedRealtime()
@@ -638,6 +699,10 @@ class ForegroundService : Service() {
         }
     }
 
+    /**
+     * Hides overlay touchability while the system keyguard/unlock prompt is visible,
+     * refreshing lock status and retargeting when the prompt closes.
+     */
     private fun setUnlockPromptActiveInternal(active: Boolean) {
         if (isUnlockPromptActive == active) return
         isUnlockPromptActive = active
@@ -657,6 +722,7 @@ class ForegroundService : Service() {
         }
     }
 
+    /** Handles `Intent.ACTION_SCREEN_OFF` by detaching the overlay so AOD/doze remains unobstructed. */
     private fun onScreenTurnedOff() {
         isScreenInteractive = false
         clearPendingDisplayWork()
@@ -667,6 +733,7 @@ class ForegroundService : Service() {
         publishRuntime("Overlay removed: screen off")
     }
 
+    /** Handles `Intent.ACTION_SCREEN_ON` by scheduling overlay re-attachment if eligible. */
     private fun onScreenTurnedOn() {
         isScreenInteractive = true
         if (!overlayRequested || isOverlaySuppressedForAppLaunch) return
@@ -681,6 +748,10 @@ class ForegroundService : Service() {
         serviceScope.launch { block() }
     }
 
+    /**
+     * Promotes this service to foreground mode using [ServiceCompat.startForeground] and
+     * [ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE] (required on Android 14+ / API 34+).
+     */
     private fun ensureForegroundSession(): Boolean {
         if (hasEnteredForeground) return true
         return runCatching {
@@ -703,12 +774,14 @@ class ForegroundService : Service() {
         if (Log.isLoggable(LOG_TAG, Log.DEBUG)) Log.d(LOG_TAG, message())
     }
 
+    /** Demotes foreground status and removes the persistent notification if active. */
     private fun stopForegroundIfStarted() {
         if (!hasEnteredForeground) return
         runCatching { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) }
         hasEnteredForeground = false
     }
 
+    /** Responds to [DisplayManager.DisplayListener] changes by checking permissions and retargeting. */
     private fun onDisplayTopologyChanged(changeType: String, displayId: Int) {
         if (!overlayRequested || isOverlaySuppressedForAppLaunch) return
         if (!hasRuntimePrerequisites()) {
@@ -718,6 +791,14 @@ class ForegroundService : Service() {
         scheduleRetarget(reason = "display_$changeType:$displayId")
     }
 
+    /**
+     * Evaluates whether the launcher overlay should attach, move, hide, or detach.
+     *
+     * Guards against active suppression, missing permissions, non-interactive screens
+     * (`!isScreenInteractive`), and open unlock prompts. When [CoverDisplayHelper.getCoverDisplay]
+     * returns `null`, consults [OverlayAttachmentPolicy] to decide between holding the
+     * existing secondary-display window hidden vs removing stale overlay state.
+     */
     private fun attachOrRetargetOverlay(reason: String) {
         if (isOverlaySuppressedForAppLaunch) return
         if (!hasRuntimePrerequisites()) {
@@ -781,6 +862,10 @@ class ForegroundService : Service() {
         }
     }
 
+    /**
+     * Attaches (or re-enables) the launcher overlay on [targetDisplay], forcing a window
+     * rebuild if the active display ID changed, and syncs [widgetHostManager] listening.
+     */
     private fun attachOverlayToTarget(targetDisplay: Display, reason: String) {
         val targetId = targetDisplay.displayId
         val activeId = overlayWindowController.getActiveDisplayId()
@@ -796,6 +881,7 @@ class ForegroundService : Service() {
         logDebug { "overlay reason=$reason targetId=$targetId activeId=${overlayWindowController.getActiveDisplayId()} forceRetarget=$shouldForceRetarget attached=$isOverlayActive displays=${coverDisplayHelper.describeDisplays()}" }
     }
 
+    /** Cancels any queued retarget coroutine and launches a fresh [attachOrRetargetOverlay] pass. */
     private fun scheduleRetarget(reason: String) {
         pendingDisplayRetargetJob?.cancel()
         pendingDisplayRetargetJob = serviceScope.launch {
@@ -807,6 +893,10 @@ class ForegroundService : Service() {
         pendingDisplayRetargetJob?.cancel()
     }
 
+    /**
+     * Registers [screenStateReceiver] (`ACTION_SCREEN_OFF` / `ACTION_SCREEN_ON`) and seeds
+     * [isScreenInteractive] from [PowerManager.isInteractive].
+     */
     private fun registerScreenStateReceiverIfNeeded() {
         if (isScreenStateReceiverRegistered) return
         isScreenInteractive = getSystemService(PowerManager::class.java)?.isInteractive ?: true
@@ -825,6 +915,7 @@ class ForegroundService : Service() {
         isScreenInteractive = true
     }
 
+    /** Registers [displayListener] with [DisplayManager] alongside the screen-state receiver. */
     private fun registerDisplayListenerIfNeeded() {
         registerScreenStateReceiverIfNeeded()
         if (isDisplayListenerRegistered) return
@@ -842,6 +933,7 @@ class ForegroundService : Service() {
     private fun hasRuntimePrerequisites(): Boolean =
         ForegroundServiceHelper.hasCoreOverlayPermissions(this)
 
+    /** Stops monitoring, clears suppression state, unregisters listeners, and detaches the overlay. */
     private fun teardownOverlayRuntime() {
         clearAppLaunchSuppression()
         foldPostureJob?.cancel()
@@ -858,6 +950,7 @@ class ForegroundService : Service() {
         publishRuntime()
     }
 
+    /** [CoverLaunchCoordinator] preflight hook that prepares monitoring and suppresses the overlay. */
     private fun prepareForOverlayAppLaunch(packageName: String): Boolean {
         if (!hasRuntimePrerequisites()) {
             stopServiceForMissingPrerequisites(reason = "launch_app_missing_prerequisites")
@@ -874,10 +967,15 @@ class ForegroundService : Service() {
         logDebug { "launch dispatch acknowledged package=$packageName" }
     }
 
+    /** Restores the overlay immediately when [CoverLaunchCoordinator] reports launch dispatch failure. */
     private fun restoreOverlayAfterLaunchFailure(packageName: String) {
         completeSuppressionAndRetargetOnce(reason = "launch_app_failed_restore_overlay:$packageName")
     }
 
+    /**
+     * Enters a new suppression session in [suppressionState], makes the overlay non-touchable,
+     * stops widget updates, and starts [startSuppressionResumePolling].
+     */
     private fun suppressOverlayForReason(packageName: String, reason: OverlaySuppressionReason) {
         suppressionState.markSuppressionStarted(
             packageName = packageName,
@@ -894,6 +992,7 @@ class ForegroundService : Service() {
         startSuppressionResumePolling()
     }
 
+    /** Polls [maybeResumeOverlayAfterAppLaunch] every [APP_LAUNCH_RESUME_POLL_INTERVAL_MS] while suppressed. */
     private fun startSuppressionResumePolling() {
         suppressionResumePollerJob?.cancel()
         suppressionResumePollerJob = serviceScope.launch {
@@ -904,6 +1003,10 @@ class ForegroundService : Service() {
         }
     }
 
+    /**
+     * Collects [CoverDisplayHelper.foldPosture] changes so unfolding (`HALF_FOLDED` / `FLAT`)
+     * suppresses the cover overlay and folding shut (`CLOSED`) restores it.
+     */
     private fun startFoldPostureObservation() {
         foldPostureJob?.cancel()
         foldPostureJob = serviceScope.launch {
@@ -930,6 +1033,22 @@ class ForegroundService : Service() {
         }
     }
 
+    /**
+     * Evaluates the multi-gate resume state machine to decide whether a suppressed overlay
+     * should be restored to the cover screen.
+     *
+     * Gate sequence:
+     * 1. Verify active suppression and [overlayRequested].
+     * 2. If [OverlaySuppressionReason.POSTURE_UNFOLDED], resume only once fold posture returns to `CLOSED`.
+     * 3. Enforce max timeout (`maxSuppressionMs`) and minimum dwell ([APP_LAUNCH_RESUME_MIN_SUPPRESSION_MS]).
+     * 4. Hold while [OverlayReclaimPolicy] keeps incoming-call passthrough active.
+     * 5. Immediately resume if the cover display re-locked.
+     * 6. Resolve the current foreground package via [resolveForegroundPackageForResume].
+     * 7. Handle transient SystemUI/AOD exit patterns and grace periods via [OverlayTransientSignalPolicy].
+     * 8. Require consecutive signal stability ([APP_LAUNCH_RESUME_STABLE_SIGNAL_COUNT]) and
+     *    minimum launcher dwell ([APP_LAUNCH_RESUME_MIN_LAUNCHER_MS]) for non-reclaim polls before
+     *    invoking [completeSuppressionAndRetargetOnce].
+     */
     private fun maybeResumeOverlayAfterAppLaunch(reason: String) {
         if (!isOverlaySuppressedForAppLaunch) {
             logResumeDecision(reason = reason, decision = "skip_not_suppressed")
@@ -1064,6 +1183,10 @@ class ForegroundService : Service() {
         completeSuppressionAndRetargetOnce(reason = "resume_after_app_launch:$foregroundPackage:$reason")
     }
 
+    /**
+     * Atomically completes the active suppression session once (keyed by [suppressionSessionId]),
+     * clears suppression tracking, and schedules overlay re-attachment.
+     */
     private fun completeSuppressionAndRetargetOnce(reason: String) {
         if (!isOverlaySuppressedForAppLaunch) return
 
@@ -1080,6 +1203,14 @@ class ForegroundService : Service() {
         scheduleRetarget(reason = reason)
     }
 
+    /**
+     * Resolves an eligible foreground `(packageName, className)` candidate for overlay resumption.
+     *
+     * First inspects live cover-display windows on API 30+ via
+     * [CoverAccessibilityService.inspectDisplayWindowState] after [TRANSIENT_EXIT_FAILSAFE_MIN_SUPPRESSION_MS],
+     * then falls back to the freshest accessibility foreground event from [latestForegroundSignal]
+     * if within [APP_LAUNCH_RESUME_STALE_EVENT_MAX_MS].
+     */
     private fun resolveForegroundPackageForResume(): Pair<String, String?>? {
         val coverDisplayId = overlayWindowController.getActiveDisplayId()
             ?: coverDisplayHelper.getCoverDisplayId()
@@ -1142,6 +1273,10 @@ class ForegroundService : Service() {
         return foregroundPackage to foregroundClassName
     }
 
+    /**
+     * Picks the most recent foreground `(package, className, ageMs)` observation across both
+     * [CoverAccessibilityService] and [CoverInputAccessibilityService].
+     */
     private fun latestForegroundSignal(): Triple<String, String?, Long>? = listOfNotNull(
         CoverAccessibilityService.currentForegroundPackage()?.trim()
             ?.takeUnless(String::isEmpty)
@@ -1240,6 +1375,7 @@ class ForegroundService : Service() {
         suppressionState.resetResumeSignalStability()
     }
 
+    /** Cancels resume polling and resets suppression, transient signal, and call passthrough state. */
     private fun clearAppLaunchSuppression() {
         suppressionResumePollerJob?.cancel()
         suppressionResumePollerJob = null
@@ -1282,6 +1418,7 @@ class ForegroundService : Service() {
         )
     }
 
+    /** Tears down runtime state, exits foreground mode, and stops the service when permissions are revoked. */
     private fun stopServiceForMissingPrerequisites(reason: String) {
         Log.w(LOG_TAG, "Stopping service because runtime prerequisites are missing. reason=$reason")
         teardownOverlayRuntime()

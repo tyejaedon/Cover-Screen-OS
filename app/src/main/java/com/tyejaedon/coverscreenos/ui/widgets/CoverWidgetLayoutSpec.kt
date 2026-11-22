@@ -3,11 +3,18 @@ package com.tyejaedon.coverscreenos.ui.widgets
 import android.appwidget.AppWidgetProviderInfo
 import kotlin.math.roundToInt
 
+/** Minimum tile height in dp so compact 1-row widgets remain legible on cover displays. */
 internal const val WIDGET_MIN_HEIGHT_DP = 82
+/** Default maximum slot height in dp to prevent tall widgets from monopolizing the viewport. */
 internal const val WIDGET_DEFAULT_MAX_HEIGHT_DP = 252
+/** Horizontal and vertical gutter spacing in dp between adjacent widget tiles. */
 internal const val WIDGET_GRID_GAP_DP = 10
+// Fully resizable widgets occupying >=85% of both slot dimensions snap cleanly to the tile edges.
 private const val SNAP_TO_FILL_THRESHOLD = 0.85f
 
+/**
+ * Density-normalized sizing and resizability metadata extracted from [AppWidgetProviderInfo].
+ */
 internal data class WidgetGridMetadata(
     val targetCellWidth: Int,
     val targetCellHeight: Int,
@@ -18,6 +25,16 @@ internal data class WidgetGridMetadata(
     val resizeMode: Int
 )
 
+/**
+ * Resolved grid slot dimensions and inner [android.appwidget.AppWidgetHostView] viewport sizes
+ * for a single widget on the cover screen.
+ *
+ * @property colSpan Number of grid columns occupied (`1` or `2`).
+ * @property slotWidthDp Outer card width in dp.
+ * @property slotHeightDp Outer card height in dp.
+ * @property widgetWidthDp Inner hosted widget width in dp (respecting resize and aspect constraints).
+ * @property widgetHeightDp Inner hosted widget height in dp.
+ */
 internal data class WidgetPlacementSpec(
     val colSpan: Int,
     val slotWidthDp: Int,
@@ -26,6 +43,7 @@ internal data class WidgetPlacementSpec(
     val widgetHeightDp: Int
 )
 
+/** Pixel-coordinate rectangle assigned to a single widget within [PackedTwoColumnGrid]. */
 internal data class GridItemPlacement(
     val xPx: Int,
     val yPx: Int,
@@ -33,11 +51,16 @@ internal data class GridItemPlacement(
     val heightPx: Int
 )
 
+/** Result of packing widget slots into a two-column vertical masonry grid. */
 internal data class PackedTwoColumnGrid(
     val placements: List<GridItemPlacement>,
     val totalHeightPx: Int
 )
 
+/**
+ * Converts [AppWidgetProviderInfo] pixel dimensions (`minWidth`, `maxResizeWidth`, etc.) into
+ * dp-scaled [WidgetGridMetadata], falling back to a default 4x2 resizable footprint if null.
+ */
 internal fun AppWidgetProviderInfo?.toWidgetGridMetadata(density: Float): WidgetGridMetadata {
     if (this == null) {
         return WidgetGridMetadata(
@@ -51,6 +74,7 @@ internal fun AppWidgetProviderInfo?.toWidgetGridMetadata(density: Float): Widget
         )
     }
     val safeDensity = density.coerceAtLeast(1f)
+    // AppWidgetProviderInfo stores pixel dimensions for the current display density, whereas targetCell* are grid cell counts.
     return WidgetGridMetadata(
         targetCellWidth = targetCellWidth,
         targetCellHeight = targetCellHeight,
@@ -62,6 +86,10 @@ internal fun AppWidgetProviderInfo?.toWidgetGridMetadata(density: Float): Widget
     )
 }
 
+/**
+ * Computes the column span, outer tile slot dimensions, and fitted inner widget viewport for
+ * a widget given [containerWidthDp] and [maxSlotHeightDp].
+ */
 internal fun computeWidgetPlacementSpec(
     meta: WidgetGridMetadata,
     containerWidthDp: Int,
@@ -94,6 +122,10 @@ internal fun computeWidgetPlacementSpec(
     )
 }
 
+/**
+ * Decides whether a widget occupies 1 or 2 columns using Android 12+ `targetCell*` hints first,
+ * then falling back to comparing `minWidthDp` against 55% of [containerWidthDp].
+ */
 private fun resolveColumnSpan(meta: WidgetGridMetadata, containerWidthDp: Int): Int {
     if (meta.targetCellWidth > 0) {
         return when {
@@ -109,6 +141,10 @@ private fun resolveColumnSpan(meta: WidgetGridMetadata, containerWidthDp: Int): 
     return 2
 }
 
+/**
+ * Determines the widget's target width-to-height aspect ratio clamped to `[0.4, 4.5]` so extreme
+ * phone-sized ratios do not collapse into unusable slivers on compact cover displays.
+ */
 private fun resolveAspectRatio(meta: WidgetGridMetadata, colSpan: Int): Float {
     if (meta.targetCellWidth > 0 && meta.targetCellHeight > 0) {
         return (meta.targetCellWidth.toFloat() / meta.targetCellHeight.toFloat()).coerceIn(0.4f, 4.5f)
@@ -119,6 +155,10 @@ private fun resolveAspectRatio(meta: WidgetGridMetadata, colSpan: Int): Float {
     return if (colSpan == 1) 1f else 2f
 }
 
+/**
+ * Fits the inner widget viewport inside `[slotWidthDp, slotHeightDp]` while honoring
+ * [AppWidgetProviderInfo.resizeMode] bitmasks, `maxResize*` bounds, and aspect ratio.
+ */
 private fun fitWidgetViewport(
     meta: WidgetGridMetadata,
     ratio: Float,
@@ -144,6 +184,7 @@ private fun fitWidgetViewport(
     maxW = maxW.coerceAtLeast(1)
     maxH = maxH.coerceAtLeast(1)
 
+    // Letterbox or pillarbox inside [maxW, maxH] to preserve the provider's aspect ratio.
     val fittedW: Int
     val fittedH: Int
     if (maxW.toFloat() / maxH.toFloat() > ratio) {
@@ -168,6 +209,12 @@ private fun fitWidgetViewport(
     }
 }
 
+/**
+ * Packs a list of [WidgetPlacementSpec] entries into a two-column masonry grid.
+ *
+ * Full-width (`colSpan >= 2`) widgets synchronize both column Y cursors before spanning across
+ * the container; single-column widgets are always placed into whichever column is currently shorter.
+ */
 internal fun packTwoColumnGrid(
     specs: List<WidgetPlacementSpec>,
     singleColWidthPx: Int,

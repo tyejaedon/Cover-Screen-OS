@@ -18,9 +18,12 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 /**
- * Tiered haptic feedback for keyboard primitives. Kept independent of any
- * `Vibrator` service so that hosts without VIBRATE permission still get
- * best-effort feedback through the platform's `View.performHapticFeedback`.
+ * Tiered haptic feedback for keyboard primitives.
+ *
+ * Maps each semantic tier to both an Android [VibrationEffect] predefined waveform constant
+ * (for direct [Vibrator] playback when hardware vibration is available) and a
+ * [HapticFeedbackConstants] flag so hosts without a vibrator or `VIBRATE` capability still
+ * receive best-effort feedback through the platform's `View.performHapticFeedback`.
  */
 enum class HapticTier {
     /** No feedback. */
@@ -32,6 +35,7 @@ enum class HapticTier {
     /** Long-press / repeat threshold cue. */
     Strong;
 
+    /** Maps this tier to its fallback [HapticFeedbackConstants] constant, or `null` for [None]. */
     internal fun toHapticConstant(): Int? = when (this) {
         None -> null
         Light -> HapticFeedbackConstants.CLOCK_TICK
@@ -39,6 +43,7 @@ enum class HapticTier {
         Strong -> HapticFeedbackConstants.LONG_PRESS
     }
 
+    /** Maps this tier to its predefined [VibrationEffect] effect ID, or `null` for [None]. */
     internal fun toVibrationEffect(): Int? = when (this) {
         None -> null
         Light -> VibrationEffect.EFFECT_TICK
@@ -66,16 +71,21 @@ internal fun HapticTier.scaledBy(strength: HapticStrength): HapticTier = when (s
 }
 
 /**
- * Returns a callable that triggers the given haptic tier on the nearest
- * host `View`, scaled by the user's persisted [HapticStrength] setting.
- * Safe to call in composables outside the compose preview (returns a no-op
- * there).
+ * Returns a callable that triggers the given haptic tier, scaled by the user's persisted
+ * [HapticStrength] setting in [LauncherSettingsStore] and gated by the system-wide
+ * [Settings.System.HAPTIC_FEEDBACK_ENABLED] toggle.
+ *
+ * Uses `Vibrator` (`getSystemService(Vibrator::class.java)` — compatible down to minSdk 28 without
+ * requiring API 31's `VibratorManager`) with [VibrationEffect.createPredefined] when hardware
+ * vibration is present, falling back to `View.performHapticFeedback` on the host [View].
+ * Safe to call in composables outside the compose preview (returns a no-op there).
  */
 @Composable
 internal fun rememberHapticPerformer(tier: HapticTier): () -> Unit {
     val view: View = LocalView.current
     val context = LocalContext.current
     val settingsStore = remember(context) { LauncherSettingsStore(context.applicationContext) }
+    // Collect only hapticStrength with distinctUntilChanged so unrelated settings edits do not re-allocate.
     val hapticStrength by remember(settingsStore) {
         settingsStore.settings.map { it.hapticStrength }.distinctUntilChanged()
     }.collectAsState(initial = LauncherSettings().hapticStrength)
@@ -83,9 +93,10 @@ internal fun rememberHapticPerformer(tier: HapticTier): () -> Unit {
     return remember(view, effectiveTier) {
         val code = effectiveTier.toHapticConstant() ?: return@remember { /* no-op */ }
         val effect = effectiveTier.toVibrationEffect() ?: return@remember { /* no-op */ }
+        // Query Vibrator directly rather than VibratorManager (API 31+) to support minSdk 28.
         val vibrator = view.context.getSystemService(Vibrator::class.java)
         return@remember {
-            // performHapticFeedback returns false silently when unsupported.
+            // Respect the Android OS "Touch vibration" system setting before triggering hardware haptics.
             if (Settings.System.getInt(
                     view.context.contentResolver,
                     Settings.System.HAPTIC_FEEDBACK_ENABLED,
@@ -95,6 +106,7 @@ internal fun rememberHapticPerformer(tier: HapticTier): () -> Unit {
                 if (vibrator?.hasVibrator() == true) {
                     vibrator.vibrate(VibrationEffect.createPredefined(effect))
                 } else {
+                    // performHapticFeedback returns false silently when unsupported.
                     view.performHapticFeedback(code)
                 }
             }

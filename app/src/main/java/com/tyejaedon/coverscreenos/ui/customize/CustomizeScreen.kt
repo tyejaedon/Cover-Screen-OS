@@ -82,8 +82,10 @@ import org.json.JSONException
 import java.io.IOException
 
 private const val LOG_TAG = "CustomizeScreen"
+// Guardrail against loading oversized backup files into memory during debug JSON import.
 private const val MAX_SETTINGS_JSON_BYTES = 1024 * 1024
 
+/** Maps each customization tab/rail item to its Material vector icon. */
 private val CustomizeCategory.icon: ImageVector
     get() = when (this) {
         CustomizeCategory.WALLPAPER -> Icons.Filled.Wallpaper
@@ -92,6 +94,13 @@ private val CustomizeCategory.icon: ImageVector
         CustomizeCategory.INPUT -> Icons.Filled.Keyboard
     }
 
+/**
+ * Root host screen for all cover-screen customization categories (Wallpaper, Dock, Appearance, Input).
+ *
+ * Collects [LauncherSettings] from [LauncherSettingsStore], adapts navigation chrome for compact
+ * cover heights and expanded tablet/unfolded widths, and routes asynchronous DataStore/SAF actions
+ * through a shared error-handling helper backed by [snackbar].
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CustomizeScreen(
@@ -114,9 +123,12 @@ internal fun CustomizeScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     var confirmReset by rememberSaveable { mutableStateOf(false) }
     var noticeDismissed by rememberSaveable { mutableStateOf(false) }
+    // Incremented after launching system IME pickers/settings so capability checks re-run on return.
     var keyboardRefreshNonce by rememberSaveable { mutableIntStateOf(0) }
+    // Compact-height layout optimizes vertical space when rendered on small/landscape displays.
     val isCompactHeight = LocalConfiguration.current.screenHeightDp <= 480
     val scroll = rememberScrollState(initial = initialScrollPosition)
+    // Persist the current scroll offset before leaving or switching categories.
     DisposableEffect(category, scroll) {
         onDispose { onScrollPositionChanged(category, scroll.value) }
     }
@@ -126,6 +138,7 @@ internal fun CustomizeScreen(
         scope.launch { snackbar.showSnackbar(error.message ?: "Unable to update settings") }
     }
 
+    // Executes DataStore mutations and SAF I/O safely, surfacing recoverable failures in the snackbar.
     fun runAction(success: String? = null, action: suspend () -> Unit) {
         scope.launch {
             try {
@@ -143,6 +156,7 @@ internal fun CustomizeScreen(
         }
     }
 
+    // Storage Access Framework (SAF) launchers for debug-only settings backup and restore.
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -163,6 +177,7 @@ internal fun CustomizeScreen(
                 val stream = appContext.contentResolver.openInputStream(uri)
                     ?: throw IOException("Unable to open settings file")
                 stream.use {
+                    // Read one extra byte past the cap to detect oversized files without buffering unbounded data.
                     val bytes = it.readNBytes(MAX_SETTINGS_JSON_BYTES + 1)
                     require(bytes.size <= MAX_SETTINGS_JSON_BYTES) { "Settings file is too large" }
                     bytes.toString(Charsets.UTF_8)
@@ -280,6 +295,7 @@ internal fun CustomizeScreen(
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            // Compact heights use chip tabs instead of a full TopAppBar + TabRow to preserve content height.
             if (!expanded) {
                 if (isCompactHeight) {
                     LazyRow(
@@ -335,6 +351,7 @@ internal fun CustomizeScreen(
                 }
             }
             Row(Modifier.fillMaxSize()) {
+                // Wide/expanded layouts replace top category tabs with a persistent left navigation rail.
                 if (expanded) {
                     Column(
                         modifier = Modifier.width(200.dp).padding(8.dp),
@@ -359,6 +376,7 @@ internal fun CustomizeScreen(
                         .padding(if (isCompactHeight) 12.dp else 16.dp),
                     verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 10.dp else 12.dp)
                 ) {
+                    // Surface non-blocking reminders when required overlay or input accessibility services are off.
                     if (permissions.missing.isNotEmpty() && !noticeDismissed) {
                         val missingList = permissions.missing
                         val verb = if (missingList.size == 1) "is" else "are"
@@ -386,6 +404,7 @@ internal fun CustomizeScreen(
                                 runAction { store.setKeyboardStrategy(preference) }
                             },
                             onPicker = {
+                                // Show the system input-method switcher dialog via InputMethodManager.
                                 val manager = appContext.getSystemService<InputMethodManager>()
                                 if (manager == null) {
                                     scope.launch { snackbar.showSnackbar("Keyboard picker unavailable on this device") }
@@ -399,6 +418,7 @@ internal fun CustomizeScreen(
                                 keyboardRefreshNonce++
                             },
                             onSettings = {
+                                // FLAG_ACTIVITY_NEW_TASK is required when starting Settings from applicationContext.
                                 runCatching {
                                     appContext.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS).apply {
                                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

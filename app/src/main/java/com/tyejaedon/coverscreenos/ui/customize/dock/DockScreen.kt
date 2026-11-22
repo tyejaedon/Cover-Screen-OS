@@ -23,6 +23,13 @@ import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * Dock customization category screen.
+ *
+ * Asynchronously scans installed applications via [PackageManagerAppScannerRepository], lets the
+ * user toggle dock visibility and the "Slot 4: All apps" override, and binds drag-to-reorder and
+ * slot-selection state to [LauncherSettingsStore].
+ */
 @Composable
 internal fun DockScreen(
     store: LauncherSettingsStore,
@@ -31,6 +38,7 @@ internal fun DockScreen(
 ) {
     val context = LocalContext.current.applicationContext
     val repository = remember(context) { PackageManagerAppScannerRepository(context) }
+    // Scan installed launchable apps off the main thread when the repository instance initializes.
     val scan by produceState<Result<List<AppModel>>?>(initialValue = null, key1 = repository) {
         value = withContext(Dispatchers.Default) { runCatching { repository.scanInstalledApplications() } }
     }
@@ -40,7 +48,9 @@ internal fun DockScreen(
     val defaults = remember(apps) {
         normalizeDockPackageSlots(List(COVER_DOCK_SLOT_COUNT) { apps.getOrNull(it)?.packageName })
     }
+    // Seed the editor with the first scanned apps until the user has at least one persisted slot.
     val editorSlots = if (stored.any { it != null }) stored else defaults
+    // Local preview mirrors drag changes immediately and commits to DataStore when the gesture ends.
     var preview by remember(editorSlots) { mutableStateOf(editorSlots) }
     var activeSlot by rememberSaveable { mutableStateOf<Int?>(null) }
 
@@ -77,6 +87,7 @@ internal fun DockScreen(
         dockPackages = preview,
         resolveLabel = { name -> name?.let { appsByPackage[it]?.name ?: it } ?: "Empty" },
         resolveIcon = { pkg ->
+            // Fall back to PackageManager directly if a persisted package is not in the scanned map.
             appsByPackage[pkg]?.iconDrawable ?: runCatching {
                 dockContext.packageManager.getApplicationIcon(pkg)
             }.getOrNull()

@@ -79,10 +79,15 @@ class CoverWidgetPickerActivity : ComponentActivity() {
     private val widgetHostManager by lazy { CoverAppWidgetHostManager(this) }
     private val settingsStore by lazy { LauncherSettingsStore(applicationContext) }
 
+    // Pending widget state retained across the external bind-permission and widget-configure subflows.
     private var pendingAppWidgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
     private var pendingProviderInfo: AppWidgetProviderInfo? = null
     private var isAwaitingExternalFlow: Boolean = false
 
+    /**
+     * Handles the system [AppWidgetManager.ACTION_APPWIDGET_BIND] consent prompt result.
+     * Continues to widget configuration on [RESULT_OK], or deletes the allocated slot on cancel.
+     */
     private val bindWidgetLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -123,6 +128,10 @@ class CoverWidgetPickerActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Receives the result of the provider's configuration activity started via
+     * `AppWidgetHost.startAppWidgetConfigureActivityForResult`, finalizing or cleaning up the slot.
+     */
     @Deprecated("Required by AppWidgetHost.startAppWidgetConfigureActivityForResult")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -136,6 +145,7 @@ class CoverWidgetPickerActivity : ComponentActivity() {
         }
     }
 
+    /** Cleans up any unfinalized `appWidgetId` unless destroying for a configuration/fold change. */
     override fun onDestroy() {
         if (!isChangingConfigurations) {
             cleanupPendingWidget()
@@ -143,6 +153,10 @@ class CoverWidgetPickerActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    /**
+     * Step 1 & 2 of widget placement: allocates a host ID and attempts silent binding; if the
+     * system denies silent binding, opens the OS bind-permission dialog via [bindWidgetLauncher].
+     */
     private fun onProviderSelected(info: AppWidgetProviderInfo) {
         if (isAwaitingExternalFlow) return
         cleanupPendingWidget()
@@ -169,6 +183,10 @@ class CoverWidgetPickerActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Step 3 of widget placement: opens the provider's [AppWidgetProviderInfo.configure] activity
+     * if declared, or immediately persists the newly bound widget.
+     */
     private fun handleBoundWidget(appWidgetId: Int, info: AppWidgetProviderInfo) {
         if (info.configure != null) {
             val started = widgetHostManager.startConfigureActivityForResult(
@@ -185,6 +203,7 @@ class CoverWidgetPickerActivity : ComponentActivity() {
         }
     }
 
+    /** Persists the bound [appWidgetId] into [LauncherSettingsStore] and closes with [RESULT_OK]. */
     private fun finalizeAddedWidget(appWidgetId: Int) {
         pendingAppWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
         pendingProviderInfo = null
@@ -199,6 +218,7 @@ class CoverWidgetPickerActivity : ComponentActivity() {
         }
     }
 
+    /** Releases any unconfirmed `appWidgetId` back to `AppWidgetHost` so cancelled flows do not leak IDs. */
     private fun cleanupPendingWidget() {
         val id = pendingAppWidgetId
         pendingAppWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
@@ -214,6 +234,7 @@ class CoverWidgetPickerActivity : ComponentActivity() {
     }
 }
 
+/** Display model summarizing a discoverable [AppWidgetProviderInfo] for the picker list. */
 private data class WidgetProviderItem(
     val info: AppWidgetProviderInfo,
     val widgetLabel: String,
@@ -221,6 +242,10 @@ private data class WidgetProviderItem(
     val cellEstimate: String
 )
 
+/**
+ * Searchable widget-selection screen that loads installed [AppWidgetProviderInfo] descriptors
+ * off the main thread via [produceState] and renders them in a [LazyColumn].
+ */
 @Composable
 private fun CoverWidgetPickerScreen(
     widgetHostManager: CoverAppWidgetHostManager,
@@ -230,6 +255,7 @@ private fun CoverWidgetPickerScreen(
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
 
+    // Resolve PackageManager app/widget labels asynchronously on Dispatchers.Default.
     val providers by produceState<List<WidgetProviderItem>?>(initialValue = null, widgetHostManager) {
         value = withContext(Dispatchers.Default) {
             val pm = context.packageManager
@@ -243,6 +269,7 @@ private fun CoverWidgetPickerScreen(
                     val widgetLabel = runCatching {
                         info.loadLabel(pm).trim().ifEmpty { appLabel }
                     }.getOrDefault(appLabel)
+                    // Estimate launcher grid cells using Android's standard ~70dp-per-cell formula.
                     val cols = ((info.minWidth + 30) / 70).coerceAtLeast(1)
                     val rows = ((info.minHeight + 30) / 70).coerceAtLeast(1)
                     WidgetProviderItem(
@@ -394,6 +421,7 @@ private fun CoverWidgetPickerScreen(
                     ) {
                         items(
                             items = filteredProviders,
+                            // Include user profile hash so personal and work-profile providers receive unique keys.
                             key = { "${it.info.provider.flattenToShortString()}:${it.info.profile.hashCode()}" }
                         ) { item ->
                             WidgetProviderRow(
@@ -408,6 +436,7 @@ private fun CoverWidgetPickerScreen(
     }
 }
 
+/** Renders a single widget provider row, lazily decoding its launcher icon off the UI thread. */
 @Composable
 private fun WidgetProviderRow(
     item: WidgetProviderItem,

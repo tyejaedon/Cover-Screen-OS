@@ -30,6 +30,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Hosts the embedded FlorisBoard-derived cover keyboard (`CoverFlorisKeyboardSurface`) inside
+ * the `AccessibilityService` overlay and bridges key events directly to Compose search state.
+ *
+ * Standard Android `InputMethodService` keyboards cannot reliably bind to or appear above
+ * `TYPE_ACCESSIBILITY_OVERLAY` windows on cover displays without window-focus issues. Instead,
+ * this composable acts as an in-process editor bridge (`CoverEditorBridge`) that maintains a
+ * synthetic cursor over the search [query], runs local NLP completions (`CoverKeyboardNlpManager`),
+ * and persists layout/customization preferences via `LauncherSettingsStore`.
+ */
 @Composable
 internal fun SearchFlorisKeyboardHost(
     query: String,
@@ -42,9 +52,12 @@ internal fun SearchFlorisKeyboardHost(
     val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
     val coroutineScope = rememberCoroutineScope()
 
+    // Keep fresh references via rememberUpdatedState so the long-lived CoverEditorBridge below
+    // always reads the latest query and callbacks without being recreated on every keystroke.
     val latestQuery by rememberUpdatedState(query)
     val latestOnQueryChanged by rememberUpdatedState(onQueryChanged)
     val latestOnDonePressed by rememberUpdatedState(onDonePressed)
+    // Track cursor position locally because there is no underlying Android EditText/InputConnection.
     var cursorPosition by remember { mutableIntStateOf(query.length) }
     LaunchedEffect(query.length) {
         if (cursorPosition > query.length) {
@@ -52,6 +65,8 @@ internal fun SearchFlorisKeyboardHost(
         }
     }
 
+    // Bridge custom keyboard input events (character append, backspace, word delete, candidate
+    // commit, cursor movement, and range replacement) directly onto the Compose search query.
     val bridge = remember {
         CoverEditorBridge(
             overlayCallbacks = object : CoverOverlayInputCallbacks {
@@ -143,6 +158,7 @@ internal fun SearchFlorisKeyboardHost(
     val beforeCursor = query.take(cursorPosition.coerceIn(0, query.length))
     val currentWord = beforeCursor.takeLastWhile { it.isLetterOrDigit() }
 
+    // Run dictionary/T9/next-word NLP lookups on Dispatchers.Default whenever query, cursor, or user dictionary changes.
     LaunchedEffect(query, cursorPosition, activeLayoutMode, nlpRevision) {
         candidates = withContext(Dispatchers.Default) {
             when {
@@ -164,6 +180,7 @@ internal fun SearchFlorisKeyboardHost(
         ClamshellDockAnchor.LEFT
     }
 
+    // Configure compact clamshell dimensions, AMOLED theme, and search IME action for the cover screen.
     CoverFlorisKeyboardSurface(
         bridge = bridge,
         initialMode = activeLayoutMode,

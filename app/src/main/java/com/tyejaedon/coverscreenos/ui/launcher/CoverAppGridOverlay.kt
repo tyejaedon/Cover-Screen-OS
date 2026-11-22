@@ -104,6 +104,7 @@ private const val APP_SCAN_DEFER_AFTER_FIRST_FRAME_MS = 120L
 private const val ICON_PREWARM_COUNT = APPS_PER_GRID_PAGE * 2
 private const val ICON_PREWARM_BATCH_SIZE = 6
 private const val ICON_PREWARM_BATCH_DELAY_MS = 32L
+// Fixed leading pager pages: 0 = Notifications, 1 = Lock/Dock, 2 = Widget Host, 3+ = App Grid pages.
 private const val NOTIFICATION_PANEL_PAGE_INDEX = 0
 private const val LOCK_PAGER_PAGE_INDEX = 1
 private const val WIDGET_HOST_PAGE_INDEX = 2
@@ -114,6 +115,12 @@ private val WIDGET_TILE_VERTICAL_SWIPE_THRESHOLD = 72.dp
 private val QUICK_SETTINGS_VERTICAL_SWIPE_THRESHOLD = 44.dp
 private val LOCKED_SWIPE_UNLOCK_THRESHOLD = 36.dp
 
+/**
+ * Limits the horizontal pager's exposed page count while the device is locked.
+ *
+ * When [isDeviceLocked] is `true`, only pages up through [LOCK_PAGER_PAGE_INDEX] (notifications and
+ * lockscreen/dock) remain reachable so widgets and the full app drawer stay hidden until unlocked.
+ */
 internal fun resolveAccessiblePageCount(isDeviceLocked: Boolean, totalPageCount: Int): Int {
     val safeTotal = totalPageCount.coerceAtLeast(1)
     return if (isDeviceLocked) {
@@ -123,6 +130,17 @@ internal fun resolveAccessiblePageCount(isDeviceLocked: Boolean, totalPageCount:
     }
 }
 
+/**
+ * Root Compose overlay for the cover screen launcher, hosted inside the secondary-display
+ * accessibility window.
+ *
+ * Coordinates staged startup hydration (`LaunchedEffect` + `withFrameNanos` deferral before
+ * running `PackageManagerAppScannerRepository.scanInstalledApplications()` via `produceState`),
+ * live clock/date tickers, sticky battery monitoring ([rememberBatteryStatus]), active
+ * notification flow collection, batched background icon prewarming into `OverlayBitmapIconCache`,
+ * shared `HazeState` blur sourcing (`hazeSource`) on [CoverWallpaperLayer], and multi-page
+ * [HorizontalPager] state initialized at [LOCK_PAGER_PAGE_INDEX].
+ */
 @Composable
 fun CoverAppGridOverlay(
     repository: PackageManagerAppScannerRepository,
@@ -163,6 +181,8 @@ fun CoverAppGridOverlay(
     var isGridHydrated by remember { mutableStateOf(false) }
     var shouldLoadApps by remember { mutableStateOf(false) }
 
+    // Defer heavy PackageManager scanning until after the first frame commits so the lockscreen
+    // overlay appears immediately without stalling initial layout/draw.
     LaunchedEffect(Unit) {
         withFrameNanos { }
         delay(APP_SCAN_DEFER_AFTER_FIRST_FRAME_MS.milliseconds)
@@ -182,6 +202,7 @@ fun CoverAppGridOverlay(
         }
     }
 
+    // Periodic wall-clock and date tickers decoupled from Intent.ACTION_TIME_TICK receivers.
     val timeLabel by produceState(initialValue = currentCoverTime()) {
         while (true) {
             value = currentCoverTime()
@@ -201,7 +222,7 @@ fun CoverAppGridOverlay(
     var searchQuery by remember { mutableStateOf("") }
     var isCoverKeyboardVisible by remember { mutableStateOf(true) }
 
-    // Prewarm icon bitmaps into LRU
+    // Prewarm icon bitmaps into LRU (and disk thumbnail cache) in small IO batches to avoid spikes.
     LaunchedEffect(apps) {
         if (apps.isEmpty()) return@LaunchedEffect
         val targets = apps.take(ICON_PREWARM_COUNT).filter { OverlayBitmapIconCache.get(it.packageName) == null }
@@ -245,6 +266,7 @@ fun CoverAppGridOverlay(
     var hasInitializedPager by remember { mutableStateOf(false) }
     var lastPagerHapticTimestampMs by remember { mutableStateOf(0L) }
 
+    // Emit throttled haptic ticks when settling onto a new page, skipping initial composition.
     LaunchedEffect(pagerState.currentPage) {
         if (!hasInitializedPager) {
             hasInitializedPager = true
@@ -338,6 +360,15 @@ fun CoverAppGridOverlay(
     }
 }
 
+/**
+ * Interactive pager container and gesture/sheet coordinator for the cover overlay.
+ *
+ * Hosts the multi-page [HorizontalPager] (notifications, lock/dock, widget host, and chunked 4x3
+ * app grid pages), attaches a [NestedScrollConnection] for system shade pull-down and locked
+ * swipe-to-unlock gestures, coordinates slide-over search (`WidgetGridPageTile`) and quick-settings
+ * (`QuickSettingsPanelTile`) sheets with Haze glassmorphism (`hazeState`), and binds [PageIndicator]
+ * scrubbing to the floating [GridPageLetterTooltip].
+ */
 @Composable
 private fun InteractiveSection(
     notifications: List<CoverNotificationModel>,
@@ -379,6 +410,7 @@ private fun InteractiveSection(
     val widgetSwipeThresholdPx = with(density) { WIDGET_TILE_VERTICAL_SWIPE_THRESHOLD.toPx() }
     val quickSettingsSwipeThresholdPx = with(density) { QUICK_SETTINGS_VERTICAL_SWIPE_THRESHOLD.toPx() }
     val lockedSwipeThresholdPx = with(density) { LOCKED_SWIPE_UNLOCK_THRESHOLD.toPx() }
+    // Keep fresh lock/callback references for long-lived remembered gesture and scroll handlers.
     val latestIsDeviceLocked by androidx.compose.runtime.rememberUpdatedState(isDeviceLocked)
     val latestOnRequestUnlock by androidx.compose.runtime.rememberUpdatedState(onRequestUnlock)
     val latestOnRequestSystemShade by androidx.compose.runtime.rememberUpdatedState(onRequestSystemShade)
@@ -466,6 +498,7 @@ private fun InteractiveSection(
         }
     }
 
+    // Collapse unlocked-only search/widget overlays and snap back to the lock page when locked.
     LaunchedEffect(isDeviceLocked) {
         if (!isDeviceLocked) return@LaunchedEffect
         if (isWidgetTileVisible) {
@@ -477,6 +510,7 @@ private fun InteractiveSection(
         }
     }
 
+    // Reset focus, soft keyboard, and voice listening cleanly whenever the search tile toggles.
     LaunchedEffect(isWidgetTileVisible) {
         if (!isWidgetTileVisible) {
             dismissSearchInput()
@@ -508,6 +542,7 @@ private fun InteractiveSection(
         )
     }
 
+    // Track the nearest integer page continuously during drags/scrubs for the alphabetical tooltip.
     LaunchedEffect(pagerState, maxPagerPage) {
         snapshotFlow {
             ((pagerState.currentPage + pagerState.currentPageOffsetFraction).roundToInt()).coerceIn(0, maxPagerPage)
@@ -516,6 +551,7 @@ private fun InteractiveSection(
         }
     }
 
+    // Keep the alphabetical tooltip visible while paging or scrubbing, with a brief settle delay.
     LaunchedEffect(pagerState.isScrollInProgress, isIndicatorScrubbing) {
         if (pagerState.isScrollInProgress || isIndicatorScrubbing) {
             showPageLetterTooltip = true
@@ -531,6 +567,8 @@ private fun InteractiveSection(
         "No apps match \"$searchQuery\""
     }
 
+    // Intercept unconsumed downward drags to open the system notification shade, and intercept
+    // forward horizontal swipes on the locked home page to trigger unlock without revealing apps.
     val systemShadeNestedScrollConnection = remember(quickSettingsSwipeThresholdPx, lockedSwipeThresholdPx) {
         object : NestedScrollConnection {
             private var unconsumedDownwardDrag = 0f
@@ -632,6 +670,8 @@ private fun InteractiveSection(
                     .weight(1f)
                     .nestedScroll(systemShadeNestedScrollConnection)
             ) {
+                // beyondViewportPageCount = 0 avoids composing offscreen pages on the compact cover display;
+                // horizontal paging freezes while search/quick-settings modal overlays are visible.
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier
@@ -662,6 +702,7 @@ private fun InteractiveSection(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .testTag(CoverSearchUiTestTags.LOCKSCREEN_TILE_PAGE)
+                                        // Swipe up opens cover quick settings; swipe down expands the system shade.
                                         .pointerInput(isQuickSettingsVisible, quickSettingsSwipeThresholdPx) {
                                             var cumulativeDrag = 0f
                                             detectVerticalDragGestures(
@@ -872,6 +913,10 @@ private fun InteractiveSection(
 }
 
 
+/**
+ * Resolves the 4 dock slots to matching [AppModel] entries, falling back to the first
+ * [DOCK_SLOT_COUNT] scanned apps when no custom dock packages have been configured.
+ */
 private fun resolveDockSlots(apps: List<AppModel>, dockPackageSlots: List<String?>): List<AppModel?> {
     val appByPackageName = apps.associateBy { it.packageName }
     val hasCustomSelection = dockPackageSlots.any { !it.isNullOrBlank() }

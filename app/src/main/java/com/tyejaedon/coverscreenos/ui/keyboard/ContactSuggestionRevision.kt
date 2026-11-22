@@ -14,6 +14,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 
+/**
+ * Tracks a monotonically increasing revision key that invalidates contact-based keyboard
+ * suggestions whenever the `"include_contact_names"` preference or `READ_CONTACTS` runtime
+ * permission state changes.
+ *
+ * Uses two Compose side-effect primitives while [enabled] is `true`:
+ * - [DisposableEffect] registers a [SharedPreferences.OnSharedPreferenceChangeListener] on
+ *   `"keyboard_words"` and cleanly unregisters it on disposal.
+ * - [LaunchedEffect] periodically re-checks [Manifest.permission.READ_CONTACTS] because
+ *   Android does not deliver a broadcast when the user revokes a permission in System Settings
+ *   while an overlay remains mounted.
+ *
+ * @return A revision integer suitable as a `remember` / `LaunchedEffect` key.
+ */
 @Composable
 internal fun rememberContactSuggestionRevision(enabled: Boolean): Int {
     val context = LocalContext.current
@@ -21,6 +35,7 @@ internal fun rememberContactSuggestionRevision(enabled: Boolean): Int {
     val preferences = remember(context) {
         context.getSharedPreferences("keyboard_words", Context.MODE_PRIVATE)
     }
+    // React immediately when the user toggles contact-name suggestions in preferences.
     DisposableEffect(preferences, enabled) {
         if (!enabled) return@DisposableEffect onDispose {}
 

@@ -68,11 +68,18 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
+/** Result wrapper for asynchronous wallpaper preview decoding. */
 private data class WallpaperPreviewLoad(
     val frame: WallpaperFrame? = null,
     val failureMessage: String? = null
 )
 
+/**
+ * Card exposing wallpaper selection, framing mode, rotation, zoom, dim, blur, and crop controls.
+ *
+ * Continuous controls (zoom, dim, blur, and inline pan) split live preview callbacks from commit
+ * callbacks so the preview updates smoothly at frame rate before persisting to DataStore.
+ */
 @Composable
 internal fun WallpaperCustomizationCard(
     wallpaperUri: String?,
@@ -228,6 +235,13 @@ internal fun WallpaperCustomizationCard(
     }
 }
 
+/**
+ * Live cover-screen aspect-ratio wallpaper preview card with inline long-press pan and tap-to-crop.
+ *
+ * Resolves the hardware cover display aspect ratio via [CoverDisplayHelper], decodes a scaled
+ * [WallpaperFrame] on [Dispatchers.IO] via [decodeWallpaperPreviewFrame], overlays sample lock/cover
+ * clock typography, and conditionally launches [WallpaperCropDialog] when [showCropDialog] is true.
+ */
 @Composable
 private fun WallpaperPreviewCard(
     wallpaperUri: String?,
@@ -248,6 +262,7 @@ private fun WallpaperPreviewCard(
 ) {
     val context = LocalContext.current
     val fallbackWidth = LocalWindowInfo.current.containerSize.width.coerceAtLeast(1)
+    // Derive the preview frame aspect ratio from the secondary cover display's physical mode.
     val coverAspectRatio = remember(context) {
         val display = CoverDisplayHelper(context).getCoverDisplay() ?: context.display
         val mode = display.mode
@@ -259,6 +274,7 @@ private fun WallpaperPreviewCard(
     val previewHeight = (availableWidth / coverAspectRatio).toInt().coerceAtLeast(1)
     val normalizedUri = wallpaperUri?.trim().takeUnless { it.isNullOrEmpty() }
     val uri = remember(normalizedUri) { normalizedUri?.toUri() }
+    // Decode a preview frame sized to cover bounds off the main thread whenever source or framing changes.
     val preview by produceState(
         initialValue = WallpaperPreviewLoad(),
         uri,
@@ -284,6 +300,7 @@ private fun WallpaperPreviewCard(
                         )
                     )
                 } catch (error: CancellationException) {
+                    // Always propagate coroutine cancellation cleanly when keys change or composition leaves.
                     throw error
                 } catch (error: Exception) {
                     Log.w("WallpaperPreview", "Unable to decode selected wallpaper", error)
@@ -292,6 +309,7 @@ private fun WallpaperPreviewCard(
             }
         }
     }
+    // Keep latest crop coordinates/callbacks fresh inside long-lived pointerInput gesture handlers.
     val latestCropX by rememberUpdatedState(cropX)
     val latestCropY by rememberUpdatedState(cropY)
     val latestCropPreviewChanged by rememberUpdatedState(onCropPreviewChanged)

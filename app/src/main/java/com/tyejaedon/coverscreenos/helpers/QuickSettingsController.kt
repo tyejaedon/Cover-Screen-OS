@@ -43,6 +43,7 @@ object QuickSettingsController {
     // WiFi
     // ---------------------------------------------------------------------
 
+    /** Returns true when the system [WifiManager] reports WiFi is currently enabled. */
     fun isWifiEnabled(context: Context): Boolean {
         val wifiManager = wifiManager(context) ?: return false
         return runCatching { wifiManager.isWifiEnabled }.getOrDefault(false)
@@ -65,6 +66,7 @@ object QuickSettingsController {
         return if (applied) ToggleOutcome.Changed else openSettingsOrFail(context, createWifiSettingsIntent())
     }
 
+    /** Builds an [Intent] to open the system WiFi settings screen. */
     fun createWifiSettingsIntent(): Intent = Intent(Settings.ACTION_WIFI_SETTINGS)
 
     private fun wifiManager(context: Context): WifiManager? {
@@ -75,6 +77,7 @@ object QuickSettingsController {
     // Bluetooth
     // ---------------------------------------------------------------------
 
+    /** Returns true when [Manifest.permission.BLUETOOTH_CONNECT] is granted for adapter access. */
     fun hasBluetoothConnectPermission(context: Context): Boolean {
         return ContextCompat.checkSelfPermission(
             context,
@@ -82,6 +85,10 @@ object QuickSettingsController {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * Returns true when [BluetoothAdapter.isEnabled] is true and [Manifest.permission.BLUETOOTH_CONNECT]
+     * is held; returns false otherwise without throwing.
+     */
     fun isBluetoothEnabled(context: Context): Boolean {
         if (!hasBluetoothConnectPermission(context)) return false
         val adapter = bluetoothAdapter(context) ?: return false
@@ -110,6 +117,7 @@ object QuickSettingsController {
         return if (applied) ToggleOutcome.Changed else openSettingsOrFail(context, createBluetoothSettingsIntent())
     }
 
+    /** Builds an [Intent] to open the system Bluetooth settings screen. */
     fun createBluetoothSettingsIntent(): Intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
 
     private fun bluetoothAdapter(context: Context): BluetoothAdapter? {
@@ -121,6 +129,7 @@ object QuickSettingsController {
     // Flashlight / torch
     // ---------------------------------------------------------------------
 
+    /** Returns the system [CameraManager] obtained from `applicationContext`, or null if unavailable. */
     fun cameraManager(context: Context): CameraManager? {
         return context.applicationContext.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
     }
@@ -129,6 +138,7 @@ object QuickSettingsController {
     fun resolveTorchCameraId(context: Context): String? {
         val cameraManager = cameraManager(context) ?: return null
         return runCatching {
+            // Query CameraCharacteristics.FLASH_INFO_AVAILABLE without opening a camera device.
             cameraManager.cameraIdList.firstOrNull { id ->
                 cameraManager.getCameraCharacteristics(id)
                     .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
@@ -139,6 +149,10 @@ object QuickSettingsController {
         }
     }
 
+    /**
+     * Controls the device flashlight using [CameraManager.setTorchMode] for [cameraId].
+     * Returns false if the camera service is unavailable or the hardware is busy.
+     */
     fun setTorchEnabled(context: Context, cameraId: String, enabled: Boolean): Boolean {
         val cameraManager = cameraManager(context) ?: return false
         return runCatching {
@@ -154,10 +168,12 @@ object QuickSettingsController {
     // Brightness
     // ---------------------------------------------------------------------
 
+    /** Returns true when the app holds special `WRITE_SETTINGS` access via [Settings.System.canWrite]. */
     fun canWriteSystemSettings(context: Context): Boolean {
         return Settings.System.canWrite(context.applicationContext)
     }
 
+    /** Builds an [Intent] to request `WRITE_SETTINGS` permission for this package in system Settings. */
     fun createWriteSettingsPermissionIntent(context: Context): Intent {
         return Intent(
             Settings.ACTION_MANAGE_WRITE_SETTINGS,
@@ -180,6 +196,8 @@ object QuickSettingsController {
             .coerceIn(MIN_BRIGHTNESS, MAX_BRIGHTNESS)
 
         return runCatching {
+            // Switch to manual brightness mode first so adaptive brightness does not override
+            // the 0..255 SCREEN_BRIGHTNESS value written immediately below.
             Settings.System.putInt(
                 context.contentResolver,
                 Settings.System.SCREEN_BRIGHTNESS_MODE,
@@ -207,8 +225,14 @@ object QuickSettingsController {
         }
     }
 
+    /**
+     * Suppresses the cover overlay via [ForegroundService.createHideOverlayIntent] and launches
+     * a system settings [intent] in a new task from a non-Activity context.
+     */
     fun launchSettingsIntent(context: Context, intent: Intent): Boolean {
         return runCatching {
+            // Identify the destination package so ForegroundService knows which foreground app
+            // is temporarily taking over from the cover overlay.
             val targetPackage = runCatching {
                 context.packageManager
                     .resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
@@ -220,6 +244,8 @@ object QuickSettingsController {
                 context.startService(ForegroundService.createHideOverlayIntent(context, targetPackage))
             }
 
+            // Non-Activity callers require FLAG_ACTIVITY_NEW_TASK; MULTIPLE_TASK + CLEAR_TOP
+            // keep the settings screen isolated and fresh on the active display.
             intent.addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_MULTIPLE_TASK or

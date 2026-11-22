@@ -20,6 +20,12 @@ import com.tyejaedon.coverscreenos.helpers.AppPermissionHelper
 import com.tyejaedon.coverscreenos.overlay.ForegroundService
 import com.tyejaedon.coverscreenos.overlay.RuntimeSnapshot
 
+/**
+ * Snapshot of Android runtime and special-access permissions tracked for dashboard readiness.
+ *
+ * The four required items gate [missing], [grantedCount], and [totalCount], while
+ * [inputAccessibility] is tracked for keyboard input readiness without blocking core startup.
+ */
 data class DashboardPermissions(
     val notifications: Boolean,
     val launcherAccessibility: Boolean,
@@ -27,6 +33,7 @@ data class DashboardPermissions(
     val batteryExemption: Boolean,
     val inputAccessibility: Boolean
 ) {
+    /** Human-readable labels for required grants that are not yet enabled. */
     val missing: List<String> get() = buildList {
         if (!notifications) add("Notification permission")
         if (!launcherAccessibility) add("Cover Screen OS Launcher accessibility")
@@ -37,8 +44,12 @@ data class DashboardPermissions(
     val totalCount: Int get() = 4
 }
 
+/** High-level operational state derived from permissions and [ForegroundService] liveness. */
 enum class DashboardStatus { ACTIVE, SETUP_NEEDED, STOPPED }
 
+/**
+ * Combined UI model consumed by [DashboardScreen], [DashboardHeroCard], and [TopBarStatusChip].
+ */
 data class DashboardState(
     val permissions: DashboardPermissions,
     val runtime: RuntimeSnapshot
@@ -56,6 +67,9 @@ data class DashboardState(
     }
 }
 
+/**
+ * Queries current permission and special system-access state via [AppPermissionHelper].
+ */
 object DashboardUseCases {
     fun readPermissions(context: Context): DashboardPermissions = DashboardPermissions(
         notifications = AppPermissionHelper.hasNotificationPermission(context),
@@ -66,6 +80,13 @@ object DashboardUseCases {
     )
 }
 
+/**
+ * Collects live [ForegroundService.runtime] updates and automatically re-polls permissions when
+ * returning from system Settings or when secure settings change externally.
+ *
+ * Pass an incrementing [refreshKey] when another screen (such as `PermissionsScreen`) completes an
+ * interactive grant flow to force an immediate recomposition refresh.
+ */
 @Composable
 fun rememberDashboardState(refreshKey: Int = 0): DashboardState {
     val context = LocalContext.current
@@ -77,9 +98,13 @@ fun rememberDashboardState(refreshKey: Int = 0): DashboardState {
 
     DisposableEffect(context, lifecycleOwner, refreshKey) {
         fun refresh() { permissions = DashboardUseCases.readPermissions(context) }
+        // Re-check permissions on ON_RESUME because users grant Accessibility, Notification
+        // Listener, and battery exemptions in external Android Settings activities.
         val lifecycleObserver = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) refresh()
         }
+        // Also watch Settings.Secure (including Accessibility/Notification Listener entries) so
+        // external toggles—such as multi-window Settings or ADB—update the dashboard live.
         val settingsObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) = refresh()
         }
@@ -87,6 +112,7 @@ fun rememberDashboardState(refreshKey: Int = 0): DashboardState {
         context.contentResolver.registerContentObserver(Settings.Secure.CONTENT_URI, true, settingsObserver)
         refresh()
         onDispose {
+            // Unregister both observers to avoid leaking the Activity/LifecycleOwner context.
             lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
             context.contentResolver.unregisterContentObserver(settingsObserver)
         }

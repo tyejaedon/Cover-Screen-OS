@@ -39,17 +39,25 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import com.tyejaedon.coverscreenos.datastore.ThemePreference
 import kotlin.math.roundToInt
 
+/**
+ * Appearance customization category screen backed by [LauncherSettingsStore].
+ *
+ * Exposes controls for theme mode ([ThemePreference]), cover UI [AccentColor] swatches, and
+ * overlay panel corner radius with a live rounded-box preview.
+ */
 @Composable
 internal fun AppearanceScreen(
     store: LauncherSettingsStore,
     settings: LauncherSettings,
     onAction: (String?, suspend () -> Unit) -> Unit
 ) {
+    // Resolve the effective dark-mode state so accent color swatches preview the active theme variant.
     val dark = when (settings.themePreference) {
         ThemePreference.SYSTEM -> isSystemInDarkTheme()
         ThemePreference.DARK -> true
         ThemePreference.LIGHT -> false
     }
+    // Keep a local slider state synced to DataStore so corner-radius dragging stays responsive.
     var previewRadius by remember(settings.panelCornerRadiusDp) { mutableFloatStateOf(settings.panelCornerRadiusDp) }
     AppearanceCustomizationCard(
         themePreference = settings.themePreference,
@@ -70,6 +78,7 @@ internal fun AppearanceScreen(
                         Modifier.size(48.dp)
                             .background(coverAccentScheme(accent, dark).primary, shape)
                             .border(if (selected) 3.dp else 1.dp, if (selected) MaterialTheme.colorScheme.onSurface else Color.Transparent, shape)
+                            // Expose swatch name and selection state to accessibility services and Compose UI tests.
                             .semantics { contentDescription = "${accent.name.lowercase()} accent"; this.selected = selected }
                             .clickable { onAction(null) { store.setAccentColor(accent) } }
                     )

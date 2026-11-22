@@ -44,6 +44,7 @@ data class OneUIColors(
     val isDark: Boolean
 )
 
+/** Default light-mode One UI palette pairing a recessed `#F2F2F7` canvas with `#FFFFFF` cards. */
 val OneUILightColors = OneUIColors(
     canvasBackground = Color(0xFFF2F2F7),
     cardSurface = Color(0xFFFFFFFF),
@@ -55,6 +56,7 @@ val OneUILightColors = OneUIColors(
     isDark = false
 )
 
+/** Default OLED dark-mode One UI palette pairing true black (`#000000`) with charcoal (`#17171A`) cards. */
 val OneUIDarkColors = OneUIColors(
     canvasBackground = Color(0xFF000000),
     cardSurface = Color(0xFF17171A),
@@ -144,30 +146,44 @@ data class OneUITypography(
     )
 )
 
+/**
+ * [staticCompositionLocalOf] provider holding the active [OneUIColors] palette.
+ * Using a static provider avoids per-read snapshot tracking for theme tokens that rarely change.
+ */
 val LocalOneUIColors = staticCompositionLocalOf { OneUILightColors }
+
+/** [staticCompositionLocalOf] provider holding [OneUIDimensions] spacing and component metrics. */
 val LocalOneUIDimensions = staticCompositionLocalOf { OneUIDimensions() }
+
+/** [staticCompositionLocalOf] provider holding [OneUIShapes] continuous corner and pill shapes. */
 val LocalOneUIShapes = staticCompositionLocalOf { OneUIShapes() }
+
+/** [staticCompositionLocalOf] provider holding [OneUITypography] text styles. */
 val LocalOneUITypography = staticCompositionLocalOf { OneUITypography() }
 
 /**
  * Accessor object for One UI 8 design tokens.
  */
 object OneUITheme {
+    /** Current [OneUIColors] resolved via `@ReadOnlyComposable` (no UI node emission). */
     val colors: OneUIColors
         @Composable
         @ReadOnlyComposable
         get() = LocalOneUIColors.current
 
+    /** Current [OneUIDimensions] resolved via `@ReadOnlyComposable` from [LocalOneUIDimensions]. */
     val dimensions: OneUIDimensions
         @Composable
         @ReadOnlyComposable
         get() = LocalOneUIDimensions.current
 
+    /** Current [OneUIShapes] resolved via `@ReadOnlyComposable` from [LocalOneUIShapes]. */
     val shapes: OneUIShapes
         @Composable
         @ReadOnlyComposable
         get() = LocalOneUIShapes.current
 
+    /** Current [OneUITypography] resolved via `@ReadOnlyComposable` from [LocalOneUITypography]. */
     val typography: OneUITypography
         @Composable
         @ReadOnlyComposable
@@ -179,6 +195,9 @@ object OneUITheme {
  *
  * Configures One UI design tokens and establishes a bridged Material 3 color scheme
  * so any embedded M3 widgets also respect One UI's OLED dark / cool gray light palette.
+ * On Android 12+ (API 31+, [Build.VERSION_CODES.S]) when [dynamicColor] is enabled,
+ * Material You's [dynamicDarkColorScheme] / [dynamicLightColorScheme] supplies the primary
+ * wallpaper-derived accent while keeping One UI's crisp black/cool-gray surfaces intact.
  */
 @Composable
 fun OneUITheme(
@@ -190,6 +209,7 @@ fun OneUITheme(
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
+    // Extract Material You wallpaper-driven accent on Android 12+ (API 31+) while keeping One UI canvas tones.
     val dynamicAccent = if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         val dynScheme = if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         dynScheme.primary
@@ -235,6 +255,7 @@ fun OneUITheme(
         )
     }
 
+    // Bind One UI token locals down the composition tree, then wrap MaterialTheme for M3 compatibility.
     CompositionLocalProvider(
         LocalOneUIColors provides effectiveColors,
         LocalOneUIDimensions provides dimensions,

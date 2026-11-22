@@ -18,9 +18,23 @@ import com.tyejaedon.coverscreenos.overlay.ForegroundService
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * Transparent bridge [FragmentActivity] responsible for unlocking a secure keyguard from the
+ * cover screen before resuming a deferred app launch.
+ *
+ * Uses [setShowWhenLocked] and [setTurnScreenOn] to appear over the lockscreen on the cover
+ * display, authenticates the user via [BiometricPrompt] (`BIOMETRIC_STRONG` or `DEVICE_CREDENTIAL`),
+ * explicitly requests keyguard dismissal with [KeyguardManager.requestDismissKeyguard], and then
+ * dispatches the pending app using this Activity's foreground launch privilege before tearing down
+ * via [finishAndRemoveTask].
+ */
 class UnlockBridgeActivity : FragmentActivity() {
 
-    /** [packageName] is null for an unlock-only request (lock icon tap). */
+    /**
+     * Launch payload carried in the bridge [Intent].
+     *
+     * [packageName] is null for an unlock-only request (lock icon tap).
+     */
     private data class UnlockLaunchRequest(
         val packageName: String?,
         val displayId: Int?,
@@ -49,11 +63,14 @@ class UnlockBridgeActivity : FragmentActivity() {
         @Volatile
         private var requestStartedAtElapsedMs: Long = 0L
 
-        @Synchronized
         /**
-         * Shows the system unlock prompt. When [packageName] is set, that app is opened after a
-         * successful unlock. When it is null, the device is only unlocked.
+         * Shows the system unlock prompt on the resolved cover display. When [packageName] is set,
+         * that app is opened after a successful unlock; when it is null, the device is only unlocked.
+         *
+         * Deduplicates concurrent requests within [REQUEST_STALE_TIMEOUT_MS], targets [displayId]
+         * via [ActivityOptions.makeBasic], and dispatches through [CoverAppLauncher.dispatchActivityStartBalExempt].
          */
+        @Synchronized
         fun startUnlockRequest(context: Context, packageName: String?, displayId: Int?): Boolean {
             val nowElapsedMs = SystemClock.elapsedRealtime()
             if (requestInProgress) {
@@ -113,6 +130,7 @@ class UnlockBridgeActivity : FragmentActivity() {
             return started
         }
 
+        /** Clears the in-flight request deduplication guard once the bridge finishes or fails to start. */
         @Synchronized
         private fun clearRequestInProgress() {
             requestInProgress = false
@@ -126,6 +144,8 @@ class UnlockBridgeActivity : FragmentActivity() {
         }
     }
 
+    // Atomic guards enforce single-shot authentication start, completion, and overlay-flag release
+    // across asynchronous biometric, keyguard, and lifecycle callbacks.
     private val completionGuard = AtomicBoolean(false)
     private val promptReleasedGuard = AtomicBoolean(false)
     private val authStartedGuard = AtomicBoolean(false)
@@ -135,9 +155,15 @@ class UnlockBridgeActivity : FragmentActivity() {
     private var hasRetriedEarlyCancel: Boolean = false
     private var pendingRetryRunnable: Runnable? = null
 
+    /**
+     * Configures lockscreen window flags ([setShowWhenLocked], [setTurnScreenOn]), parses and
+     * validates the [UnlockLaunchRequest], short-circuits if already unlocked, or waits for window
+     * focus before launching [BiometricPrompt].
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Render above the keyguard and wake the display if the screen was dimming/asleep.
         setShowWhenLocked(true)
         setTurnScreenOn(true)
         // FLAG_DISMISS_KEYGUARD is a legacy no-op on modern Android for secure keyguards, but
@@ -153,6 +179,7 @@ class UnlockBridgeActivity : FragmentActivity() {
         }
 
         unlockRequest = request
+        // Inform ForegroundService so the cover overlay stays hidden while the unlock UI is shown.
         ForegroundService.setUnlockPromptActive(true)
 
         if (isStaleRequest(request)) {
@@ -178,6 +205,7 @@ class UnlockBridgeActivity : FragmentActivity() {
         }
     }
 
+    /** Triggers authentication once the bridge window wins focus over the occluding keyguard. */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
@@ -185,6 +213,7 @@ class UnlockBridgeActivity : FragmentActivity() {
         }
     }
 
+    /** Idempotently starts [BiometricPrompt] authentication if not yet started or completed. */
     private fun startAuthenticationIfPending() {
         val request = unlockRequest ?: return
         if (completionGuard.get()) return
@@ -192,6 +221,7 @@ class UnlockBridgeActivity : FragmentActivity() {
         startBiometricAuthentication(request)
     }
 
+    /** Cleans up pending biometric retries, cancellation signals, and overlay suppression state. */
     override fun onDestroy() {
         pendingRetryRunnable?.let { window.decorView.removeCallbacks(it) }
         pendingRetryRunnable = null
@@ -202,12 +232,18 @@ class UnlockBridgeActivity : FragmentActivity() {
         super.onDestroy()
     }
 
+    /** Ensures `ForegroundService.setUnlockPromptActive(false)` is signaled at most once. */
     private fun releaseUnlockPromptIfNeeded() {
         if (unlockRequest != null && promptReleasedGuard.compareAndSet(false, true)) {
             ForegroundService.setUnlockPromptActive(false)
         }
     }
 
+    /**
+     * Checks [BiometricManager.canAuthenticate] for strong biometrics or device credentials and
+     * presents [BiometricPrompt], falling back directly to [dismissKeyguardAndLaunch] when
+     * biometric/credential authentication is unavailable.
+     */
     private fun startBiometricAuthentication(request: UnlockLaunchRequest) {
         val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or
             BiometricManager.Authenticators.DEVICE_CREDENTIAL
@@ -234,6 +270,7 @@ class UnlockBridgeActivity : FragmentActivity() {
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 val elapsedSinceStartMs = (SystemClock.elapsedRealtime() - biometricAuthStartedElapsedMs).coerceAtLeast(0L)
+                // Retry once if the keyguard transition canceled the prompt immediately after startup.
                 if (errorCode == BiometricPrompt.BIOMETRIC_ERROR_CANCELED &&
                     !hasRetriedEarlyCancel &&
                     elapsedSinceStartMs <= EARLY_BIOMETRIC_CANCEL_RETRY_WINDOW_MS &&
@@ -287,6 +324,7 @@ class UnlockBridgeActivity : FragmentActivity() {
         }
     }
 
+    /** Launches [UnlockLaunchRequest.packageName] onto its target display once unlocked. */
     private fun dispatchLaunchAfterUnlock(request: UnlockLaunchRequest) {
         val packageName = request.packageName
         if (packageName == null) {
@@ -310,6 +348,11 @@ class UnlockBridgeActivity : FragmentActivity() {
         }
     }
 
+    /**
+     * Calls [KeyguardManager.requestDismissKeyguard] if the keyguard remains locked and waits for
+     * [KeyguardManager.KeyguardDismissCallback] before dispatching the deferred launch and closing
+     * the bridge activity.
+     */
     private fun dismissKeyguardAndLaunch(request: UnlockLaunchRequest) {
         val keyguardManager = getSystemService(KeyguardManager::class.java)
         if (keyguardManager == null) {
@@ -358,6 +401,7 @@ class UnlockBridgeActivity : FragmentActivity() {
         }
     }
 
+    /** Extracts [UnlockLaunchRequest] metadata from the bridge activity's launch [Intent]. */
     private fun parseRequest(intent: Intent?): UnlockLaunchRequest? {
         val sourceIntent = intent ?: return null
         val packageName = sourceIntent.getStringExtra(EXTRA_PACKAGE_NAME)
@@ -379,6 +423,7 @@ class UnlockBridgeActivity : FragmentActivity() {
         )
     }
 
+    /** Returns true when [request] is older than [REQUEST_STALE_TIMEOUT_MS] (for example an orphaned task). */
     private fun isStaleRequest(request: UnlockLaunchRequest): Boolean {
         if (request.requestedAtElapsedMs <= 0L) return false
         val ageMs = (SystemClock.elapsedRealtime() - request.requestedAtElapsedMs).coerceAtLeast(0L)
@@ -386,6 +431,10 @@ class UnlockBridgeActivity : FragmentActivity() {
     }
 
 
+    /**
+     * Atomically executes [action] at most once, clears unlock-prompt state when applicable,
+     * and removes the bridge task from recents via [finishAndRemoveTask].
+     */
     private inline fun completeAndFinish(reason: String, action: () -> Unit = {}) {
         if (!completionGuard.compareAndSet(false, true)) {
             return

@@ -104,34 +104,83 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
+/*
+ * Cover-Screen Input Injection Engine Architecture
+ * ------------------------------------------------
+ * OEMs (such as Samsung One UI on Galaxy Z Flip devices) restrict third-party apps from acting as
+ * the default cover-screen IME or Home app, and the system keyboard (HoneyBoard) often obscures or
+ * refuses to render properly over cover-screen apps. This file provides an end-to-end virtual input
+ * subsystem hosted inside an AccessibilityService:
+ *
+ * 1. Focus Discovery & Window Tracking ([CoverInputAccessibilityService]):
+ *    - Filters AccessibilityEvents to the secondary cover hardware display (displayId == 1).
+ *    - Resolves the focused editable [AccessibilityNodeInfo] across interactive windows via
+ *      `AccessibilityService.getWindows()` (enabled by `FLAG_RETRIEVE_INTERACTIVE_WINDOWS`) so that
+ *      attaching our own `TYPE_ACCESSIBILITY_OVERLAY` window does not shadow the underlying app.
+ *    - Suppresses the stock soft keyboard via `SoftKeyboardController.SHOW_MODE_HIDDEN` while active
+ *      and verifies genuine focus loss with [FocusLossGate] + a main-Looper [Handler] polling loop.
+ *
+ * 2. Session & Buffer Synchronization ([CoverInputSessionManager]):
+ *    - Maintains a local composing-aware [TextBuffer] and emits [CoverInputSessionState] over a
+ *      `StateFlow`.
+ *    - Serializes keystrokes and echo reconciliation with a synchronous [ReentrantLock] (`injectionLock`)
+ *      and computes minimal [BufferDelta] patches (`TextDelta` -> `BufferDelta.compute`).
+ *    - Holds password fields locally until [CoverInputSessionManager.commitAndFinish] so secrets are
+ *      never injected mid-typing, logged to suggestions, or copied onto the clipboard.
+ *
+ * 3. Tiered Text Injection Channels ([InjectionMethod]):
+ *    - Tier 1 (`IME_INPUT_CONNECTION`): Uses `AccessibilityService.getInputMethod()` (API 33+ via
+ *      `FLAG_INPUT_METHOD_EDITOR`) to write minimal deltas through `InputConnection.commitText` /
+ *      `setSelection` — essential for Flutter, React Native, WebViews, and banking apps.
+ *    - Tier 2 (`ACTION_SET_TEXT`): Accessibility node fallback replacing the full text via
+ *      `AccessibilityNodeInfo.ACTION_SET_TEXT` + `ACTION_SET_SELECTION` after best-effort focus.
+ *    - Tier 3 (`ACTION_PASTE_CLIPBOARD`): Last-resort fallback staging text on [ClipboardManager]
+ *      and invoking `ACTION_PASTE` (explicitly blocked for password fields).
+ *
+ * 4. Overlay Hosting & Compose UI ([CoverKeyboardOverlayManager], [CoverKeyboardOverlayRoot]):
+ *    - Attaches a non-focusable `TYPE_ACCESSIBILITY_OVERLAY` Compose surface onto the cover display
+ *      with `FLAG_WATCH_OUTSIDE_TOUCH` and `FLAG_SECURE` when typing passwords.
+ */
+
 private const val TAG = "CoverInputInjection"
 private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
+/** Secondary hardware cover display ID on clamshell foldables (0 is the inner/default display). */
 private const val COVER_DISPLAY_ID = 1
 private const val MULTI_TAP_CYCLE_TIMEOUT_MS = 850L
+/** Window during which a `TYPE_VIEW_TEXT_CHANGED` echo matching `lastInjectedText` is ignored. */
 private const val INJECTION_ECHO_IGNORE_WINDOW_MS = 600L
+/** Minimum interval between identical global navigation gestures (`onGesture`). */
 private const val GESTURE_DEBOUNCE_MS = 550L
+/** Cooldown throttling rapid repeated global actions (Back/Home/Recents/Notifications). */
 private const val ACTION_THROTTLE_MS = 300L
+/** Minimum cadence for refreshing `latestForegroundEventElapsedMs` for the same package/class. */
 private const val FOREGROUND_EVENT_REFRESH_MIN_INTERVAL_MS = 250L
+/** Continuous dwell duration on a cover-home/system-launcher surface before reclaiming the overlay. */
 private const val RECLAIM_STABILITY_DEBOUNCE_MS = 1_500L
+/** Suppress overlay reclaim shortly after a real user app was observed in the foreground. */
 private const val RECENT_USER_APP_GUARD_MS = 2_000L
 // Content changes during the first 1.5 s after attach extend a pending focus-loss hold.
 private const val FIELD_FOCUS_GRACE_MS = 1_500L
 // Require the target editor to be absent continuously for this long after a non-editable
 // focus event from its own package.
 private const val FOCUS_LOSS_CONFIRM_DELAY_MS = 400L
+/** Polling interval used by [CoverInputAccessibilityService.scheduleFocusLossVerification]. */
 private const val FOCUS_LOSS_POLL_MS = 50L
 // Upper bound used when clearing an editor through the InputConnection and the
 // extracted-text length is unavailable. Comfortably exceeds any realistic field.
 private const val INPUT_CONNECTION_CLEAR_SPAN = 5_000
 
+/** System launcher prefixes indicating the user returned to the stock cover home screen. */
 private val OVERLAY_RECLAIM_PACKAGE_PREFIXES = arrayOf(
     "com.sec.android.app.launcher"
 )
+/** Transient System UI / AOD packages that should not prematurely reclaim or hijack tracking. */
 private val TRANSIENT_SYSTEM_UI_PREFIXES = arrayOf(
     "com.android.systemui",
     "com.samsung.systemui",
     "com.samsung.android.app.aodservice"
 )
+/** Packages excluded when tracking the most recent third-party user app on the cover screen. */
 private val NON_USER_APP_PREFIXES = arrayOf(
     "com.android.systemui",
     "com.samsung.systemui",
@@ -140,9 +189,15 @@ private val NON_USER_APP_PREFIXES = arrayOf(
     "com.tyejaedon.coverscreenos"
 )
 
+/**
+ * Input layout modes offered by the cover keyboard overlay.
+ */
 enum class CoverKeyboardMode {
+    /** Compact 10-digit keypad used for PINs, phone numbers, numeric inputs, and passwords. */
     NUMERIC_PIN,
+    /** Classic 3x4 keypad supporting both multi-tap cycling and predictive T9 digit sequences. */
     T9_MULTITAP,
+    /** Full compact QWERTY keyboard with NLP suggestions, glide typing, and clipboard toolbar. */
     QWERTY
 }
 
@@ -159,11 +214,19 @@ enum class InjectionMethod {
      * return false. Requires `flagInputMethodEditor` (API 33+).
      */
     IME_INPUT_CONNECTION,
+    /** Accessibility node fallback via [AccessibilityNodeInfo.ACTION_SET_TEXT] (full-buffer write). */
     ACTION_SET_TEXT,
+    /** Last-resort fallback staging text on [ClipboardManager] and firing `ACTION_PASTE`. */
     ACTION_PASTE_CLIPBOARD,
+    /** Indicates that no injection channel succeeded or was eligible. */
     NONE
 }
 
+/**
+ * Snapshot of metadata extracted from the currently focused [AccessibilityNodeInfo] so the
+ * cover keyboard can select an appropriate layout, IME action button, and secure display flags
+ * without retaining a mutable reference to the underlying node.
+ */
 data class CoverFieldMetadata(
     val packageName: String = "",
     val viewIdResourceName: String? = null,
@@ -179,6 +242,10 @@ data class CoverFieldMetadata(
     val boundsInScreen: Rect = Rect()
 ) {
     companion object {
+        /**
+         * Inspects [node] and converts its Android `InputType`, hint/content text, selection span,
+         * screen bounds, and `extras` [Bundle] into a [CoverFieldMetadata] snapshot.
+         */
         fun fromNode(node: AccessibilityNodeInfo?): CoverFieldMetadata {
             if (node == null) return CoverFieldMetadata()
 
@@ -223,6 +290,10 @@ data class CoverFieldMetadata(
     }
 }
 
+/**
+ * Returns `true` when [inputType] encodes a numeric PIN or text/web/visible password variation
+ * according to [InputType.TYPE_MASK_CLASS] and [InputType.TYPE_MASK_VARIATION].
+ */
 internal fun isPasswordInputType(inputType: Int): Boolean {
     val inputClass = inputType and InputType.TYPE_MASK_CLASS
     val variation = inputType and InputType.TYPE_MASK_VARIATION
@@ -235,7 +306,17 @@ internal fun isPasswordInputType(inputType: Int): Boolean {
         ))
 }
 
+/**
+ * Resolves the effective [EditorInfo] IME action (`IME_ACTION_GO`, `SEARCH`, `SEND`, `NEXT`,
+ * `DONE`, or `NONE`) for a focused node.
+ *
+ * Android accessibility nodes do not always expose `EditorInfo.imeOptions` in a standardized field,
+ * so this probes several known `Bundle` extra keys used across framework versions and OEMs before
+ * falling back to sensible defaults derived from [inputType] and [isMultiLine].
+ */
 internal fun resolveImeAction(extras: Bundle?, inputType: Int, isMultiLine: Boolean): Int {
+    // Different Android API levels, WebViews, and toolkits populate slightly different keys in
+    // AccessibilityNodeInfo.getExtras().
     val keys = arrayOf(
         "imeOptions",
         "android.view.inputmethod.EditorInfo.IME_OPTIONS",
@@ -249,6 +330,7 @@ internal fun resolveImeAction(extras: Bundle?, inputType: Int, isMultiLine: Bool
             is String -> value.toIntOrNull()
             else -> null
         } ?: continue
+        // Extract only the action bits; upper bits hold flags such as IME_FLAG_NO_EXTRACT_UI.
         val action = option and EditorInfo.IME_MASK_ACTION
         if (action in EditorInfo.IME_ACTION_GO..EditorInfo.IME_ACTION_DONE) return action
     }
@@ -265,6 +347,11 @@ internal fun resolveImeAction(extras: Bundle?, inputType: Int, isMultiLine: Bool
     }
 }
 
+/**
+ * Chooses a keyboard mode compatible with [metadata], forcing [CoverKeyboardMode.NUMERIC_PIN] for
+ * numeric, phone, and password fields and honoring [saved] (defaulting to
+ * [CoverKeyboardMode.T9_MULTITAP]) for general text fields.
+ */
 internal fun compatibleKeyboardMode(
     metadata: CoverFieldMetadata,
     saved: CoverKeyboardMode?
@@ -273,18 +360,34 @@ internal fun compatibleKeyboardMode(
     else -> saved ?: CoverKeyboardMode.T9_MULTITAP
 }
 
+/**
+ * Hysteresis state machine that guards against false "field lost focus" dismissals caused by
+ * transient UI transitions on the cover display (touch ripples, autocomplete popups, or our own
+ * keyboard overlay attaching).
+ *
+ * Flow:
+ * 1. A non-editable `TYPE_VIEW_FOCUSED` event from the target package arms the gate via
+ *    [onNonEditableFocus] and starts the [FIELD_FOCUS_GRACE_MS] window.
+ * 2. Window content churn during that grace window resets the absence timer ([onContentChurn]).
+ * 3. Polling via [shouldDismiss] confirms dismissal only after the editable target has remained
+ *    continuously missing for [FOCUS_LOSS_CONFIRM_DELAY_MS].
+ * 4. Any valid editable focus resets the gate via [onEditableFocus].
+ */
 internal class FocusLossGate {
     private var candidateSinceMs: Long? = null
     private var absentSinceMs: Long? = null
+    /** True while a potential focus loss is being verified by the polling loop. */
     var isArmed: Boolean = false
         private set
 
+    /** Disarms the gate and clears any pending loss timers when an editable node is confirmed. */
     fun onEditableFocus() {
         isArmed = false
         candidateSinceMs = null
         absentSinceMs = null
     }
 
+    /** Arms focus-loss verification upon observing a non-editable focus event in the target app. */
     fun onNonEditableFocus(nowMs: Long) {
         if (isArmed) return
         isArmed = true
@@ -292,12 +395,21 @@ internal class FocusLossGate {
         absentSinceMs = null
     }
 
+    /**
+     * Resets the absence countdown when layout/content churn arrives within [FIELD_FOCUS_GRACE_MS]
+     * of arming, preventing attach-time relayouts from dismissing the keyboard.
+     */
     fun onContentChurn(nowMs: Long) {
         if (isArmed && candidateSinceMs?.let { nowMs - it < FIELD_FOCUS_GRACE_MS } == true) {
             absentSinceMs = null
         }
     }
 
+    /**
+     * Evaluates whether focus loss is confirmed at [nowMs]. Returns `true` only once the target
+     * editor has been continuously unreachable (`targetMissing == true`) for
+     * [FOCUS_LOSS_CONFIRM_DELAY_MS].
+     */
     fun shouldDismiss(nowMs: Long, targetMissing: Boolean): Boolean {
         if (!isArmed) return false
         if (!targetMissing) {
@@ -309,6 +421,10 @@ internal class FocusLossGate {
     }
 }
 
+/**
+ * Maps an [EditorInfo] IME action code to the best-matching [AccessibilityNodeInfo] fallback
+ * action ID used when [android.view.inputmethod.InputConnection.performEditorAction] is unavailable.
+ */
 internal fun accessibilityActionForIme(action: Int): Int = when (action and EditorInfo.IME_MASK_ACTION) {
     EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_SEARCH,
     EditorInfo.IME_ACTION_SEND, EditorInfo.IME_ACTION_DONE ->
@@ -317,6 +433,9 @@ internal fun accessibilityActionForIme(action: Int): Int = when (action and Edit
     else -> AccessibilityNodeInfo.ACTION_CLICK
 }
 
+/**
+ * Immutable UI and session snapshot exposed by [CoverInputSessionManager.sessionState].
+ */
 data class CoverInputSessionState(
     val isActive: Boolean = false,
     val buffer: String = "",
@@ -330,9 +449,22 @@ data class CoverInputSessionState(
     val isSuccessFeedback: Boolean = false
 )
 
+/**
+ * Central coordinator for active cover-screen text input sessions.
+ *
+ * Bridges:
+ * - [CoverInputAccessibilityService] (focus detection, node/InputConnection injection, focus-loss verification)
+ * - [CoverKeyboardOverlayManager] (overlay window lifecycle on display 1)
+ * - Compose keyboard surfaces ([CoverKeyboardOverlayRoot] / [CoverOverlayInputCallbacks])
+ * - [LauncherSettingsStore] (per-package keyboard mode persistence via DataStore)
+ *
+ * All buffer mutations and injection calls are serialized with [injectionLock] (a synchronous
+ * [ReentrantLock]) so rapid Compose tap callbacks never race against accessibility echo events.
+ */
 object CoverInputSessionManager {
 
     private val _sessionState = MutableStateFlow(CoverInputSessionState())
+    /** Reactive session snapshot observed by the Compose keyboard overlay UI. */
     val sessionState: StateFlow<CoverInputSessionState> = _sessionState.asStateFlow()
 
     private val clipboardHistoryBuffer = ClipboardHistory()
@@ -343,8 +475,10 @@ object CoverInputSessionManager {
     private var activeAccessibilityService: CoverInputAccessibilityService? = null
     private var overlayManager: CoverKeyboardOverlayManager? = null
     private var settingsStore: LauncherSettingsStore? = null
+    /** Main-thread coroutine scope hosting the DataStore settings collector while bound. */
     private var settingsScope: CoroutineScope? = null
     private var settingsJob: Job? = null
+    /** Dedicated IO coroutine scope for non-blocking per-package keyboard mode writes. */
     private val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var savedModes: Map<String, CoverKeyboardMode> = emptyMap()
     private var modeChosenThisSession = false
@@ -386,17 +520,26 @@ object CoverInputSessionManager {
      */
     private var relinquishedPackage: String? = null
 
+    /**
+     * Binds a connected [CoverInputAccessibilityService], constructs the overlay manager and
+     * production [AccessibilityServiceInjectionTarget], and begins collecting saved per-package
+     * keyboard modes on [Dispatchers.Main.immediate].
+     */
     fun bindService(service: CoverInputAccessibilityService) {
         activeAccessibilityService = service
         overlayManager = CoverKeyboardOverlayManager(service)
         injectionTarget = AccessibilityServiceInjectionTarget(service)
         settingsStore = LauncherSettingsStore(service.applicationContext)
+        // Main.immediate ensures settings updates apply synchronously with UI state without
+        // blocking the service's accessibility callback looper.
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         settingsScope = scope
         settingsJob = scope.launch {
             settingsStore?.settings?.collect { settings ->
                 savedModes = settings.keyboardModeByPackage
                 val current = _sessionState.value
+                // Only update keyboard mode dynamically if the user has not manually switched
+                // modes or started typing in the active field yet.
                 if (current.isActive && !modeChosenThisSession &&
                     current.metadata.packageName.isNotBlank() &&
                     current.buffer == current.metadata.initialText
@@ -411,6 +554,10 @@ object CoverInputSessionManager {
         }
     }
 
+    /**
+     * Tears down any active session, detaches the overlay window, releases service references,
+     * and cancels DataStore collection jobs when the accessibility service is destroyed.
+     */
     fun unbindService() {
         dismissOverlay(reason = "Service unbound")
         overlayManager?.destroy()
@@ -437,6 +584,7 @@ object CoverInputSessionManager {
         injectionTarget = target
     }
 
+    /** Resets test injection target and in-memory session state after unit tests. */
     internal fun clearInjectionTargetForTest() {
         injectionTarget = null
         textBuffer = TextBuffer.Empty
@@ -444,10 +592,23 @@ object CoverInputSessionManager {
         savedModes = emptyMap()
     }
 
+    /** Seeds per-package mode preferences directly for unit testing without DataStore I/O. */
     internal fun setSavedModesForTest(modes: Map<String, CoverKeyboardMode>) {
         savedModes = modes
     }
 
+    /**
+     * Handles an editable node gaining focus (or being tapped) on the cover display.
+     *
+     * Two main paths:
+     * 1. **Same field re-focused**: cancels pending focus-loss timers and reconciles any external
+     *    text or cursor changes (ignoring stale echoes of our own recent injection within
+     *    [INJECTION_ECHO_IGNORE_WINDOW_MS]).
+     * 2. **New field focused**: respects [relinquishedPackage] if the user opted into the system
+     *    IME for that app; otherwise seeds the local [TextBuffer] (kept empty for password fields
+     *    so existing masked bullets are never treated as literal characters) and attaches the
+     *    overlay window on display 1.
+     */
     fun onFieldFocused(metadata: CoverFieldMetadata) {
         val current = _sessionState.value
         if (current.isActive &&
@@ -464,6 +625,8 @@ object CoverInputSessionManager {
                 injectionLock.withLock {
                     val state = _sessionState.value
                     val observedText = metadata.initialText
+                    // Ignore accessibility snapshots that still show the pre-injection text shortly
+                    // after we already pushed `state.buffer` to the editor.
                     val recentOldEcho = lastInjectionTimestamp > 0L &&
                         SystemClock.elapsedRealtime() - lastInjectionTimestamp < INJECTION_ECHO_IGNORE_WINDOW_MS &&
                         observedText == state.metadata.initialText &&
@@ -511,6 +674,8 @@ object CoverInputSessionManager {
         val defaultMode = compatibleKeyboardMode(metadata, savedModes[metadata.packageName])
 
         modeChosenThisSession = false
+        // Do not read back masked bullet characters from password fields; accumulate locally and
+        // inject once on commitAndFinish().
         val initialBuffer = if (metadata.isPassword) "" else metadata.initialText
         val initialSelection = if (metadata.isPassword) null else metadata.observedSelection(initialBuffer)
         val selection = initialSelection ?: initialBuffer.length..initialBuffer.length
@@ -536,6 +701,7 @@ object CoverInputSessionManager {
         }
     }
 
+    /** Validates and converts the node's selection indices into a clamped [IntRange], or `null` if unset. */
     private fun CoverFieldMetadata.observedSelection(text: String): IntRange? =
         if (selectionStart in 0..text.length && selectionEnd in selectionStart..text.length) {
             selectionStart..selectionEnd
@@ -543,6 +709,7 @@ object CoverInputSessionManager {
             null
         }
 
+    /** Dismisses the cover keyboard overlay once focus loss is verified or the target window exits. */
     fun onFieldLostFocus(reason: String = "unknown") {
         dismissOverlay(reason = "Field lost focus ($reason)")
     }
@@ -557,6 +724,7 @@ object CoverInputSessionManager {
         activeAccessibilityService?.scheduleFocusLossVerification("outside touch")
     }
 
+    /** Inserts [text] at the current caret, blocking direct entry while T9 predictive digits await selection. */
     fun appendText(text: String) {
         if (_sessionState.value.t9PredictiveDigits.isNotEmpty()) {
             _sessionState.value = _sessionState.value.copy(
@@ -598,6 +766,7 @@ object CoverInputSessionManager {
         return service.pasteTextIntoFocusedNode(toPaste)
     }
 
+    /** Replaces the character before the caret with [char] for T9 multi-tap key cycling. */
     fun replacePreviousChar(char: Char) {
         if (_sessionState.value.t9PredictiveDigits.isNotEmpty()) {
             _sessionState.value = _sessionState.value.copy(
@@ -608,6 +777,7 @@ object CoverInputSessionManager {
         applyDelta(TextDelta.ReplacePreviousChar(char))
     }
 
+    /** Deletes either the last uncommitted T9 predictive digit or one character before the caret. */
     fun deleteBackward() {
         val state = _sessionState.value
         if (state.t9PredictiveDigits.isNotEmpty()) {
@@ -617,11 +787,13 @@ object CoverInputSessionManager {
         applyDelta(TextDelta.Backspace())
     }
 
+    /** Clears uncommitted T9 digits and resets the entire editor buffer to empty. */
     fun clearBuffer() {
         _sessionState.value = _sessionState.value.copy(t9PredictiveDigits = "")
         applyDelta(TextDelta.Clear)
     }
 
+    /** Enables or disables predictive T9 digit accumulation when in [CoverKeyboardMode.T9_MULTITAP]. */
     fun setT9Predictive(enabled: Boolean) {
         val state = _sessionState.value
         if (!state.isActive || state.keyboardMode != CoverKeyboardMode.T9_MULTITAP ||
@@ -650,6 +822,7 @@ object CoverInputSessionManager {
         )
     }
 
+    /** Appends a keypad digit (`'2'..'9'`) to the active predictive T9 sequence (capped at 32 digits). */
     fun tapPredictiveDigit(digit: Char) {
         val state = _sessionState.value
         if (!state.isActive || !state.isT9Predictive || digit !in '2'..'9') {
@@ -667,12 +840,14 @@ object CoverInputSessionManager {
         )
     }
 
+    /** Deletes the word preceding the caret using [previousWordLength]. */
     fun deletePreviousWord() {
         val beforeCaret = textBuffer.text.take(textBuffer.selection.first)
         val count = previousWordLength(beforeCaret)
         if (count > 0) applyDelta(TextDelta.Backspace(count))
     }
 
+    /** Commits a selected suggestion [candidate], replacing active T9 digits or the current word. */
     fun commitCandidate(candidate: String) {
         val state = _sessionState.value
         if (!state.isActive || state.metadata.isPassword ||
@@ -693,6 +868,10 @@ object CoverInputSessionManager {
         }
     }
 
+    /**
+     * Moves the caret by [delta] characters in both the target editor (via `InputConnection` or
+     * `ACTION_SET_SELECTION`) and our local [textBuffer], holding [injectionLock].
+     */
     fun moveCursor(delta: Int) {
         injectionLock.withLock {
             val state = _sessionState.value
@@ -712,6 +891,7 @@ object CoverInputSessionManager {
         }
     }
 
+    /** Replaces [range] with [text] and positions the caret at [newCursor] via delta operations. */
     fun replaceText(range: IntRange, text: String, newCursor: Int) {
         val before = textBuffer
         val currentText = before.text
@@ -730,6 +910,7 @@ object CoverInputSessionManager {
         }
     }
 
+    /** Creates the [CoverOverlayInputCallbacks] adapter passed into Floris-based Compose keyboards. */
     fun asOverlayInputCallbacks(): CoverOverlayInputCallbacks = object : CoverOverlayInputCallbacks {
         override fun onAppend(text: String) {
             appendText(text)
@@ -822,12 +1003,18 @@ object CoverInputSessionManager {
                 isSuccessFeedback = false
             )
 
+            // Defer live injection for password fields so intermediate characters are neither
+            // echoed by accessibility events nor stored anywhere outside the local buffer until submit.
             if (!_sessionState.value.metadata.isPassword) {
                 performDeltaInjection(before.text, after.text, newCaret)
             }
         }
     }
 
+    /**
+     * Switches the active keypad layout to [mode] (constrained by [compatibleKeyboardMode])
+     * and persists the user's preference per package in DataStore for general text fields.
+     */
     fun switchMode(mode: CoverKeyboardMode) {
         val current = _sessionState.value
         if (!current.isActive) return
@@ -877,6 +1064,12 @@ object CoverInputSessionManager {
         dismissOverlay(reason = "User chose system keyboard")
     }
 
+    /**
+     * Finalizes the active input session, flushes any remaining buffer (or deferred password
+     * payload) to the target editor, dispatches the field's IME action (`GO`/`SEARCH`/`SEND`/
+     * `DONE`), displays brief confirmation feedback, and schedules overlay dismissal on the
+     * main [Looper].
+     */
     fun commitAndFinish() {
         val state = _sessionState.value
         if (!state.isActive) return
@@ -888,6 +1081,8 @@ object CoverInputSessionManager {
             return
         }
         if (state.metadata.isPassword) {
+            // Password buffers are injected all at once at commit time; clipboard paste is
+            // explicitly treated as a failure so secrets are never placed on the system clipboard.
             val delta = BufferDelta.compute(
                 state.metadata.initialText, state.buffer, state.cursorPosition
             )
@@ -926,11 +1121,17 @@ object CoverInputSessionManager {
         )
         _sessionState.value = completedState
 
+        // Briefly surface the green "Injected successfully" indicator before detaching; reference
+        // equality (===) prevents dismissing a newer session if focus moved during the 250 ms delay.
         Handler(Looper.getMainLooper()).postDelayed({
             if (_sessionState.value === completedState) dismissOverlay(reason = "Input finished")
         }, 250L)
     }
 
+    /**
+     * Cancels pending focus-loss verification, detaches the overlay surface, resets local buffer
+     * state, and restores system soft-keyboard visibility (`SHOW_MODE_AUTO`).
+     */
     fun dismissOverlay(reason: String) {
         // Guard against repeated teardown. Several independent signals (window churn,
         // outside touches, service callbacks) can all report "gone" for the same session;
@@ -946,12 +1147,20 @@ object CoverInputSessionManager {
         activeAccessibilityService?.restoreSoftKeyboardMode()
     }
 
+    /**
+     * Returns `true` when an incoming `TYPE_VIEW_TEXT_CHANGED` payload matches our most recent
+     * write within [INJECTION_ECHO_IGNORE_WINDOW_MS], identifying it as a self-generated echo.
+     */
     fun isRecentSelfEcho(text: String): Boolean {
         val elapsed = SystemClock.elapsedRealtime() - lastInjectionTimestamp
         return lastInjectionTimestamp > 0L &&
             elapsed < INJECTION_ECHO_IGNORE_WINDOW_MS && text == lastInjectedText
     }
 
+    /**
+     * Diffs [newText] against [lastInjectedText] (falling back to [oldText]), pushes the resulting
+     * [BufferDelta] to [injectionTarget], and updates status feedback. Caller must hold [injectionLock].
+     */
     private fun performDeltaInjection(oldText: String, newText: String, newCaret: Int): InjectionMethod? {
         val delta = BufferDelta.compute(old = lastInjectedText ?: oldText, new = newText, newCaret = newCaret)
         if (delta.isNoOp) {
@@ -990,6 +1199,7 @@ object CoverInputSessionManager {
         return method
     }
 
+    /** Formats common cover-app package names into a concise display label for the status banner. */
     private fun cleanAppLabel(packageName: String): String {
         return when {
             packageName.contains("mpesa", ignoreCase = true) -> "M-Pesa"
@@ -1022,15 +1232,28 @@ internal class AccessibilityServiceInjectionTarget(
     }
 }
 
+/**
+ * Cover-screen [AccessibilityService] responsible for:
+ * - Observing focus, click, text, and window events on the secondary cover display (`displayId == 1`).
+ * - Tracking the active cover foreground package and requesting overlay reclaim or call passthrough
+ *   when appropriate.
+ * - Suppressing the stock system IME (`SHOW_MODE_HIDDEN`) while our cover keyboard overlay is shown.
+ * - Injecting keystrokes and editor actions via `InputConnection` (API 33+ `FLAG_INPUT_METHOD_EDITOR`)
+ *   with `AccessibilityNodeInfo` (`ACTION_SET_TEXT`, `ACTION_PASTE`, `ACTION_SET_SELECTION`) fallbacks.
+ * - Intercepting system navigation gestures and `KEYCODE_BACK` when the cover overlay is active.
+ */
 class CoverInputAccessibilityService : AccessibilityService() {
 
     companion object {
+        /** Most recently observed non-self foreground package on the cover display. */
         @Volatile
         private var latestForegroundPackage: String? = null
 
+        /** Class name associated with [latestForegroundPackage], if supplied by the event. */
         @Volatile
         private var latestForegroundClassName: String? = null
 
+        /** `SystemClock.elapsedRealtime()` timestamp when [latestForegroundPackage] was refreshed. */
         @Volatile
         private var latestForegroundEventElapsedMs: Long = 0L
 
@@ -1046,10 +1269,16 @@ class CoverInputAccessibilityService : AccessibilityService() {
         @Volatile
         private var connectedService: CoverInputAccessibilityService? = null
 
+        /** Returns the latest non-self package observed on the cover display, or `null`. */
         fun currentForegroundPackage(): String? = latestForegroundPackage
 
+        /** Returns the latest foreground window class name observed on the cover display, or `null`. */
         fun currentForegroundClassName(): String? = latestForegroundClassName
 
+        /**
+         * Elapsed milliseconds since the last foreground package update on the cover display,
+         * or [Long.MAX_VALUE] if no foreground event has been recorded yet.
+         */
         fun currentForegroundPackageEventAgeMs(nowElapsedMs: Long = SystemClock.elapsedRealtime()): Long {
             val eventElapsedMs = latestForegroundEventElapsedMs
             if (eventElapsedMs <= 0L) return Long.MAX_VALUE
@@ -1080,6 +1309,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Cached handle to the focused editable node; refreshed before use and recycled on replace/destroy. */
     private var targetFocusedNode: AccessibilityNodeInfo? = null
     private var lastWindowPackage: String? = null
     private var lastGestureId: Int? = null
@@ -1095,12 +1325,13 @@ class CoverInputAccessibilityService : AccessibilityService() {
     // dismissal ~300 ms later because rootInActiveWindow briefly resolves to
     // the newly-attached overlay (which has no editable focused node).
     private var fieldFocusClaimedAtMs: Long = 0L
+    /** Main-looper handler driving the [FOCUS_LOSS_POLL_MS] verification checks. */
     private val focusLossHandler = Handler(Looper.getMainLooper())
     private var pendingFocusLossCheck: Runnable? = null
     private val focusLossGate = FocusLossGate()
 
     /**
-     * Defers a dismissal until we can confirm, across every window on every display, that
+     * Defers a dismissal until we can confirm, across interactive windows, that
      * no editable field holds input focus any more.
      *
      * Any subsequent focus event cancels the pending check, so ordinary window churn inside
@@ -1115,6 +1346,8 @@ class CoverInputAccessibilityService : AccessibilityService() {
             override fun run() {
                 pendingFocusLossCheck = null
                 val now = SystemClock.elapsedRealtime()
+                // Require active input focus within the target package so stale non-focused
+                // nodes do not keep the keyboard alive after navigation.
                 val targetMissing = resolveTargetInputNode(requireInputFocus = true) == null
                 if (focusLossGate.shouldDismiss(now, targetMissing)) {
                     Log.d(TAG, "focus_loss result=dismiss reason=$reason targetMissing=true holdMs=$FOCUS_LOSS_CONFIRM_DELAY_MS")
@@ -1131,12 +1364,19 @@ class CoverInputAccessibilityService : AccessibilityService() {
         focusLossHandler.post(check)
     }
 
+    /** Cancels any queued focus-loss poll and resets [focusLossGate] to editable-focused state. */
     fun cancelPendingFocusLossVerification() {
         pendingFocusLossCheck?.let { focusLossHandler.removeCallbacks(it) }
         pendingFocusLossCheck = null
         focusLossGate.onEditableFocus()
     }
 
+    /**
+     * Configures the service's event mask and flags (`FLAG_REPORT_VIEW_IDS`,
+     * `FLAG_RETRIEVE_INTERACTIVE_WINDOWS`, `FLAG_REQUEST_FILTER_KEY_EVENTS`,
+     * `FLAG_INPUT_METHOD_EDITOR`), registers this instance with [CoverInputSessionManager],
+     * and initializes the keyboard NLP engine.
+     */
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.i(TAG, "CoverInputAccessibilityService connected")
@@ -1166,9 +1406,14 @@ class CoverInputAccessibilityService : AccessibilityService() {
         CoverKeyboardNlpManager.initializeFromContext(applicationContext)
     }
 
+    /**
+     * Processes cover-display accessibility events (`displayId == 1`) for foreground tracking,
+     * overlay reclaim, editable focus attach, text-change echo filtering, and focus-loss grace.
+     */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
 
+        // Strictly isolate cover-screen handling from the main inner display (display 0).
         if (!isCoverScreenEvent(event)) return
 
         val packageName = event.packageName
@@ -1200,6 +1445,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Translates accessibility swipe gestures into global navigation actions while the cover overlay is active. */
     override fun onGesture(gestureEvent: AccessibilityGestureEvent): Boolean {
         if (!ForegroundService.isOverlayActive) return false
 
@@ -1218,6 +1464,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return performGlobalAction(globalAction)
     }
 
+    /** Routes hardware/navigation `KEYCODE_BACK` presses to `GLOBAL_ACTION_BACK` while the overlay is active. */
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (!ForegroundService.isOverlayActive) return super.onKeyEvent(event)
 
@@ -1238,6 +1485,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
         Log.w(TAG, "CoverInputAccessibilityService interrupted (session preserved)")
     }
 
+    /** Unbinds [CoverInputSessionManager], cancels focus-loss timers, and recycles cached nodes. */
     override fun onDestroy() {
         super.onDestroy()
         cancelPendingFocusLossVerification()
@@ -1249,14 +1497,22 @@ class CoverInputAccessibilityService : AccessibilityService() {
         targetFocusedNode = null
     }
 
+    /** Hides Samsung HoneyBoard / system soft keyboard via [AccessibilityService.SoftKeyboardController]. */
     fun suppressHoneyBoardSoftKeyboard() {
         softKeyboardController.showMode = SHOW_MODE_HIDDEN
     }
 
+    /** Restores normal system soft keyboard visibility (`SHOW_MODE_AUTO`) after overlay dismissal. */
     fun restoreSoftKeyboardMode() {
         softKeyboardController.showMode = SHOW_MODE_AUTO
     }
 
+    /**
+     * Moves the cursor to [position] in the focused editor. Prefers `InputConnection.setSelection`
+     * when the active editor belongs to the session's target package, falling back to
+     * `AccessibilityNodeInfo.ACTION_SET_SELECTION` with `ACTION_ARGUMENT_SELECTION_START_INT`
+     * and `ACTION_ARGUMENT_SELECTION_END_INT`.
+     */
     fun moveCursorInFocusedField(position: Int): Boolean {
         val targetPackage = CoverInputSessionManager.sessionState.value.metadata.packageName
         val editorInfo = runCatching { inputMethod?.currentInputEditorInfo }.getOrNull()
@@ -1279,6 +1535,14 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return performed
     }
 
+    /**
+     * Replaces the focused node's text via `AccessibilityNodeInfo.ACTION_SET_TEXT` using
+     * `ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE`, then places the caret at the end with
+     * `ACTION_SET_SELECTION`.
+     *
+     * Issues best-effort `ACTION_FOCUS` and `ACTION_ACCESSIBILITY_FOCUS` first because several
+     * apps ignore `ACTION_SET_TEXT` if focus was momentarily unsettled.
+     */
     fun injectTextIntoFocusedNode(text: String): Boolean {
         val node = resolveTargetInputNode(
             requireInputFocus = CoverInputSessionManager.sessionState.value.metadata.isPassword
@@ -1333,23 +1597,19 @@ class CoverInputAccessibilityService : AccessibilityService() {
      *  1. **InputConnection** (`IME_INPUT_CONNECTION`): reads the target's
      *     live selection via [android.view.inputmethod.InputConnection.getSurroundingText]
      *     to reconcile any drift the app made under us, then issues a
-     *     `setSelection` + `deleteSurroundingText` + `commitText` of the
-     *     delta only. Zero full-buffer traffic when the target and overlay
-     *     agree.
-     *  2. **ACTION_SET_TEXT** (`ACTION_SET_TEXT`): virtual-hierarchy fallback.
-     *     Reads `getTextSelectionStart/End` from the cached node to snap the
-     *     caret to the delta position, then writes the full new buffer
-     *     (accessibility offers no delta primitive) via
-     *     [injectTextIntoFocusedNode]. This is still the "flicker" path, but
-     *     it only fires when InputConnection is unavailable — no worse than
-     *     today, and the caret is at least kept in sync.
-     *  3. **Clipboard paste** (`ACTION_PASTE_CLIPBOARD`): last resort,
-     *     unchanged.
+     *     `setSelection` + range replace (`commitText("", 1, null)` / `commitText(delta.insert, 1, null)`)
+     *     for the delta only. Zero full-buffer traffic when the target and overlay agree.
+     *  2. **ACTION_SET_TEXT** (`ACTION_SET_TEXT`): accessibility-node fallback.
+     *     Writes the full new buffer (accessibility offers no delta primitive) via
+     *     [injectTextIntoFocusedNode] and calls [setSelectionOnCachedNode] to sync the caret.
+     *  3. **Clipboard paste** (`ACTION_PASTE_CLIPBOARD`): last resort via [injectViaClipboard].
      *
      * Callers must hold [CoverInputSessionManager.injectionLock].
      */
     internal fun applyDeltaToFocusedField(delta: BufferDelta): InjectionMethod {
         if (delta.isNoOp) return InjectionMethod.NONE
+        // Secure/password fields take the dedicated full-sync path (which verifies input focus,
+        // matches package name on EditorInfo, and skips clipboard fallback).
         if (CoverInputSessionManager.sessionState.value.metadata.isPassword) {
             return syncTextToFocusedField(delta.new)
         }
@@ -1380,8 +1640,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
 
     /**
      * Push [delta] through the target's [android.view.inputmethod.InputConnection]
-     * using `setSelection` + `deleteSurroundingText` + `commitText` on the
-     * delta substring only.
+     * using `setSelection` + `commitText` on the delta substring only.
      *
      * Reconciles overlay expectations with the target's live selection by
      * reading `getSurroundingText` first: if the app or user has moved the
@@ -1417,7 +1676,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
             connection.setSelection(start, end)
             if (end > start) {
                 // deleteSurroundingText deletes chars *around* the caret; since
-                // we just selected [start, end], delete the selection by
+                // we just selected [start, end], deleting the selection by
                 // committing an empty string first is safer than trying to
                 // interpret surrounding semantics with a range selection.
                 connection.commitText("", 1, null)
@@ -1445,6 +1704,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Updates the selection caret on [targetFocusedNode] via `ACTION_SET_SELECTION`. */
     private fun setSelectionOnCachedNode(caret: Int) {
         val node = targetFocusedNode ?: return
         runCatching {
@@ -1526,6 +1786,16 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return InjectionMethod.NONE
     }
 
+    /**
+     * Last-resort text injection fallback using [ClipboardManager] and
+     * [AccessibilityNodeInfo.ACTION_PASTE].
+     *
+     * Refuses password/secure fields (both via session metadata and a fresh [CoverFieldMetadata]
+     * check on the resolved node) so sensitive input is never written to the shared system
+     * clipboard. Because [ClipboardManager.setPrimaryClip] replaces the current primary clip
+     * without saving/restoring any prior clipboard item, this channel is only attempted when
+     * `InputConnection` and `ACTION_SET_TEXT` both fail, or when the user explicitly pastes.
+     */
     fun injectViaClipboard(text: String): Boolean {
         if (CoverInputSessionManager.sessionState.value.metadata.isPassword) {
             Log.w(TAG, "Clipboard fallback refused for secure field")
@@ -1607,6 +1877,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
      * primary Paste button when pasting without picking a specific history entry. */
     fun currentClipboardText(): String? = readClipboardText()
 
+    /** Reads item 0 from [ClipboardManager.getPrimaryClip] coerced to plain text, or `null`. */
     private fun readClipboardText(): String? {
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         val clip = clipboard.primaryClip ?: return null
@@ -1614,6 +1885,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return runCatching { clip.getItemAt(0).coerceToText(this)?.toString() }.getOrNull()
     }
 
+    /** Formats a node's advertised `AccessibilityAction` IDs into a readable log string. */
     private fun describeNodeActions(node: AccessibilityNodeInfo): String =
         runCatching {
             node.actionList.joinToString(",") { action ->
@@ -1633,14 +1905,16 @@ class CoverInputAccessibilityService : AccessibilityService() {
 
     /**
      * Locates the editable target field the user tapped on. On multi-display Samsung
-     * devices, once our TYPE_ACCESSIBILITY_OVERLAY keyboard is attached on display 1,
-     * `rootInActiveWindow` frequently resolves to our own compose overlay instead of
-     * the underlying app window, causing ACTION_SET_TEXT to silently fail. To work
+     * devices, once our `TYPE_ACCESSIBILITY_OVERLAY` keyboard is attached on display 1,
+     * `rootInActiveWindow` frequently resolves to our own Compose overlay instead of
+     * the underlying app window, causing `ACTION_SET_TEXT` to silently fail. To work
      * around that we:
-     *  1. Trust the cached node captured at focus time if it still refreshes and is editable.
-     *  2. Walk every interactive window (FLAG_RETRIEVE_INTERACTIVE_WINDOWS) across all
-     *     displays, skipping any window owned by our own package, and pick the first
-     *     editable focused node (or any editable node if focus was stolen).
+     *  1. Trust the cached node captured at focus time ([targetFocusedNode]) if [AccessibilityNodeInfo.refresh]
+     *     succeeds and the node remains editable (and focused in `targetPackage` when [requireInputFocus] is true).
+     *  2. Walk interactive windows returned by `AccessibilityService.getWindows()` (enabled by
+     *     `FLAG_RETRIEVE_INTERACTIVE_WINDOWS`, distinct from API 30+ `getWindowsOnAllDisplays()`),
+     *     skipping any window owned by our own package, and pick the first editable `FOCUS_INPUT`
+     *     node (or any editable node via [findEditableNode] when [requireInputFocus] is false).
      *  3. Fall back to `rootInActiveWindow` as a last resort.
      */
     private fun resolveTargetInputNode(requireInputFocus: Boolean = false): AccessibilityNodeInfo? {
@@ -1655,6 +1929,8 @@ class CoverInputAccessibilityService : AccessibilityService() {
         }
 
         val ownPackage = this.packageName
+        // Enumerate interactive AccessibilityWindowInfo entries rather than relying solely on
+        // rootInActiveWindow, which is often shadowed by our own overlay window.
         val windowList = runCatching { windows }.getOrNull().orEmpty()
         for (window in windowList) {
             val root = runCatching { window.root }.getOrNull() ?: continue
@@ -1688,10 +1964,19 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return null
     }
 
+    /** Dispatches the active field's resolved IME action (`imeAction` from session metadata). */
     fun dispatchActionDone() {
         dispatchImeAction(CoverInputSessionManager.sessionState.value.metadata.imeAction)
     }
 
+    /**
+     * Triggers the editor's IME action (`GO`, `SEARCH`, `SEND`, `NEXT`, `DONE`).
+     *
+     * Prefers `InputConnection.performEditorAction`; if unavailable, falls back to
+     * [accessibilityActionForIme] (`ACTION_IME_ENTER`, `focusSearch(View.FOCUS_FORWARD)` +
+     * `ACTION_FOCUS` / `ACTION_NEXT_HTML_ELEMENT` with `ACTION_ARGUMENT_HTML_ELEMENT_STRING`,
+     * or `ACTION_CLICK`).
+     */
     fun dispatchImeAction(action: Int) {
         val resolved = action and EditorInfo.IME_MASK_ACTION
         val actionName = when (resolved) {
@@ -1729,10 +2014,20 @@ class CoverInputAccessibilityService : AccessibilityService() {
         Log.d(TAG, "dispatchImeAction resolved=$actionName performed=$performed")
     }
 
+    /** Returns `true` only for events originating on the outer cover display ([COVER_DISPLAY_ID]). */
     private fun isCoverScreenEvent(event: AccessibilityEvent): Boolean {
         return event.displayId == COVER_DISPLAY_ID
     }
 
+    /**
+     * Handles `TYPE_VIEW_FOCUSED` and `TYPE_VIEW_CLICKED` events on the cover display.
+     *
+     * - Non-editable focus events inside the active session's package arm [focusLossGate] and
+     *   kick off [scheduleFocusLossVerification] instead of dismissing immediately.
+     * - Editable nodes cancel pending focus-loss verification, refresh and cache
+     *   [targetFocusedNode], open the [fieldFocusClaimedAtMs] grace window before suppressing
+     *   HoneyBoard, and attach the cover keyboard via [CoverInputSessionManager.onFieldFocused].
+     */
     private fun handleFocusOrClickEvent(event: AccessibilityEvent) {
         val targetPackage = CoverInputSessionManager.sessionState.value.metadata.packageName
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED &&
@@ -1772,6 +2067,8 @@ class CoverInputAccessibilityService : AccessibilityService() {
             suppressHoneyBoardSoftKeyboard()
 
             val metadata = CoverFieldMetadata.fromNode(editableNode).let { fromNode ->
+                // Supplement node extras with live EditorInfo.imeOptions when available from
+                // FLAG_INPUT_METHOD_EDITOR so the keyboard's action key matches the editor.
                 val editorInfo = runCatching { inputMethod?.currentInputEditorInfo }.getOrNull()
                 val editorAction = editorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
                 if (editorInfo?.packageName == fromNode.packageName &&
@@ -1784,11 +2081,13 @@ class CoverInputAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Observes `TYPE_VIEW_TEXT_CHANGED` events and filters echoes produced by our own injections. */
     private fun handleTextChangedEvent(event: AccessibilityEvent) {
         val eventText = event.text?.joinToString("") ?: return
         if (CoverInputSessionManager.isRecentSelfEcho(eventText)) return
     }
 
+    /** Depth-first search for the first editable descendant starting from [node]. */
     private fun findEditableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         if (node.isEditable) return node
         for (i in 0 until node.childCount) {
@@ -1799,6 +2098,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return null
     }
 
+    /** Returns the refreshed cached [targetFocusedNode] or queries `rootInActiveWindow` for `FOCUS_INPUT`. */
     private fun getOrRefreshFocusedNode(): AccessibilityNodeInfo? {
         val cached = targetFocusedNode
         if (cached != null && cached.refresh() && cached.isEditable) {
@@ -1815,6 +2115,11 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return null
     }
 
+    /**
+     * Tracks foreground window changes on the cover display, triggers incoming-call overlay
+     * passthrough, and debounces cover-home/launcher surface detection before reclaiming the
+     * Cover-Screen-OS launcher overlay.
+     */
     private fun processForegroundTrackingAndReclaim(event: AccessibilityEvent, foregroundPackage: String) {
         val isWindowEvent = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
@@ -1888,6 +2193,8 @@ class CoverInputAccessibilityService : AccessibilityService() {
         } else {
             Long.MAX_VALUE
         }
+        // Guard against reclaiming the overlay immediately after a user app was active, avoiding
+        // flicker during brief transition windows back from an app.
         if (lastKnownUserAppPackage != null && userAppAgeMs < RECENT_USER_APP_GUARD_MS) {
             return
         }
@@ -1898,6 +2205,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
         ForegroundService.requestOverlayReclaim(reason = foregroundPackage)
     }
 
+    /** Suppresses duplicate gesture IDs arriving within [GESTURE_DEBOUNCE_MS]. */
     private fun shouldDebounceGesture(gestureId: Int): Boolean {
         val now = SystemClock.elapsedRealtime()
         val isRepeated = lastGestureId == gestureId && (now - lastGestureAtMs) < GESTURE_DEBOUNCE_MS
@@ -1906,6 +2214,7 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return isRepeated
     }
 
+    /** Throttles repeated global accessibility actions within [ACTION_THROTTLE_MS]. */
     private fun shouldThrottleGlobalAction(): Boolean {
         val now = SystemClock.elapsedRealtime()
         val throttled = (now - lastActionAtMs) < ACTION_THROTTLE_MS
@@ -1915,11 +2224,13 @@ class CoverInputAccessibilityService : AccessibilityService() {
         return throttled
     }
 
+    /** Returns `true` when [packageName]/[className] represents the stock cover home surface. */
     private fun shouldRequestOverlayReclaim(packageName: String, className: String? = null): Boolean {
         return CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className) ||
             OVERLAY_RECLAIM_PACKAGE_PREFIXES.any { prefix -> packageName.startsWith(prefix) }
     }
 
+    /** Returns `true` when [packageName] represents a third-party user app rather than system/cover UI. */
     private fun shouldTrackAsUserForegroundApp(packageName: String, className: String? = null): Boolean {
         if (CoverHomeSurfaceMatcher.isCoverHomeDestination(packageName, className)) {
             return false
@@ -1932,11 +2243,21 @@ class CoverInputAccessibilityService : AccessibilityService() {
         reclaimCandidateSinceElapsedMs = 0L
     }
 
+    /** Returns `true` when [packageName] belongs to an incoming call / dialer UI that needs passthrough. */
     private fun shouldAllowIncomingCallSurface(packageName: String): Boolean {
         return CallPackageMatchers.isIncomingCallPackage(packageName)
     }
 }
 
+/**
+ * Hosts and manages the Compose-based cover keyboard window (`TYPE_ACCESSIBILITY_OVERLAY`)
+ * attached to the secondary cover display via [CoverComposeSurface].
+ *
+ * Uses [WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH] so taps outside the keyboard
+ * trigger deferred focus-loss verification ([CoverInputSessionManager.onOutsideTouch]) without
+ * stealing focus from the underlying editor, and toggles `FLAG_SECURE` via
+ * [CoverComposeSurface.setSecure] whenever a password field is active.
+ */
 class CoverKeyboardOverlayManager(private val context: AccessibilityService) {
 
     private val surface = CoverComposeSurface(
@@ -1953,6 +2274,14 @@ class CoverKeyboardOverlayManager(private val context: AccessibilityService) {
         cutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
     )
 
+    /**
+     * Attaches or updates the keyboard overlay on the cover display.
+     *
+     * @param isPassword Enables `FLAG_SECURE` on the overlay window so password masks and key
+     *   presses are excluded from screenshots/screen recordings.
+     * @return `true` if the overlay is attached on the cover display, `false` if no usable cover
+     *   display exists or window attachment fails.
+     */
     fun showOverlay(isPassword: Boolean = false): Boolean {
         val display = displayHelper.getCoverDisplay()
             ?: run {
@@ -1960,6 +2289,7 @@ class CoverKeyboardOverlayManager(private val context: AccessibilityService) {
                 return false
             }
 
+        // Reuse the existing window when already attached to the same display; only update security flags.
         if (surface.isAttached() && surface.activeDisplayId() == display.displayId) {
             if (surface.setSecure(isPassword)) return true
             surface.detach()
@@ -1986,17 +2316,30 @@ class CoverKeyboardOverlayManager(private val context: AccessibilityService) {
         return attached
     }
 
+    /** Returns `true` while the overlay view is currently attached to the window manager. */
     fun isAttached(): Boolean = surface.isAttached()
 
+    /** Detaches the keyboard overlay from the cover display without destroying manager state. */
     fun hideOverlay() {
         surface.detach()
     }
 
+    /** Detaches any active surface when the hosting [CoverInputAccessibilityService] unbinds. */
     fun destroy() {
         surface.detach()
     }
 }
 
+/**
+ * Root Compose UI for the cover-screen virtual keyboard overlay.
+ *
+ * Renders:
+ * - [CoverInputHeader]: connection status indicator, mode switcher chips (`123` / `T9` / `ABC` /
+ *   `SYS`), and close button.
+ * - [CoverLiveBufferDisplay]: live mirrored buffer (masked with `*` for password fields).
+ * - Mode-specific [CoverFlorisKeyboardSurface]: numeric PIN keypad, T9 multi-tap/predictive keypad,
+ *   or full QWERTY keyboard with NLP suggestions, glide typing, and clipboard history toolbar.
+ */
 @Composable
 fun CoverKeyboardOverlayRoot(
     onDismiss: () -> Unit,
@@ -2055,6 +2398,8 @@ fun CoverKeyboardOverlayRoot(
             val context = LocalContext.current
             val settingsStore = remember(context) { LauncherSettingsStore(context.applicationContext) }
             val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
+            // Scope bound to this overlay composition for persisting user keyboard adjustments
+            // (height, one-handed mode, dock anchor) asynchronously to DataStore.
             val coroutineScope = rememberCoroutineScope()
             val bridge = remember {
                 CoverEditorBridge(
@@ -2325,6 +2670,10 @@ fun CoverKeyboardOverlayRoot(
     }
 }
 
+/**
+ * Compact header bar showing the target app package + injection status dot, keypad mode chips
+ * (`123`, `T9`, `ABC`, `SYS`), and a dismiss button.
+ */
 @Composable
 private fun CoverInputHeader(
     metadata: CoverFieldMetadata,
@@ -2409,6 +2758,7 @@ private fun CoverInputHeader(
     }
 }
 
+/** Selectable pill button used in [CoverInputHeader] to switch keyboard modes. */
 @Composable
 private fun ModeChip(
     label: String,
@@ -2432,6 +2782,10 @@ private fun ModeChip(
     }
 }
 
+/**
+ * Live preview strip displaying the cover keyboard's local [buffer] (masked with `*` for
+ * password inputs, or falling back to [hint] when empty) via [ComposingTextPreview].
+ */
 @Composable
 private fun CoverLiveBufferDisplay(
     buffer: String,

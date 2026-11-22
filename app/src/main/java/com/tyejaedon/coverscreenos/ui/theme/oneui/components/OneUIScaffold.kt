@@ -53,20 +53,29 @@ class OneUICollapsingHeaderState(
     val maxExpandedHeightPx: Float,
     val minCollapsedHeightPx: Float
 ) {
+    /** Accumulated vertical collapse distance in pixels (`0f` = fully expanded). */
     var scrollOffset by mutableFloatStateOf(0f)
         private set
 
+    /** Total pixel travel between expanded and collapsed header states (clamped >= 1f to prevent /0). */
     val collapseRangePx: Float
         get() = (maxExpandedHeightPx - minCollapsedHeightPx).coerceAtLeast(1f)
 
+    /** Normalized progress in `0f..1f` (`0f` = fully expanded viewing area, `1f` = pinned bar). */
     val collapseFraction: Float
         get() = (scrollOffset / collapseRangePx).coerceIn(0f, 1f)
 
+    /** Interpolated header height in pixels driven by [scrollOffset]. */
     val currentHeightPx: Float
         get() = (maxExpandedHeightPx - scrollOffset).coerceIn(minCollapsedHeightPx, maxExpandedHeightPx)
 
+    /**
+     * [NestedScrollConnection] attached to the scaffold root so upward/downward scroll gestures
+     * collapse or expand the Viewing Area before child scrollable lists consume remaining delta.
+     */
     val nestedScrollConnection = object : NestedScrollConnection {
         override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+            // Upward finger drag yields negative available.y, so negate it to grow scrollOffset.
             val delta = -available.y
             val previousOffset = scrollOffset
             scrollOffset = (scrollOffset + delta).coerceIn(0f, collapseRangePx)
@@ -76,6 +85,10 @@ class OneUICollapsingHeaderState(
     }
 }
 
+/**
+ * Remembers a [OneUICollapsingHeaderState] converted to pixels via [LocalDensity],
+ * using compact cover-display header bounds when `screenHeightDp <= 480`.
+ */
 @Composable
 fun rememberOneUICollapsingHeaderState(
     expandedHeight: Dp = if (LocalConfiguration.current.screenHeightDp <= 480) 52.dp else 180.dp,
@@ -113,6 +126,7 @@ fun OneUIScaffold(
 ) {
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
+    // Combine statusBars and displayCutout top insets so the header clears both status icons and camera/hinge cutouts.
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
     val cutoutPadding = WindowInsets.displayCutout.asPaddingValues()
     val topInset = maxOf(statusBarPadding.calculateTopPadding(), cutoutPadding.calculateTopPadding())
@@ -127,6 +141,7 @@ fun OneUIScaffold(
             .background(OneUITheme.colors.canvasBackground)
             .nestedScroll(headerState.nestedScrollConnection)
     ) {
+        // Responsive breakpoints: wide tablets/unfolded inner screens vs compact outer cover displays.
         val isWide = maxWidth >= 600.dp
         val isCompactHeight = maxHeight <= 480.dp
         val showFloatingNowPill = nowPill != null && !isCompactHeight
@@ -145,9 +160,11 @@ fun OneUIScaffold(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    // Constrain maximum card column width on wide screens while filling narrow displays.
                     .widthIn(max = OneUITheme.dimensions.maxCardWidth)
                     .padding(start = startPadding, end = endPadding)
             ) {
+                // Supply bottom PaddingValues matching whichever floating bottom bars are active so list ends scroll clear.
                 val bottomContentPadding = when {
                     floatingNavBar != null && showFloatingNowPill -> OneUITheme.dimensions.floatingNavHeight + OneUITheme.dimensions.nowPillHeight + 48.dp
                     floatingNavBar != null -> OneUITheme.dimensions.floatingNavHeight + 32.dp
@@ -167,6 +184,7 @@ fun OneUIScaffold(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(effectiveTopBarHeight + topInset)
+                // Transition header surface from canvasBackground to elevated cardSurface once mostly collapsed.
                 .background(
                     if (isCompactHeight || fraction > 0.85f) OneUITheme.colors.cardSurface else OneUITheme.colors.canvasBackground
                 )
@@ -190,6 +208,7 @@ fun OneUIScaffold(
                         navigationIcon()
                         Spacer(modifier = Modifier.height(1.dp).padding(end = 8.dp))
                     }
+                    // Cross-fade collapsed toolbar title in as the expanded Viewing Area collapses.
                     Text(
                         text = title,
                         style = OneUITheme.typography.titleLarge,
@@ -247,6 +266,7 @@ fun OneUIScaffold(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
+                    // WindowInsets.safeDrawing keeps the floating pill clear of system gesture/nav bars.
                     .padding(bottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding() + 16.dp)
             ) {
                 floatingNavBar()
@@ -255,6 +275,10 @@ fun OneUIScaffold(
     }
 }
 
+/**
+ * Dual-mode `@Preview` showcasing [OneUIScaffold]'s Viewing-to-Interaction layout
+ * across Light and OLED Dark themes.
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable

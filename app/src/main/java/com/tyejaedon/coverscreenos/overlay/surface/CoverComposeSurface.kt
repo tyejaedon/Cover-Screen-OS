@@ -24,6 +24,12 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 
+/**
+ * Window layout configuration for [CoverComposeSurface] instances attached via `WindowManager`.
+ *
+ * Defaults target full-screen secondary-display overlays extending into display cutouts
+ * without stealing IME/key focus ([WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE]).
+ */
 internal data class CoverSurfaceWindowConfig(
     val width: Int = WindowManager.LayoutParams.MATCH_PARENT,
     val height: Int = WindowManager.LayoutParams.MATCH_PARENT,
@@ -32,6 +38,10 @@ internal data class CoverSurfaceWindowConfig(
     val windowAnimations: Int = 0,
     val cutoutMode: Int = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
 ) {
+    /**
+     * Builds the combined `WindowManager.LayoutParams.flags` bitmask for this surface,
+     * optionally adding [WindowManager.LayoutParams.FLAG_SECURE] when [secure] is `true`.
+     */
     fun flags(secure: Boolean): Int =
         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -43,6 +53,13 @@ internal data class CoverSurfaceWindowConfig(
  * Host-agnostic Compose overlay surface. Owns exactly one [ComposeView],
  * one [LifecycleOwner] / [SavedStateRegistryOwner] / [ViewModelStoreOwner],
  * and one [WindowManager.LayoutParams].
+ *
+ * Because a `Service` or `AccessibilityService` has no `Activity` or `Fragment` host,
+ * Jetpack Compose needs custom view-tree owners and a display-scoped window context to
+ * compose, collect lifecycle-aware flows (`collectAsStateWithLifecycle`), and tear down
+ * cleanly. [CoverSurfaceLifecycleOwner] supplies [LifecycleOwner], [SavedStateRegistryOwner],
+ * and [ViewModelStoreOwner] directly on the root [ComposeView]; back/gesture navigation for
+ * the overlay is routed externally by [com.tyejaedon.coverscreenos.overlay.CoverAccessibilityService].
  *
  * Constructed once per host (e.g. [android.app.Service] or
  * [android.accessibilityservice.AccessibilityService]) and reused across
@@ -70,10 +87,13 @@ internal class CoverComposeSurface(
     private var secureRequested: Boolean = false
 
     /**
-     * Attach a Compose subtree to the given [display]. Returns false and
-     * logs when the underlying window context cannot be created or the
-     * platform rejects the token — the caller should treat this as a
-     * hard failure. No silent fallback.
+     * Attaches a Compose subtree to the given secondary [display].
+     *
+     * Builds a display-scoped [Context] via [Context.createDisplayContext] followed by a
+     * window-scoped [Context] via [Context.createWindowContext] for [windowType] so the
+     * resolved [WindowManager] targets [display] rather than `DEFAULT_DISPLAY`. Returns `false`
+     * and logs when the underlying window context cannot be created or the platform rejects
+     * the token — the caller should treat this as a hard failure with no silent fallback.
      */
     fun attach(
         display: Display,
@@ -88,6 +108,7 @@ internal class CoverComposeSurface(
             secureRequested = preserveSecure
         }
 
+        // Bind Context -> Display -> WindowContext so WindowManager resolves to the cover display.
         val displayContext = hostContext.createDisplayContext(display)
         val builtWindowContext = runCatching {
             displayContext.createWindowContext(windowType, /* options = */ null)
@@ -109,7 +130,9 @@ internal class CoverComposeSurface(
         val owner = CoverSurfaceLifecycleOwner()
 
         val view = ComposeView(builtWindowContext).apply {
+            // Dispose the composition when WindowManager removes the root view from the display.
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            // Wire AndroidX view-tree owners required by Compose and lifecycle-aware collectors.
             setViewTreeLifecycleOwner(owner)
             setViewTreeSavedStateRegistryOwner(owner)
             setViewTreeViewModelStoreOwner(owner)
@@ -173,6 +196,10 @@ internal class CoverComposeSurface(
         }
     }
 
+    /**
+     * Disposes the Compose composition, removes the view from [WindowManager], destroys
+     * [CoverSurfaceLifecycleOwner] (clearing its [ViewModelStore]), and resets internal state.
+     */
     fun detach() {
         val view = composeView
         val wm = windowManager
@@ -191,6 +218,12 @@ internal class CoverComposeSurface(
         }
     }
 
+    /**
+     * Toggles whether the overlay intercepts touch events and is visible on screen.
+     *
+     * If called before the [ComposeView] finishes attaching to `WindowManager`, the
+     * requested state is stored in [deferredTouchable] and applied once attached.
+     */
     fun setTouchable(touchable: Boolean) {
         val view = composeView
         if (view == null) {
@@ -205,6 +238,12 @@ internal class CoverComposeSurface(
         applyTouchable(touchable)
     }
 
+    /**
+     * Updates [WindowManager.LayoutParams.FLAG_SECURE] on the overlay window.
+     *
+     * If the surface is not yet attached, caches [secure] in [secureRequested] for the
+     * next [attach] call; when attached, applies the flag live via [WindowManager.updateViewLayout].
+     */
     fun setSecure(secure: Boolean): Boolean {
         val view = composeView
         if (view == null) {
@@ -237,16 +276,27 @@ internal class CoverComposeSurface(
         }
     }
 
+    /** Returns the [Display] ID to which this surface is currently attached, or `null`. */
     fun activeDisplayId(): Int? = activeDisplayId
 
+    /** Returns `true` when the underlying [ComposeView] is actively attached to a window. */
     fun isAttached(): Boolean = composeView?.isAttachedToWindow == true
 
+    /** Exposes the internal [CoverSurfaceLifecycleOwner] for unit and Robolectric tests. */
     @VisibleForTesting
     internal fun lifecycleOwnerForTest(): LifecycleOwner? = lifecycleOwner
 
+    /** Exposes the pending or active `FLAG_SECURE` state for unit and Robolectric tests. */
     @VisibleForTesting
     internal fun secureRequestedForTest(): Boolean = secureRequested
 
+    /**
+     * Applies touch suppression without detaching the Compose tree.
+     *
+     * Toggles [WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE] and `view.alpha` (`1f` vs `0f`)
+     * while pausing/resuming [lifecycleOwner] so lifecycle-aware flows stop unnecessary work
+     * while a cover app owns the foreground.
+     */
     private fun applyTouchable(touchable: Boolean) {
         val view = composeView ?: return
         val manager = windowManager ?: return
@@ -263,6 +313,7 @@ internal class CoverComposeSurface(
         val shouldUpdateLayout = params.flags != updatedFlags
         params.flags = updatedFlags
 
+        // Keep View.VISIBLE and toggle alpha so WindowManager preserves the window layout.
         view.visibility = View.VISIBLE
         view.alpha = if (touchable) 1f else 0f
         isTouchable = touchable
@@ -282,6 +333,7 @@ internal class CoverComposeSurface(
         }
     }
 
+    /** Clears view, window, and lifecycle references after [detach] or failed [attach]. */
     private fun resetInternalState() {
         composeView = null
         windowManager = null
@@ -329,22 +381,26 @@ internal class CoverComposeSurface(
             get() = savedStateController.savedStateRegistry
         override val viewModelStore: ViewModelStore get() = store
 
+        /** Advances the surface lifecycle to [Lifecycle.State.RESUMED] after `WindowManager.addView`. */
         fun start() {
             registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
             registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
             registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         }
 
+        /** Moves the surface to [Lifecycle.State.CREATED] while suppressed behind another app. */
         fun pause() {
             registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
             registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         }
 
+        /** Restores the surface to [Lifecycle.State.RESUMED] when the launcher becomes touchable again. */
         fun resume() {
             registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
             registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         }
 
+        /** Moves the surface to [Lifecycle.State.DESTROYED] and clears its [ViewModelStore]. */
         fun destroy() {
             registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
             store.clear()

@@ -72,8 +72,12 @@ import com.tyejaedon.coverscreenos.ui.customize.CustomizeScreen
 import com.tyejaedon.coverscreenos.ui.about.AboutScreen
 import kotlinx.coroutines.launch
 
+/**
+ * Metadata binding a top-level [HomeRoutes] destination to its tab label and Material icon.
+ */
 private data class HomeTab(val route: String, @StringRes val title: Int, val icon: ImageVector)
 
+// Ordered list driving the bottom nav bar, navigation rail, and horizontal swipe navigation.
 private val homeTabs = listOf(
     HomeTab(HomeRoutes.Dashboard, R.string.home_dashboard, Icons.Default.DashboardCustomize),
     HomeTab(HomeRoutes.Customize, R.string.home_customize, Icons.Default.Palette),
@@ -81,9 +85,18 @@ private val homeTabs = listOf(
     HomeTab(HomeRoutes.About, R.string.home_about, Icons.Default.Info)
 )
 
+/**
+ * Returns `true` only when DataStore confirms the welcome tour has not been seen (`seen == false`,
+ * ignoring the initial `null` loading state), the activity was not entered via deep link, and the
+ * user has not dismissed it during this UI session.
+ */
 internal fun shouldShowWelcomeTour(seen: Boolean?, deepLinkLaunch: Boolean, dismissed: Boolean): Boolean =
     seen == false && !deepLinkLaunch && !dismissed
 
+/**
+ * Unwraps nested [ContextWrapper] layers to inspect the hosting [Activity]'s launch [Intent] and
+ * report whether the app was opened directly via a deep link (`ACTION_VIEW` with a URI).
+ */
 private fun isDeepLinkLaunch(context: Context): Boolean {
     var current: Context? = context
     while (current is ContextWrapper) {
@@ -95,6 +108,9 @@ private fun isDeepLinkLaunch(context: Context): Boolean {
     return false
 }
 
+/**
+ * Switches between top-level tabs while preserving and restoring each tab's back stack state.
+ */
 private fun NavController.navigateToTab(route: String) {
     navigate(route) {
         popUpTo(graph.startDestinationId) { saveState = true }
@@ -103,6 +119,15 @@ private fun NavController.navigateToTab(route: String) {
     }
 }
 
+/**
+ * Root adaptive navigation shell for the phone-side companion UI of Cover Screen OS.
+ *
+ * Hosts a Material3 [Scaffold] switching between [OneUIFloatingNavBar] on compact widths
+ * (`< 600.dp`) and a [NavigationRail] on expanded widths (`>= 600.dp`), wires the [NavHost]
+ * across [HomeRoutes] (`Dashboard`, `Permissions`, nested [CustomizeCategory] subgraph, and
+ * `About`), auto-starts [ForegroundServiceHelper] once required permissions are satisfied, and
+ * surfaces [WelcomeHomeTour] on first launch.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppShell(
@@ -112,14 +137,18 @@ fun AppShell(
 ) {
     val context = LocalContext.current
     val tourStore = remember(context) { LauncherSettingsStore(context) }
+    // Start at `null` so the welcome sheet never flashes before DataStore emits its stored value.
     val tourSeen by tourStore.welcomeTourSeen.collectAsState(initial = null)
     val deepLinkLaunch = remember(context) { isDeepLinkLaunch(context) }
     var tourDismissed by rememberSaveable { mutableStateOf(false) }
+    // Incremented whenever PermissionsScreen updates grants so rememberDashboardState re-polls immediately.
     var permissionRefreshKey by remember { mutableIntStateOf(0) }
     val dashboardState = rememberDashboardState(permissionRefreshKey)
+    // Capture startDestination once so later permission changes do not reset the NavHost graph.
     val startDestination = remember {
         HomeRoutes.initialDestination(dashboardState.permissions.missing.isNotEmpty())
     }
+    // Automatically start the cover foreground service as soon as all required grants become active.
     LaunchedEffect(dashboardState.permissions.missing.isEmpty()) {
         if (dashboardState.permissions.missing.isEmpty() && !ForegroundServiceHelper.isForegroundServiceRunning()) {
             ForegroundServiceHelper.startForegroundService(context)
@@ -128,16 +157,20 @@ fun AppShell(
     val navController = rememberNavController()
     val customizeActionScope = rememberCoroutineScope()
     val customizeSnackbar = remember { SnackbarHostState() }
+    // Retain per-category scroll offsets across nested CustomizeCategory switches and configuration changes.
     var categoryScrollPositions by rememberSaveable {
         mutableStateOf(IntArray(CustomizeCategory.entries.size))
     }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
+    // Match against destination.hierarchy so nested CustomizeCategory routes still highlight Customize.
     val selectedTab = homeTabs.firstOrNull { tab ->
         destination?.hierarchy?.any { it.route == tab.route } == true
     } ?: homeTabs.first { it.route == startDestination }
 
     BoxWithConstraints(modifier = modifier) {
+        // Material3 responsive breakpoints: switch to NavigationRail on medium/expanded widths
+        // (>= 600.dp) and tighten bottom bar spacing on compact-height viewports (<= 480.dp).
         val expanded = maxWidth >= 600.dp
         val isCompactHeight = maxHeight <= 480.dp
         val navItems = homeTabs.map {
@@ -156,6 +189,7 @@ fun AppShell(
                         selectedRoute = selectedTab.route,
                         onItemSelected = { navController.navigateToTab(it) },
                         modifier = Modifier
+                            // Keep the floating nav bar clear of system gesture bars and display cutouts.
                             .windowInsetsPadding(
                                 WindowInsets.safeDrawing.only(
                                     WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal
@@ -189,6 +223,7 @@ fun AppShell(
                     navController = navController,
                     startDestination = startDestination,
                     modifier = Modifier.weight(1f).testTag("home_tab_content")
+                        // Support horizontal swipe gestures across top-level tabs beyond a 72.dp threshold.
                         .pointerInput(selectedTab.route) {
                             var distance = 0f
                             detectHorizontalDragGestures(
@@ -232,6 +267,7 @@ fun AppShell(
                             onPermissionsChanged = { permissionRefreshKey++ }
                         )
                     }
+                    // Nested navigation subgraph grouping all CustomizeCategory destinations under Customize.
                     navigation(
                         route = HomeRoutes.Customize,
                         startDestination = CustomizeCategory.WALLPAPER.route,
@@ -287,6 +323,7 @@ fun AppShell(
                 }
             }
         }
+        // Overlay the first-run welcome sheet above the Scaffold and persist completion in DataStore.
         if (shouldShowWelcomeTour(tourSeen, deepLinkLaunch, tourDismissed)) {
             WelcomeHomeTour(onDismiss = {
                 tourDismissed = true

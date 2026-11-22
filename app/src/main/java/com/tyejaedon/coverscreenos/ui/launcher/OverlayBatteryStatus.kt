@@ -33,16 +33,27 @@ import com.tyejaedon.coverscreenos.ui.theme.oneui.CoverOneUIType
 import com.tyejaedon.coverscreenos.ui.theme.oneui.oneUiChip
 import kotlin.math.roundToInt
 
+/**
+ * Immutable snapshot of battery charge percentage and charging state for the cover status bar.
+ */
 internal data class BatteryStatusSnapshot(
     val levelPercent: Int,
     val isCharging: Boolean
 )
 
+/**
+ * Observes live device battery updates in Compose via [Intent.ACTION_BATTERY_CHANGED].
+ *
+ * Seeds initial state synchronously from Android's sticky broadcast via [readBatteryStatus], then
+ * uses a [DisposableEffect] keyed on [LocalContext] to register a non-exported
+ * `BroadcastReceiver` (`Context.RECEIVER_NOT_EXPORTED`) and unregister it on composition exit.
+ */
 @Composable
 internal fun rememberBatteryStatus(): BatteryStatusSnapshot? {
     val context = LocalContext.current
     var status by remember(context) { mutableStateOf(readBatteryStatus(context)) }
 
+    // Register for live ACTION_BATTERY_CHANGED updates while composed and unregister in onDispose.
     DisposableEffect(context) {
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -50,6 +61,7 @@ internal fun rememberBatteryStatus(): BatteryStatusSnapshot? {
             }
         }
         val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        // RECEIVER_NOT_EXPORTED restricts third-party broadcasts while still receiving system stickies.
         val stickyIntent = context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         if (stickyIntent != null) {
             status = resolveBatteryStatusSnapshot(stickyIntent)
@@ -62,6 +74,10 @@ internal fun rememberBatteryStatus(): BatteryStatusSnapshot? {
     return status
 }
 
+/**
+ * Peeks the latest sticky [Intent.ACTION_BATTERY_CHANGED] broadcast without registering a
+ * persistent receiver by passing `null` to `Context.registerReceiver`.
+ */
 private fun readBatteryStatus(context: Context): BatteryStatusSnapshot? {
     val stickyIntent = context.registerReceiver(
         null,
@@ -71,6 +87,10 @@ private fun readBatteryStatus(context: Context): BatteryStatusSnapshot? {
     return resolveBatteryStatusSnapshot(stickyIntent)
 }
 
+/**
+ * Extracts normalized percentage and charging status from [BatteryManager] extras in an
+ * [Intent.ACTION_BATTERY_CHANGED] intent, returning `null` if level/scale extras are invalid.
+ */
 private fun resolveBatteryStatusSnapshot(intent: Intent?): BatteryStatusSnapshot? {
     intent ?: return null
     val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
@@ -84,6 +104,11 @@ private fun resolveBatteryStatusSnapshot(intent: Intent?): BatteryStatusSnapshot
     return BatteryStatusSnapshot(levelPercent = levelPercent, isCharging = isCharging)
 }
 
+/**
+ * Compact One UI chip displaying a proportional battery gauge and charge percentage label.
+ *
+ * Highlights low battery (`<= 15%`) in destructive red and active charging in the charging accent.
+ */
 @Composable
 internal fun BatteryStatusPill(status: BatteryStatusSnapshot, modifier: Modifier = Modifier) {
     val levelFraction = (status.levelPercent / 100f).coerceIn(0f, 1f)

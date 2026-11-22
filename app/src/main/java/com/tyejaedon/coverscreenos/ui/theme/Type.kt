@@ -5,6 +5,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
+/**
+ * Base Material 3 [Typography] instance supplied to [androidx.compose.material3.MaterialTheme]
+ * by [CoverOSTheme]. Cover-specific visual hierarchy uses [CoverOSTextStyles].
+ */
 val CoverOSTypography = Typography()
 
 /**
@@ -17,6 +21,7 @@ val CoverOSTypography = Typography()
  */
 object CoverOSTextStyles {
 
+    /** Oversized light-weight clock readout with tight negative tracking (`-0.5.sp`) for large numerals. */
     val ClockText = TextStyle(
         fontSize = 42.sp,
         fontWeight = FontWeight.Light,
@@ -24,18 +29,21 @@ object CoverOSTextStyles {
         lineHeight = 58.sp
     )
 
+    /** Compact medium-weight date subtitle anchored directly below the cover clock. */
     val DateText = TextStyle(
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.2.sp
     )
 
+    /** Small launcher icon label sized for tight multi-column cover grids while remaining legible. */
     val AppLabelText = TextStyle(
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.1.sp
     )
 
+    /** Semi-bold section header with expanded tracking (`0.6.sp`) for group labels on compact screens. */
     val SectionLabelText = TextStyle(
         fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,

@@ -18,6 +18,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.overlay.OverlayEvent
 
+/**
+ * Expandable debug card listing recent [OverlayEvent] descriptions recorded by `ForegroundService`.
+ *
+ * Constrains the nested [LazyColumn] height to `240.dp` so it can live safely inside the
+ * outer scrollable dashboard list without unbounded height measurement.
+ */
 @Composable
 fun RecentActivityCard(events: List<OverlayEvent>, modifier: Modifier = Modifier) {
     var expanded by remember { mutableStateOf(false) }

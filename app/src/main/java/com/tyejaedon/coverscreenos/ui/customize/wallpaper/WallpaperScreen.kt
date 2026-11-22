@@ -23,6 +23,14 @@ import com.tyejaedon.coverscreenos.datastore.MIN_WALLPAPER_DIM_AMOUNT
 import com.tyejaedon.coverscreenos.datastore.WallpaperScaleMode
 import java.io.IOException
 
+/**
+ * Wallpaper customization category screen backed by [LauncherSettingsStore].
+ *
+ * Launches a Storage Access Framework document picker ([ActivityResultContracts.OpenDocument]) for
+ * images, GIFs, and videos, imports the chosen URI into app-managed storage via
+ * `store.importWallpaperFromUri`, and coordinates draft preview state with DataStore commits for
+ * crop, zoom, rotation, dim, and blur controls.
+ */
 @Composable
 internal fun WallpaperScreen(
     store: LauncherSettingsStore,
@@ -30,6 +38,7 @@ internal fun WallpaperScreen(
     onAction: (String?, suspend () -> Unit) -> Unit
 ) {
     var importing by remember { mutableStateOf(false) }
+    // Local draft states mirror persisted settings so dragging/sliding stays responsive without disk churn.
     var scale by remember(settings.wallpaperScaleMode) { mutableStateOf(settings.wallpaperScaleMode) }
     var dim by remember(settings.wallpaperDimAmount) {
         mutableFloatStateOf(
@@ -50,12 +59,14 @@ internal fun WallpaperScreen(
     var zoom by remember(settings.wallpaperZoom) { mutableFloatStateOf(settings.wallpaperZoom) }
     var rotation by remember(settings.wallpaperRotation) { mutableIntStateOf(settings.wallpaperRotation) }
     var showCropDialog by rememberSaveable { mutableStateOf(false) }
+    // OpenDocument lets the user select images, animated GIFs, or video files via the system file picker.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && !importing) {
             importing = true
             onAction("Wallpaper updated") {
                 try {
                     store.importWallpaperFromUri(uri)
+                    // Open the interactive crop editor right after a newly imported wallpaper succeeds.
                     showCropDialog = true
                 } finally {
                     importing = false
@@ -105,6 +116,7 @@ internal fun WallpaperScreen(
             cropX = x
             cropY = y
         },
+        // Commit crop/zoom/dim/blur to DataStore only when the user finishes dragging or sliding.
         onCropCommit = { x, y ->
             cropX = x
             cropY = y

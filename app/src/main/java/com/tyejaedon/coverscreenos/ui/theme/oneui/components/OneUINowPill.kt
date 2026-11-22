@@ -49,6 +49,7 @@ fun OneUINowPill(
     onClick: (() -> Unit)? = null
 ) {
     val accent = OneUITheme.colors.accent
+    // Cache the gradient stroke Brush so recompositions only rebuild it if the active theme accent changes.
     val borderBrush = remember(accent) {
         Brush.linearGradient(
             colors = listOf(
@@ -70,6 +71,7 @@ fun OneUINowPill(
             .clip(CircleShape)
             .border(1.5.dp, borderBrush, CircleShape)
             .then(
+                // Attach One UI press feedback + ripple-free click handling only when an action callback is provided.
                 if (onClick != null) {
                     Modifier
                         .oneUIPressable(interactionSource = interactionSource)
@@ -88,6 +90,7 @@ fun OneUINowPill(
             horizontalArrangement = Arrangement.Center
         ) {
             if (icon != null) {
+                // Decorative status indicator; adjacent Text conveys full semantics to accessibility services.
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
@@ -124,6 +127,7 @@ fun OneUIEncircledActionIcon(
             .size(OneUITheme.dimensions.encircledIconSize)
             .clip(CircleShape)
             .background(containerColor)
+            // Replace default Material ripple with One UI scale/luminance press feedback.
             .oneUIPressable(interactionSource = interactionSource)
             .clickable(
                 interactionSource = interactionSource,
@@ -141,6 +145,9 @@ fun OneUIEncircledActionIcon(
     }
 }
 
+/**
+ * Dual-mode `@Preview` showing [OneUINowPill] in Light and OLED Dark themes.
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable

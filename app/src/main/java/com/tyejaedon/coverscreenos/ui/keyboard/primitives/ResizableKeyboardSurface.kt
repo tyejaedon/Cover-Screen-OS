@@ -42,14 +42,20 @@ private val HEIGHT_PRESETS = listOf(
     STANDARD_EXTRA_KEY_HEIGHT_DP,
     TALL_EXTRA_KEY_HEIGHT_DP
 )
+
+// Horizontal width fraction occupied by key rows when one-handed mode is enabled.
 private const val ONE_HANDED_WIDTH_FRACTION = 0.8f
 
 /**
  * Phase D: the slim control row rendered above a keyboard's key rows. It holds the resize
  * grip, the one-handed toggle and an optional [trailingContent] slot (used for the small
- * copy/cut/paste icons). Dragging the grip vertically free-resizes [extraHeightDp] within
- * `[MIN_EXTRA_KEY_HEIGHT_DP, MAX_EXTRA_KEY_HEIGHT_DP]`, firing [onHaptic] whenever the drag
- * crosses a preset boundary (mirroring Samsung Keyboard's resize-tick feedback).
+ * copy/cut/paste icons).
+ *
+ * Uses Compose `pointerInput` + `detectVerticalDragGestures` on the `"keyboard_resize_grip"`
+ * handle to free-resize [extraHeightDp] within `[MIN_EXTRA_KEY_HEIGHT_DP, MAX_EXTRA_KEY_HEIGHT_DP]`,
+ * firing [onHaptic] whenever the drag crosses a preset boundary (mirroring Samsung Keyboard's
+ * resize-tick feedback). Also exposes `"keyboard_one_handed_toggle"` and
+ * `"keyboard_one_handed_anchor_swap"` test tags.
  */
 @Composable
 fun ResizableKeyboardSurfaceControls(
@@ -64,6 +70,7 @@ fun ResizableKeyboardSurfaceControls(
     trailingContent: (@Composable RowScope.() -> Unit)? = null
 ) {
     val density = LocalDensity.current
+    // Keep latest callbacks inside pointerInput(Unit) so height updates don't cancel active drags.
     val onExtraHeightChangedState = rememberUpdatedState(onExtraHeightChanged)
     val onHapticState = rememberUpdatedState(onHaptic)
 
@@ -83,12 +90,14 @@ fun ResizableKeyboardSurfaceControls(
                     detectVerticalDragGestures(
                         onDragStart = { lastSnappedPreset = roundToNearestPreset(extraHeightDp) },
                         onVerticalDrag = { change, dragAmount ->
+                            // Consume the drag event so ancestor scroll/pager containers do not intercept it.
                             change.consume()
                             // Dragging the grip *up* should grow the keyboard (standard
                             // bottom-sheet drag-handle convention), hence the negation.
                             val deltaDp = with(density) { -dragAmount.toDp().value }
                             val next = normalizeExtraKeyHeightDp(extraHeightDp + deltaDp)
                             onExtraHeightChangedState.value(next)
+                            // Emit a haptic detent only when crossing into a new preset bucket.
                             val nearestPreset = roundToNearestPreset(next)
                             if (abs(nearestPreset - lastSnappedPreset) >= STANDARD_EXTRA_KEY_HEIGHT_DP / 2) {
                                 lastSnappedPreset = nearestPreset
@@ -139,6 +148,9 @@ fun ResizableKeyboardSurfaceControls(
     }
 }
 
+/**
+ * Compact selectable pill chip used for toggles in [ResizableKeyboardSurfaceControls].
+ */
 @Composable
 private fun ControlChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
@@ -193,5 +205,6 @@ fun OneHandedKeyboardBox(
     }
 }
 
+/** Snaps [extraDp] to the nearest value in [HEIGHT_PRESETS] for haptic detent tracking. */
 private fun roundToNearestPreset(extraDp: Float): Float =
     HEIGHT_PRESETS.minByOrNull { abs(it - extraDp) } ?: COMPACT_EXTRA_KEY_HEIGHT_DP

@@ -35,13 +35,14 @@ import androidx.compose.ui.unit.sp
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 
 /**
- * Horizontally scrollable strip of candidate suggestions. Fixed ~32dp tall,
- * one chip per candidate. Highlighting the selected index gives predictive
- * input engines a way to render "hero" candidates without duplicating the
- * chip layout.
+ * Horizontally scrollable strip of candidate suggestions backed by [LazyRow]. Fixed ~32dp tall
+ * by default, one chip per candidate. Highlighting [selectedIndex] gives predictive input engines
+ * a way to render "hero" candidates without duplicating the chip layout.
  *
- * The strip renders a stable container even when [suggestions] is empty so
- * that the surrounding keyboard layout does not reflow.
+ * Fires [hapticTier] feedback (defaults to [HapticTier.Light]) on candidate selection and supports
+ * optional long-press [onLearn] / [onSuppress] dictionary actions via [SuggestionChip].
+ * The strip renders a stable container even when [suggestions] is empty so that the surrounding
+ * keyboard layout does not reflow.
  */
 @Composable
 fun SuggestionStrip(
@@ -64,6 +65,7 @@ fun SuggestionStrip(
             .height(stripHeight)
             .background(MaterialTheme.colorScheme.surface)
     ) {
+        // Keep the Box height reserved while empty to prevent vertical layout jumps.
         if (suggestions.isEmpty()) return@Box
 
         LazyRow(
@@ -89,6 +91,12 @@ fun SuggestionStrip(
     }
 }
 
+/**
+ * Individual candidate pill inside [SuggestionStrip].
+ *
+ * Uses `combinedClickable` so normal taps commit the candidate while long-presses open an
+ * anchored Material 3 [DropdownMenu] exposing optional dictionary learn/suppress actions.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SuggestionChip(
@@ -109,6 +117,7 @@ private fun SuggestionChip(
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
+    // Outer Box anchors the DropdownMenu directly to this chip's layout bounds.
     Box {
         Box(
             modifier = Modifier
@@ -118,6 +127,7 @@ private fun SuggestionChip(
                 .combinedClickable(
                     role = Role.Button,
                     onClick = onClick,
+                    // Attach onLongClick only when at least one dictionary action is provided.
                     onLongClick = if (onLearn != null || onSuppress != null) {
                         { menuExpanded = true }
                     } else null
@@ -147,8 +157,10 @@ private fun SuggestionChip(
     }
 }
 
+/** Default height (in dp) reserved by [SuggestionStrip] whether populated or empty. */
 internal const val DefaultStripHeightDp: Int = 32
 
+/** Compose preview of [SuggestionStrip] with a highlighted candidate. */
 @Preview(showBackground = true, name = "SuggestionStrip — populated")
 @Composable
 private fun SuggestionStripPreview() {
@@ -161,6 +173,7 @@ private fun SuggestionStripPreview() {
     }
 }
 
+/** Compose preview of [SuggestionStrip] showing its reserved empty-state container. */
 @Preview(showBackground = true, name = "SuggestionStrip — empty")
 @Composable
 private fun SuggestionStripEmptyPreview() {

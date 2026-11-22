@@ -19,7 +19,15 @@ import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberHapticPerforme
 /**
  * Predictions for the T9 keypad, backed by `:keyboard-floris` [FlorisSmartbar] and
  * [CoverKeyboardNlpManager].
- * [onCandidateCommitted] replaces the current word at the host's caret.
+ *
+ * Selects suggestion mode in priority order:
+ * 1. T9 digit-sequence predictions when [predictiveDigits] is non-empty.
+ * 2. Prefix/typo completions for the trailing letter run in [textBeforeCursor].
+ * 3. Next-word predictions seeded from the last completed word before whitespace.
+ *
+ * Refreshes contact-name entries automatically via [rememberContactSuggestionRevision], triggers
+ * [HapticTier.Light] feedback through [FlorisSmartbar], and applies `"keyboard_t9_suggestions"`
+ * as the Compose `testTag`. [onCandidateCommitted] replaces the current word at the host's caret.
  */
 @Composable
 internal fun CoverT9SuggestionStrip(
@@ -33,12 +41,14 @@ internal fun CoverT9SuggestionStrip(
 
     val context = LocalContext.current
     val contactRevision = rememberContactSuggestionRevision(enabled)
+    // Ensure the NLP dictionary is loaded and resync contact names on preference/permission changes.
     LaunchedEffect(context, contactRevision) {
         CoverKeyboardNlpManager.initializeFromContext(context)
         runCatching { CoverKeyboardNlpManager.refreshContactWords(context) }
     }
 
     val haptic = rememberHapticPerformer(HapticTier.Light)
+    // Bumped after dictionary edits or stale-candidate hits to force suggestion recomputation.
     var revision by remember { mutableIntStateOf(0) }
     val word = textBeforeCursor.takeLastWhile { it.isLetter() }
     val suggestions = remember(textBeforeCursor, predictiveDigits, revision, contactRevision) {
@@ -55,6 +65,7 @@ internal fun CoverT9SuggestionStrip(
         candidates = suggestions,
         selectedIndex = if (word.isNotEmpty()) 0 else -1,
         onCandidateSelected = { _, candidate ->
+            // Re-verify dictionary availability before committing in case contact/user words mutated.
             if (CoverKeyboardNlpManager.isWordAvailable(candidate)) {
                 onCandidateCommitted(candidate)
             } else {

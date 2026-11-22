@@ -41,6 +41,13 @@ internal class CoverLaunchCoordinator(
         }
     }
 
+    /**
+     * Begins a coordinated launch for [packageName] on the main thread.
+     *
+     * Rejects overlapping launches while [activeLaunchPackage] is non-null, invokes
+     * `onBeginLaunch` to suppress the overlay before Activity dispatch, and locks
+     * [activeLaunchPackage] if suppression succeeds.
+     */
     fun beginLaunch(packageName: String): Boolean {
         if (!isMainThreadGuarded("beginLaunch", packageName)) {
             return false
@@ -58,6 +65,10 @@ internal class CoverLaunchCoordinator(
         return canLaunch
     }
 
+    /**
+     * Finalizes an in-flight launch initiated by [beginLaunch], releasing the single-flight
+     * lock and notifying either `onLaunchDispatched` or `onLaunchFailed`.
+     */
     fun completeLaunch(packageName: String, launchDispatched: Boolean) {
         val calledFromMainThread = isMainThreadGuarded("completeLaunch", packageName)
 
@@ -82,6 +93,10 @@ internal class CoverLaunchCoordinator(
         }
     }
 
+    /**
+     * Enforces main-thread execution for coordinator state changes. Throws in debug builds
+     * when [debugThrowOnThreadViolation] is enabled, or drops the request in release builds.
+     */
     private fun isMainThreadGuarded(actionName: String, packageName: String): Boolean {
         if (isMainThread()) return true
 

@@ -77,6 +77,7 @@ fun ComposingTextPreview(
         )
     }
 
+    // Mask password characters before measurement so character count and line wrapping match.
     val displayText = if (isPassword) "•".repeat(text.length) else text
     val isEmpty = displayText.isEmpty()
     val shown = if (isEmpty) placeholder else displayText
@@ -94,9 +95,11 @@ fun ComposingTextPreview(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                // Clamp viewport height to the current line budget using measured line height.
                 .heightIn(max = with(density) { (lineHeightPx * visibleLines).toDp() })
                 .verticalScroll(scrollState)
                 .then(
+                    // Expose expand/collapse click semantics only when text actually overflows.
                     if (isTruncatable) {
                         Modifier.clickable(role = Role.Button) { expanded = !expanded }
                     } else Modifier
@@ -111,6 +114,7 @@ fun ComposingTextPreview(
                 onTextLayout = { result: TextLayoutResult ->
                     totalLineCount = result.lineCount
                     if (result.lineCount > 0) {
+                        // Derive average rendered line height from TextLayoutResult for font-scale accuracy.
                         lineHeightPx = result.size.height / result.lineCount.toFloat()
                     }
                 }
@@ -142,8 +146,10 @@ fun ComposingTextPreview(
     }
 }
 
+// Compact metadata font size for the character count and line-expansion indicator row.
 private val CounterFontSize = 10.sp
 
+/** Compose preview of [ComposingTextPreview] with a short single-line buffer. */
 @Preview(showBackground = true, name = "ComposingTextPreview — short")
 @Composable
 private fun ComposingTextPreviewShortPreview() {
@@ -152,6 +158,7 @@ private fun ComposingTextPreviewShortPreview() {
     }
 }
 
+/** Compose preview of [ComposingTextPreview] demonstrating multi-line truncation and toggle hint. */
 @Preview(showBackground = true, name = "ComposingTextPreview — long, collapsed")
 @Composable
 private fun ComposingTextPreviewLongPreview() {

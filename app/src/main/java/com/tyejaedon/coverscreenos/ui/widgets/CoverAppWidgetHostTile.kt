@@ -54,6 +54,14 @@ import kotlin.math.roundToInt
 
 private val WIDGET_CORNER_RADIUS = 18.dp
 
+/**
+ * Scrollable cover-screen tile hosting user-pinned Android `AppWidget` views in a two-column
+ * masonry grid ([CoverWidgetTwoColumnGrid]) over a Haze glassmorphic backdrop.
+ *
+ * Bridges legacy [AppWidgetHostView] instances into Compose via [AndroidView], clips them with a
+ * hardware-accelerated [ViewOutlineProvider], and updates each widget's responsive dp size bounds
+ * via [AppWidgetHostView.updateAppWidgetSize].
+ */
 @Composable
 fun CoverAppWidgetHostTile(
     widgetIds: List<Int>,
@@ -146,6 +154,7 @@ fun CoverAppWidgetHostTile(
             }
         } else {
             val configuration = LocalConfiguration.current
+            // Account for 12dp horizontal grid padding on each side and cap widget height at ~68% of cover screen.
             val availableWidthDp = (configuration.screenWidthDp - 24).coerceAtLeast(180)
             val maxSlotHeightDp = (configuration.screenHeightDp * 0.68f)
                 .roundToInt()
@@ -197,8 +206,10 @@ fun CoverAppWidgetHostTile(
                                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                                     ViewGroup.LayoutParams.MATCH_PARENT
                                                 )
+                                                // Clip RemoteViews at the Android View layer because Compose clip alone does not clip native children cleanly on all API levels.
                                                 clipToOutline = true
                                                 outlineProvider = RoundedWidgetOutlineProvider(cornerRadiusPx)
+                                                // Detach from any previous wrapper if Compose recreates the AndroidView node.
                                                 (widgetView.parent as? ViewGroup)?.removeView(widgetView)
                                                 addView(widgetView)
                                             }
@@ -215,6 +226,7 @@ fun CoverAppWidgetHostTile(
                                                     spec.widgetWidthDp.toFloat(),
                                                     spec.widgetHeightDp.toFloat()
                                                 )
+                                                // Deduplicate size updates via View.tag to avoid spamming AppWidgetService IPC on recomposition.
                                                 if (widgetView.tag != targetSize) {
                                                     widgetView.tag = targetSize
                                                     widgetView.updateAppWidgetSize(Bundle(), listOf(targetSize))
@@ -291,6 +303,12 @@ fun CoverAppWidgetHostTile(
     }
 }
 
+/**
+ * Custom Compose [Layout] implementing a two-column masonry grid driven by [packTwoColumnGrid].
+ *
+ * Each child composable is measured with exact [Constraints.fixed] bounds and positioned using
+ * RTL-aware [placeRelative] coordinates.
+ */
 @Composable
 private fun CoverWidgetTwoColumnGrid(
     specs: List<WidgetPlacementSpec>,
@@ -327,6 +345,7 @@ private fun CoverWidgetTwoColumnGrid(
     }
 }
 
+/** Clips legacy `AppWidgetHostView` containers to a rounded rectangle matching Compose tiles. */
 private class RoundedWidgetOutlineProvider(
     val radiusPx: Float
 ) : ViewOutlineProvider() {

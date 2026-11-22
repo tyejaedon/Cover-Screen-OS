@@ -42,6 +42,7 @@ fun OneUICardGroup(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.Top
     ) {
+        // Section header sits outside the rounded card container, aligned with the card's internal text column.
         if (!header.isNullOrBlank()) {
             Text(
                 text = header.uppercase(),
@@ -51,6 +52,7 @@ fun OneUICardGroup(
             )
         }
 
+        // Material 3 Surface handles shape clipping, background fill, hairline border, and LocalContentColor propagation.
         Surface(
             shape = shape,
             color = containerColor,
@@ -78,6 +80,7 @@ fun OneUIInternalDivider(
     indent: Dp = OneUITheme.dimensions.internalDividerIndent,
     color: Color = OneUITheme.colors.hairlineBorder
 ) {
+    // Inset horizontally so dividers align with row content instead of touching the card's rounded border.
     HorizontalDivider(
         modifier = modifier.padding(horizontal = indent),
         thickness = 1.dp,
@@ -85,6 +88,10 @@ fun OneUIInternalDivider(
     )
 }
 
+/**
+ * Dual-mode Android Studio `@Preview` comparing [OneUICardGroup] and [OneUIInternalDivider]
+ * across Light Mode (`UI_MODE_NIGHT_NO`) and OLED Dark Mode (`UI_MODE_NIGHT_YES`).
+ */
 @Preview(name = "Light Mode", uiMode = Configuration.UI_MODE_NIGHT_NO, showBackground = true)
 @Preview(name = "OLED Dark Mode", uiMode = Configuration.UI_MODE_NIGHT_YES, showBackground = true)
 @Composable
