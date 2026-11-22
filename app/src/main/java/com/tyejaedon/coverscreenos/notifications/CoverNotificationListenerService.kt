@@ -21,6 +21,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.annotation.RequiresApi
+import com.tyejaedon.coverscreenos.models.CoverMediaCustomAction
 import com.tyejaedon.coverscreenos.models.CoverMediaModel
 import com.tyejaedon.coverscreenos.models.CoverMediaTransportAction
 import com.tyejaedon.coverscreenos.models.CoverNotificationModel
@@ -85,8 +86,29 @@ class CoverNotificationListenerService : NotificationListenerService() {
             val isPlaying: Boolean,
             val canPlayPause: Boolean,
             val canSkipPrevious: Boolean,
-            val canSkipNext: Boolean
+            val canSkipNext: Boolean,
+            val canSeek: Boolean = false
         )
+
+        private val STANDARD_MEDIA_TRANSPORT_LABELS = setOf(
+            "play",
+            "pause",
+            "play/pause",
+            "previous",
+            "prev",
+            "skip to previous",
+            "next",
+            "skip to next",
+            "stop"
+        )
+
+        /**
+         * Returns `true` if [label] corresponds to a primary transport button already rendered
+         * by the cover player (`PREVIOUS`, `PLAY_PAUSE`, `NEXT`, `STOP`).
+         */
+        internal fun isStandardMediaTransportLabel(label: String): Boolean {
+            return label.trim().lowercase() in STANDARD_MEDIA_TRANSPORT_LABELS
+        }
 
         /**
          * Returns `true` when a notification attaches a [MediaSession.Token] and does not belong
@@ -119,11 +141,13 @@ class CoverNotificationListenerService : NotificationListenerService() {
                 )) != 0L
             val canSkipPrevious = (actions and PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0L
             val canSkipNext = (actions and PlaybackState.ACTION_SKIP_TO_NEXT) != 0L
+            val canSeek = (actions and PlaybackState.ACTION_SEEK_TO) != 0L
             return MediaPlaybackCapabilities(
                 isPlaying = isPlaying,
                 canPlayPause = canPlayPause,
                 canSkipPrevious = canSkipPrevious,
-                canSkipNext = canSkipNext
+                canSkipNext = canSkipNext,
+                canSeek = canSeek
             )
         }
 
@@ -265,17 +289,33 @@ class CoverNotificationListenerService : NotificationListenerService() {
         }
 
         /**
-         * Dispatches a play/pause or track-skip command to the [MediaController] bound to
-         * [notificationKey].
+         * Dispatches a play/pause, track-skip, seek, custom-session, or notification action
+         * command to the media session or notification bound to [notificationKey].
          */
         fun performMediaTransportAction(
             notificationKey: String,
             action: CoverMediaTransportAction
         ): Boolean {
             val service = activeService ?: return false
+            if (action is CoverMediaTransportAction.NotificationAction) {
+                val targetSbn = service.findNotificationByKey(notificationKey) ?: return false
+                val pendingIntent = targetSbn.notification.actions?.getOrNull(action.index)?.actionIntent
+                    ?: return false
+                return runCatching {
+                    pendingIntent.send(service, 0, null, null, null, null, createPendingIntentLaunchOptions())
+                    true
+                }.getOrElse { error ->
+                    Log.w(
+                        NOTIFICATION_LOG_TAG,
+                        "Media notification action failed key=$notificationKey index=${action.index} error=${error.message}"
+                    )
+                    false
+                }
+            }
+
             // MediaController handle bound to the media app's active MediaSession.Token.
             val controller = service.resolveMediaController(notificationKey) ?: return false
-            // TransportControls interface translating play/pause/skip commands to the media app.
+            // TransportControls interface translating play/pause/skip/seek/custom commands to the media app.
             val controls = controller.transportControls
             val playbackState = runCatching { controller.playbackState }.getOrNull()
             val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING ||
@@ -287,6 +327,16 @@ class CoverNotificationListenerService : NotificationListenerService() {
                     }
                     CoverMediaTransportAction.PREVIOUS -> controls.skipToPrevious()
                     CoverMediaTransportAction.NEXT -> controls.skipToNext()
+                    is CoverMediaTransportAction.SeekTo -> controls.seekTo(action.positionMs.coerceAtLeast(0L))
+                    is CoverMediaTransportAction.CustomAction -> {
+                        val matching = playbackState?.customActions?.firstOrNull { it.action == action.action }
+                        if (matching != null) {
+                            controls.sendCustomAction(matching, matching.extras)
+                        } else {
+                            controls.sendCustomAction(action.action, null)
+                        }
+                    }
+                    is CoverMediaTransportAction.NotificationAction -> Unit
                 }
                 true
             }.getOrElse { error ->
@@ -640,6 +690,19 @@ class CoverNotificationListenerService : NotificationListenerService() {
                 )
                 ?: mediaArtistExtra.ifEmpty { resolvedText.ifEmpty { null } }
             val mediaArtwork = resolveMediaArtwork(notification, extras, metadata)
+            val durationMs = metadata
+                ?.getLong(MediaMetadata.METADATA_KEY_DURATION)
+                ?.takeIf { it > 0L }
+                ?: 0L
+            val positionMs = playbackState?.position?.takeIf { it >= 0L }
+                ?: PlaybackState.PLAYBACK_POSITION_UNKNOWN
+            val playbackSpeed = playbackState?.playbackSpeed ?: 0f
+            val positionUpdateTimeMs = playbackState?.lastPositionUpdateTime ?: 0L
+            val customActions = resolveCustomActions(
+                packageName = packageName,
+                notification = notification,
+                playbackState = playbackState
+            )
 
             CoverMediaModel(
                 title = mediaTitle,
@@ -648,7 +711,13 @@ class CoverNotificationListenerService : NotificationListenerService() {
                 canPlayPause = capabilities.canPlayPause,
                 canSkipPrevious = capabilities.canSkipPrevious,
                 canSkipNext = capabilities.canSkipNext,
-                artworkBitmap = mediaArtwork
+                artworkBitmap = mediaArtwork,
+                durationMs = durationMs,
+                positionMs = positionMs,
+                playbackSpeed = playbackSpeed,
+                positionUpdateTimeMs = positionUpdateTimeMs,
+                canSeek = capabilities.canSeek,
+                customActions = customActions
             )
         } else {
             null
@@ -678,6 +747,64 @@ class CoverNotificationListenerService : NotificationListenerService() {
             .asSequence()
             .mapNotNull { key -> getString(key)?.trim()?.takeIf { it.isNotEmpty() } }
             .firstOrNull()
+    }
+
+    /**
+     * Collects extra media controls (e.g. shuffle, repeat, favorite) from
+     * [PlaybackState.getCustomActions] and non-standard [Notification.actions], deduplicated by
+     * normalized label so primary transport buttons are not repeated.
+     */
+    private fun resolveCustomActions(
+        packageName: String,
+        notification: Notification,
+        playbackState: PlaybackState?
+    ): List<CoverMediaCustomAction> {
+        val result = mutableListOf<CoverMediaCustomAction>()
+        val seenLabels = mutableSetOf<String>()
+
+        playbackState?.customActions.orEmpty().forEach { customAction ->
+            val actionId = customAction.action?.trim().orEmpty()
+            if (actionId.isEmpty()) return@forEach
+            val label = customAction.name?.toString()?.trim().orEmpty().ifEmpty { actionId }
+            val normalizedLabel = label.lowercase()
+            if (isStandardMediaTransportLabel(normalizedLabel) || !seenLabels.add(normalizedLabel)) {
+                return@forEach
+            }
+            val iconBitmap = if (customAction.icon != 0) {
+                runCatching { Icon.createWithResource(packageName, customAction.icon) }
+                    .getOrNull()
+                    ?.let { icon -> iconToBitmap(icon) }
+            } else {
+                null
+            }
+            result += CoverMediaCustomAction(
+                id = "custom:$actionId",
+                label = label,
+                iconBitmap = iconBitmap,
+                transportAction = CoverMediaTransportAction.CustomAction(actionId)
+            )
+        }
+
+        notification.actions.orEmpty().forEachIndexed { index, notifAction ->
+            if (notifAction.actionIntent == null) return@forEachIndexed
+            val label = notifAction.title?.toString()?.trim().orEmpty()
+            if (label.isEmpty()) return@forEachIndexed
+            val normalizedLabel = label.lowercase()
+            if (isStandardMediaTransportLabel(normalizedLabel) || !seenLabels.add(normalizedLabel)) {
+                return@forEachIndexed
+            }
+            val iconBitmap = runCatching { notifAction.getIcon() }
+                .getOrNull()
+                ?.let { icon -> iconToBitmap(icon) }
+            result += CoverMediaCustomAction(
+                id = "notif:$index:$normalizedLabel",
+                label = label,
+                iconBitmap = iconBitmap,
+                transportAction = CoverMediaTransportAction.NotificationAction(index)
+            )
+        }
+
+        return result
     }
 
     /**
