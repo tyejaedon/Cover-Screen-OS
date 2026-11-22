@@ -421,6 +421,8 @@ fun CoverFlorisKeyboardSurface(
                             inputManager.resetT9Composing()
                         }
                     } else null,
+                    isVoiceInputActive = customization.isVoiceInputActive,
+                    onVoiceInputToggle = customization.onVoiceInputToggle,
                     onDismissRequest = onDismissRequest,
                     onHaptic = ::performFeedback,
                     themePalette = themePalette,

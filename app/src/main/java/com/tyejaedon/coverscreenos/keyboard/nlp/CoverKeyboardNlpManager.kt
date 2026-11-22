@@ -7,13 +7,17 @@ import android.content.pm.PackageManager
 import android.provider.ContactsContract
 import android.util.Log
 import androidx.compose.ui.geometry.Offset
+import com.tyejaedon.coverscreenos.keyboard.core.contracts.CandidateWord
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.File
 import java.util.Locale
 import java.util.zip.GZIPInputStream
 
@@ -35,15 +39,36 @@ object CoverKeyboardNlpManager {
     private const val KEY_LEARNED = "learned"
     private const val KEY_SUPPRESSED = "suppressed"
     private const val KEY_INCLUDE_CONTACTS = "include_contact_names"
+    private const val MMAP_CACHE_FILE = "trie_mmap_v1.bin"
+    private const val MMAP_META_FILE = "trie_mmap_v1.meta"
+    private const val MMAP_REBUILD_DEBOUNCE_MS = 400L
 
     // Dedicated background scope so corpus decompression and ContactProvider queries never block IME startup.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     // Mutual-exclusion lock ensuring concurrent callers wait rather than initializing assets twice.
     private val initMutex = Mutex()
+    // Serializes background mmap trie rebuilds after dynamic learned-word or contact updates.
+    private val mmapWriteMutex = Mutex()
 
     /** Guards asynchronous asset initialization so it executes once per process. */
     @Volatile
     private var isInitialized = false
+
+    /**
+     * Set whenever [trieDictionary] receives dynamic words (via [learnWord] or
+     * [refreshContactWords]) that are not yet reflected in [binaryTrie]. Queries merge dynamic
+     * trie hits over mmap hits until the background cache rebuild completes.
+     */
+    @Volatile
+    private var hasUnmappedDynamicMutations = false
+
+    // Cached application context used to schedule debounced mmap cache rebuilds after word mutations.
+    @Volatile
+    private var cachedAppContext: Context? = null
+
+    // Debounced background rebuild job for `trie_mmap_v1.bin`.
+    @Volatile
+    private var pendingRebuildJob: Job? = null
 
     // Minimal high-frequency English seed used immediately before async asset loading finishes.
     private val defaultCorpus: Map<String, Long> = mapOf(
@@ -97,6 +122,8 @@ object CoverKeyboardNlpManager {
      * indexing contact names into the NLP dictionary.
      */
     fun refreshContactWords(context: Context, includeContactNames: Boolean? = null) {
+        val appContext = context.applicationContext
+        cachedAppContext = appContext
         val preferences = context.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
         sharedPreferences = preferences
         val savedConsent = preferences.getBoolean(KEY_INCLUDE_CONTACTS, false)
@@ -112,7 +139,9 @@ object CoverKeyboardNlpManager {
             preferences.getBoolean(KEY_INCLUDE_CONTACTS, false) &&
                 context.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
         }
+        var contactsMutated = false
         synchronized(learnedWords) {
+            val previousContacts = contactOnlyWords.toSet()
             contactOnlyWords.clear()
             if (shouldIncludeContacts) {
                 runCatching {
@@ -135,6 +164,14 @@ object CoverKeyboardNlpManager {
                     }
                 }
             }
+            contactsMutated = contactOnlyWords != previousContacts
+            if (contactsMutated) {
+                hasUnmappedDynamicMutations = true
+                t9Engine = T9PredictiveEngine(trieDictionary, learnedWords.toSet(), suppressedWords.toSet())
+            }
+        }
+        if (contactsMutated && isInitialized) {
+            scheduleMmapRebuild(appContext)
         }
     }
 
@@ -145,6 +182,7 @@ object CoverKeyboardNlpManager {
      */
     fun initializeFromContext(context: Context) {
         val appContext = context.applicationContext
+        cachedAppContext = appContext
         val prefs = appContext.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
         sharedPreferences = prefs
         synchronized(learnedWords) {
@@ -161,11 +199,16 @@ object CoverKeyboardNlpManager {
                 try {
                     loadBigramCorpus(appContext)
 
-                    // On-disk memory-mapped Trie cache built from the combined vocabulary on first run.
-                    val cacheFile = java.io.File(appContext.cacheDir, "trie_mmap_v1.bin")
+                    // On-disk memory-mapped Trie cache built from the combined vocabulary and
+                    // validated against a deterministic vocabulary fingerprint sidecar.
+                    val cacheFile = File(appContext.cacheDir, MMAP_CACHE_FILE)
+                    val metaFile = File(appContext.cacheDir, MMAP_META_FILE)
                     // Combined word -> frequency table merged across assets, installed apps, contacts, and learned words.
                     val frequencies = HashMap<String, Long>(20000)
                     frequencies.putAll(defaultCorpus)
+                    val loadedBaseWords = HashSet<String>(20000)
+                    val loadedAppTokens = HashSet<String>()
+                    val loadedContactOnlyWords = HashSet<String>()
 
                     // 1. Load the GZIP-compressed base English frequency lexicon (`word freq` lines).
                     runCatching {
@@ -176,6 +219,7 @@ object CoverKeyboardNlpManager {
                                 val freq = parts.getOrNull(1)?.toLongOrNull() ?: 1L
                                 if (!word.isNullOrEmpty() && word.all { it in 'a'..'z' }) {
                                     frequencies[word] = freq
+                                    loadedBaseWords.add(word)
                                 }
                             }
                         }
@@ -189,8 +233,11 @@ object CoverKeyboardNlpManager {
                             val label = appContext.packageManager.getApplicationLabel(info).toString()
                             label.split(Regex("[^A-Za-z]+")).forEach { token ->
                                 val normalized = token.lowercase(Locale.ROOT)
-                                if (normalized.length > 1 && normalized !in frequencies) {
-                                    frequencies[normalized] = 50_000L
+                                if (normalized.length > 1) {
+                                    loadedAppTokens.add(normalized)
+                                    if (normalized !in frequencies) {
+                                        frequencies[normalized] = 50_000L
+                                    }
                                 }
                             }
                         }
@@ -212,6 +259,9 @@ object CoverKeyboardNlpManager {
                                         val normalized = token.lowercase(Locale.ROOT)
                                         if (normalized.length > 1) {
                                             frequencies[normalized] = maxOf(frequencies[normalized] ?: 0L, 120_000L)
+                                            if (normalized !in loadedBaseWords && !defaultCorpus.containsKey(normalized)) {
+                                                loadedContactOnlyWords.add(normalized)
+                                            }
                                         }
                                     }
                                 }
@@ -220,8 +270,16 @@ object CoverKeyboardNlpManager {
                     }
 
                     // 4. Boost user-learned words above typical dictionary frequencies.
-                    val currentLearned = synchronized(learnedWords) { learnedWords.toSet() }
-                    val currentSuppressed = synchronized(learnedWords) { suppressedWords.toSet() }
+                    val currentLearned: Set<String>
+                    val currentSuppressed: Set<String>
+                    synchronized(learnedWords) {
+                        baseCorpusWords.clear()
+                        baseCorpusWords.addAll(loadedBaseWords)
+                        contactOnlyWords.clear()
+                        contactOnlyWords.addAll(loadedContactOnlyWords)
+                        currentLearned = learnedWords.toSet()
+                        currentSuppressed = suppressedWords.toSet()
+                    }
                     currentLearned.forEach { word ->
                         frequencies[word] = maxOf(frequencies[word] ?: 0L, 500_000L)
                     }
@@ -231,12 +289,27 @@ object CoverKeyboardNlpManager {
                     val newT9 = T9PredictiveEngine(newTrie, currentLearned, currentSuppressed)
                     val newGlide = DTWGlideDecoder(newTrie)
 
-                    // Persist and memory-map the compiled Trie for fast lookups across IME restarts.
+                    // Rebuild the memory-mapped Trie whenever missing, truncated, or stale relative
+                    // to the current learned words, suppressed words, installed apps, or contacts.
+                    val fingerprint = computeVocabularyFingerprint(
+                        learned = currentLearned,
+                        suppressed = currentSuppressed,
+                        appTokens = loadedAppTokens,
+                        contactTokens = loadedContactOnlyWords
+                    )
                     runCatching {
-                        if (!cacheFile.exists() || cacheFile.length() < BinaryTrieDictionary.HEADER_SIZE) {
-                            BinaryTrieDictionary.writeToFile(newTrie, cacheFile)
+                        val storedFingerprint = if (metaFile.exists()) {
+                            runCatching { metaFile.readText() }.getOrNull()
+                        } else null
+                        val needsRebuild = !cacheFile.exists() ||
+                            cacheFile.length() < BinaryTrieDictionary.HEADER_SIZE ||
+                            storedFingerprint != fingerprint
+                        if (needsRebuild) {
+                            writeBinaryTrieAtomically(newTrie, cacheFile)
+                            runCatching { metaFile.writeText(fingerprint) }
                         }
                         binaryTrie = BinaryTrieDictionary.mapFromFile(cacheFile)
+                        hasUnmappedDynamicMutations = false
                     }.onFailure { e ->
                         Log.w(TAG, "Could not map binary trie cache file", e)
                     }
@@ -299,9 +372,16 @@ object CoverKeyboardNlpManager {
             }
         }
 
-        // Stage 2: Query Trie prefix completions (preferring the memory-mapped cache once ready).
-        val completions = binaryTrie?.predictForPrefix(query, limit = limit + 4)
-            ?: trieDictionary.predictForPrefix(query, limit = limit + 4)
+        // Stage 2: Query Trie prefix completions (merging live in-memory trie when unmapped mutations exist).
+        val mmapCompletions = binaryTrie?.predictForPrefix(query, limit = limit + 4).orEmpty()
+        val dynamicCompletions = if (hasUnmappedDynamicMutations || binaryTrie == null) {
+            trieDictionary.predictForPrefix(query, limit = limit + 4)
+        } else {
+            emptyList()
+        }
+        val completions = (dynamicCompletions + mmapCompletions)
+            .distinctBy { it.word }
+            .sortedByDescending { it.score }
         for (c in completions) {
             if (isWordAvailable(c.word)) {
                 results.add(c.word)
@@ -388,14 +468,38 @@ object CoverKeyboardNlpManager {
         val cleanDigits = digits.filter { it in '2'..'9' }
         if (cleanDigits.isEmpty()) return emptyList()
 
-        // Query memory-mapped Trie first when available, over-fetching (+4) so suppressed words can be filtered out.
-        val binaryCompletions = binaryTrie?.predictForDigits(cleanDigits, limit = limit + 4)
-        if (binaryCompletions != null && binaryCompletions.isNotEmpty()) {
-            val filtered = binaryCompletions.map { it.word }.filter(::isWordAvailable)
-            if (filtered.isNotEmpty()) return filtered.take(limit)
+        // Query memory-mapped Trie, merging live dynamic T9 hits whenever unmapped words,
+        // learned overrides, or contact tokens are present so new additions rank immediately.
+        val binaryCompletions = binaryTrie?.predictForDigits(cleanDigits, limit = limit + 4).orEmpty()
+        val learnedSnapshot: Set<String>
+        val needsDynamicMerge: Boolean
+        synchronized(learnedWords) {
+            learnedSnapshot = learnedWords.toSet()
+            needsDynamicMerge = hasUnmappedDynamicMutations ||
+                binaryTrie == null ||
+                learnedWords.isNotEmpty() ||
+                contactOnlyWords.isNotEmpty()
+        }
+        val dynamicCompletions = if (needsDynamicMerge) {
+            t9Engine.predictForDigits(cleanDigits, limit = limit + 4)
+        } else {
+            emptyList()
+        }
+        val combined = if (binaryCompletions.isEmpty()) {
+            dynamicCompletions
+        } else if (dynamicCompletions.isEmpty()) {
+            binaryCompletions
+        } else {
+            (dynamicCompletions + binaryCompletions)
+                .distinctBy { it.word }
+                .sortedWith(
+                    compareByDescending<CandidateWord> { it.word in learnedSnapshot }
+                        .thenByDescending { it.word.length == cleanDigits.length }
+                        .thenByDescending { it.score }
+                )
         }
 
-        return t9Engine.predictForDigits(cleanDigits, limit = limit + 4)
+        return combined
             .map { it.word }
             .filter(::isWordAvailable)
             .take(limit)
@@ -434,13 +538,19 @@ object CoverKeyboardNlpManager {
      * Learns a user word and persists it to `keyboard_words` SharedPreferences.
      */
     fun learnWord(word: String, context: Context? = null) {
+        context?.applicationContext?.let { cachedAppContext = it }
         val normalized = word.lowercase(Locale.ROOT).trim()
         if (normalized.isEmpty() || normalized.any { it !in 'a'..'z' }) return
         synchronized(learnedWords) {
             suppressedWords.remove(normalized)
             learnedWords.add(normalized)
             trieDictionary.insert(normalized, 500_000L)
+            t9Engine = T9PredictiveEngine(trieDictionary, learnedWords.toSet(), suppressedWords.toSet())
+            hasUnmappedDynamicMutations = true
             persistPreferences(context)
+        }
+        if (isInitialized) {
+            scheduleMmapRebuild(context?.applicationContext ?: cachedAppContext)
         }
     }
 
@@ -448,12 +558,18 @@ object CoverKeyboardNlpManager {
      * Suppresses an unwanted candidate word and persists it to `keyboard_words` SharedPreferences.
      */
     fun suppressWord(word: String, context: Context? = null) {
+        context?.applicationContext?.let { cachedAppContext = it }
         val normalized = word.lowercase(Locale.ROOT).trim()
         if (normalized.isEmpty()) return
         synchronized(learnedWords) {
             learnedWords.remove(normalized)
             suppressedWords.add(normalized)
+            t9Engine = T9PredictiveEngine(trieDictionary, learnedWords.toSet(), suppressedWords.toSet())
+            hasUnmappedDynamicMutations = true
             persistPreferences(context)
+        }
+        if (isInitialized) {
+            scheduleMmapRebuild(context?.applicationContext ?: cachedAppContext)
         }
     }
 
@@ -481,6 +597,63 @@ object CoverKeyboardNlpManager {
             .apply()
     }
 
+    /** Computes an order-independent fingerprint across dynamic vocabularies for cache invalidation. */
+    private fun computeVocabularyFingerprint(
+        learned: Set<String>,
+        suppressed: Set<String>,
+        appTokens: Set<String> = emptySet(),
+        contactTokens: Set<String> = emptySet()
+    ): String {
+        fun digestSet(words: Set<String>): String {
+            var sum = 0L
+            for (w in words) sum += w.hashCode().toLong() * 31L
+            return "${words.size}:$sum"
+        }
+        return "v1|l=${digestSet(learned)}|s=${digestSet(suppressed)}|a=${digestSet(appTokens)}|c=${digestSet(contactTokens)}"
+    }
+
+    /** Writes the compiled [BinaryTrieDictionary] via a temp file rename to avoid partial reads/trailing bytes. */
+    private fun writeBinaryTrieAtomically(trie: CompactTrieDictionary, targetFile: File) {
+        val tempFile = File(targetFile.parentFile, "$MMAP_CACHE_FILE.tmp")
+        if (tempFile.exists()) tempFile.delete()
+        BinaryTrieDictionary.writeToFile(trie, tempFile)
+        if (!tempFile.renameTo(targetFile)) {
+            if (targetFile.exists()) targetFile.delete()
+            if (!tempFile.renameTo(targetFile)) {
+                BinaryTrieDictionary.writeToFile(trie, targetFile)
+                tempFile.delete()
+            }
+        }
+    }
+
+    /** Debounces and runs a background mmap cache rebuild after dynamic word or contact updates. */
+    private fun scheduleMmapRebuild(context: Context?) {
+        val appContext = context?.applicationContext ?: return
+        pendingRebuildJob?.cancel()
+        pendingRebuildJob = scope.launch {
+            delay(MMAP_REBUILD_DEBOUNCE_MS)
+            mmapWriteMutex.withLock {
+                runCatching {
+                    val cacheFile = File(appContext.cacheDir, MMAP_CACHE_FILE)
+                    val metaFile = File(appContext.cacheDir, MMAP_META_FILE)
+                    val fingerprint = synchronized(learnedWords) {
+                        computeVocabularyFingerprint(
+                            learned = learnedWords.toSet(),
+                            suppressed = suppressedWords.toSet(),
+                            contactTokens = contactOnlyWords.toSet()
+                        )
+                    }
+                    writeBinaryTrieAtomically(trieDictionary, cacheFile)
+                    runCatching { metaFile.writeText(fingerprint) }
+                    binaryTrie = BinaryTrieDictionary.mapFromFile(cacheFile)
+                    hasUnmappedDynamicMutations = false
+                }.onFailure { e ->
+                    Log.w(TAG, "Background binary trie rebuild failed", e)
+                }
+            }
+        }
+    }
+
     /**
      * Sets dictionary instances directly for unit testing.
      */
@@ -493,12 +666,16 @@ object CoverKeyboardNlpManager {
         contactWords: Set<String> = emptySet(),
         contactsAllowed: () -> Boolean = { true }
     ) {
+        pendingRebuildJob?.cancel()
+        pendingRebuildJob = null
+        cachedAppContext = null
         synchronized(learnedWords) {
             learnedWords.clear()
             suppressedWords.clear()
             contactOnlyWords.clear()
             contactOnlyWords.addAll(contactWords.map { it.lowercase(Locale.ROOT) })
         }
+        hasUnmappedDynamicMutations = false
         bigramFollowers = bigrams
         contactsAllowedProvider = contactsAllowed
         trieDictionary = trie

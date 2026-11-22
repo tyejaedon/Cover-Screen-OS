@@ -74,6 +74,9 @@ import com.tyejaedon.coverscreenos.keyboard.floris.CoverFlorisKeyboardSurface
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverLayoutMode
 import com.tyejaedon.coverscreenos.keyboard.floris.FlorisKeyboardCustomization
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
+import com.tyejaedon.coverscreenos.keyboard.voice.formatDictatedPhrase
+import com.tyejaedon.coverscreenos.keyboard.voice.rememberVoiceDictationController
+import com.tyejaedon.coverscreenos.ui.keyboard.rememberContactSuggestionRevision
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
 import kotlinx.coroutines.launch
 
@@ -148,8 +151,24 @@ class CoverT9InputMethodService : InputMethodService() {
                         activeLayoutMode = uiState.layout.toCoverLayoutMode()
                     }
 
-                    // Recompute prefix/T9 or bigram next-word candidates whenever text or mode changes.
-                    LaunchedEffect(uiState.layout, activeLayoutMode, mutationRevision, uiState.isSensitive) {
+                    // Watch contact opt-in and READ_CONTACTS permission changes while the IME is visible.
+                    val contactRevision = rememberContactSuggestionRevision(
+                        enabled = !uiState.isSensitive && !uiState.isNumeric
+                    )
+                    LaunchedEffect(contactRevision) {
+                        if (contactRevision > 0 && !uiState.isSensitive && !uiState.isNumeric) {
+                            runCatching { CoverKeyboardNlpManager.refreshContactWords(applicationContext) }
+                        }
+                    }
+
+                    // Recompute prefix/T9 or bigram next-word candidates whenever text, mode, or contacts change.
+                    LaunchedEffect(
+                        uiState.layout,
+                        activeLayoutMode,
+                        mutationRevision,
+                        uiState.isSensitive,
+                        contactRevision
+                    ) {
                         val surrounding = bridge.getSurroundingText(50, 0)
                         textBeforeCursor = surrounding.textBefore
                         if (uiState.isSensitive || uiState.isNumeric) {
@@ -171,6 +190,20 @@ class CoverT9InputMethodService : InputMethodService() {
                             }
                         }
                     }
+
+                    // Speech-to-text dictation controller hidden automatically on password/numeric inputs.
+                    val voiceDictation = rememberVoiceDictationController(
+                        enabled = !uiState.isSensitive && !uiState.isNumeric,
+                        onPhraseRecognized = { phrase ->
+                            val formatted = formatDictatedPhrase(
+                                existingBeforeCursor = bridge.getSurroundingText(1, 0).textBefore,
+                                rawPhrase = phrase
+                            )
+                            if (formatted.isNotEmpty()) {
+                                bridge.insertText(formatted)
+                            }
+                        }
+                    )
 
                     // Maps persisted left/right preference to the Floris one-handed dock side on the cover screen.
                     val dockAnchor = if (settings.keyboardOneHandedAnchor == KeyboardAnchor.Right) {
@@ -215,7 +248,9 @@ class CoverT9InputMethodService : InputMethodService() {
                             suggestionsEnabled = !uiState.isSensitive && !uiState.isNumeric,
                             autocorrectEnabled = settings.autocorrectEnabled,
                             popupKeyPreviewEnabled = settings.popupKeyPreviewEnabled && !uiState.isSensitive,
-                            imeOptions = activeEditorInfo?.imeOptions ?: EditorInfo.IME_ACTION_DONE
+                            imeOptions = activeEditorInfo?.imeOptions ?: EditorInfo.IME_ACTION_DONE,
+                            isVoiceInputActive = voiceDictation.isListening,
+                            onVoiceInputToggle = voiceDictation.onToggle
                         ),
                         textBeforeCursor = textBeforeCursor,
                         selectedCandidateIndex = if (textBeforeCursor.takeLastWhile { it.isLetter() }.isNotEmpty()) 0 else -1,

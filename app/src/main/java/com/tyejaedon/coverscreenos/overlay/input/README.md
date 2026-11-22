@@ -24,18 +24,37 @@ Think of it like a smart translator standing between a miniature touchscreen key
 
 ## File-by-File Guide
 
-### `CoverScreenInputInjectionEngine.kt`
-- **In plain terms**: The main engine room—runs the accessibility service, manages active typing sessions, picks the right injection channel, tracks foreground cover apps, and draws the Compose keyboard overlay window.
+### `CoverInputModels.kt`
+- **In plain terms**: The shared data models, timing constants, field security scanner, and focus-loss timer (`FocusLossGate`) used across the input injection package.
 - **Key variables & state**:
-  - `CoverInputSessionManager.sessionState` / `_sessionState`: `StateFlow<CoverInputSessionState>` holding the live buffer, cursor index, active keyboard mode, T9 predictive digits, and status message for the UI.
-  - `CoverInputSessionManager.textBuffer`: Composing-aware `TextBuffer` mirroring the editor's text and selection locally so fast keystrokes stay consistent.
-  - `CoverInputSessionManager.injectionLock`: Synchronous `ReentrantLock` preventing rapid keypad taps and incoming accessibility echo events from racing each other.
-  - `CoverInputSessionManager.lastInjectedText` & `lastInjectionTimestamp`: Remember the most recent text pushed to the target field so `isRecentSelfEcho()` ignores delayed `TYPE_VIEW_TEXT_CHANGED` echoes from our own edits.
-  - `CoverInputSessionManager.relinquishedPackage`: Package name where the user opted to use the system keyboard instead so the cover overlay stays hidden in that app.
-  - `CoverInputAccessibilityService.targetFocusedNode`: Cached `AccessibilityNodeInfo` handle to the focused editor, refreshed and re-checked across `windows` so our own overlay never hides the target field.
-  - `CoverInputAccessibilityService.focusLossGate` & `pendingFocusLossCheck`: Hysteresis timer and `Handler(Looper.getMainLooper())` runnable confirming true focus loss before dismissing.
-  - `CoverInputAccessibilityService.latestForegroundPackage` / `connectedService`: `@Volatile` companion telemetry used by `ForegroundService` for cover-app tracking and Background-Activity-Launch (BAL) exempt app launches.
-- **How it connects**: Wraps itself inside `AccessibilityServiceInjectionTarget`, binds to `CoverComposeSurface` (via `CoverKeyboardOverlayManager`), renders `CoverFlorisKeyboardSurface` via `CoverEditorBridge`, queries `CoverKeyboardNlpManager` for suggestions, and persists per-app mode choices in `LauncherSettingsStore`.
+  - `COVER_DISPLAY_ID`, `INTERNAL_CLIP_LABEL`, `CLIPBOARD_RESTORE_DELAY_MS`, `INJECTION_ECHO_IGNORE_WINDOW_MS`, `FIELD_FOCUS_GRACE_MS`, `FOCUS_LOSS_CONFIRM_DELAY_MS`: Package-internal constants governing echo suppression, clipboard restoration, and hysteresis delays.
+  - `CoverKeyboardMode`, `InjectionMethod`, `CoverFieldMetadata`, `CoverInputSessionState`, and `FocusLossGate`: Immutable models and focus-loss state machine.
+- **How it connects**: Shared foundation imported by `CoverInputSessionManager.kt`, `CoverInputAccessibilityService.kt`, and `CoverKeyboardOverlayUI.kt`.
+
+### `CoverInputSessionManager.kt`
+- **In plain terms**: The central session coordinator that owns the scratchpad buffer (`TextBuffer`), serializes edits (`injectionLock`), routes `TextDelta` updates to the target app, and handles speech dictation commits.
+- **Key variables & state**:
+  - `sessionState` / `_sessionState`: `StateFlow<CoverInputSessionState>` holding the live buffer, cursor index, active keyboard mode, T9 predictive digits, and status message.
+  - `textBuffer` & `injectionLock`: Composing-aware `TextBuffer` guarded by a synchronous `ReentrantLock`.
+  - `lastInjectedText` & `lastInjectionTimestamp`: Echo-detection state for `isRecentSelfEcho()`.
+  - `relinquishedPackage`: Stores an app package opted out to the system keyboard.
+- **How it connects**: Driven by UI events and voice dictation (`commitDictatedText`); dispatches minimal `BufferDelta` edits into `AccessibilityServiceInjectionTarget`.
+
+### `CoverInputAccessibilityService.kt`
+- **In plain terms**: The Android `AccessibilityService` watching cover-screen focus/window events dynamically via `CoverDisplayHelper`, hiding Samsung HoneyBoard, and delivering text through `InputConnection`, `ACTION_SET_TEXT`, or non-destructive snapshot-and-restore `ACTION_PASTE`.
+- **Key variables & state**:
+  - `targetFocusedNode`: Cached `AccessibilityNodeInfo` refreshed across interactive windows so our overlay never shadows the target editor.
+  - `displayHelper` & `cachedCoverDisplayId`: Dynamically tracks the secondary cover display ID via `DisplayManager.DisplayListener` (cleaned up in `onDestroy`).
+  - `focusLossGate` & `pendingFocusLossCheck`: Hysteresis timer and `Handler(Looper.getMainLooper())` runnable confirming true focus loss before dismissing.
+  - `injectDeltaViaClipboard` / `restoreClipboardIfInternal`: Tier-3 delta paste selecting `[replaceStart, replaceEnd]` and restoring the user's original `ClipData` after `150ms`.
+- **How it connects**: Binds itself to `CoverInputSessionManager` and exposes `connectedService` for BAL-exempt app launches.
+
+### `CoverKeyboardOverlayUI.kt`
+- **In plain terms**: The window manager wrapper (`CoverKeyboardOverlayManager`) and Jetpack Compose UI (`CoverKeyboardOverlayRoot`) attaching `CoverFlorisKeyboardSurface` to the cover display, complete with contacts watchdog integration and voice dictation controls.
+- **Key variables & state**:
+  - `surface` (`CoverComposeSurface`): Attaches `TYPE_ACCESSIBILITY_OVERLAY` with `FLAG_WATCH_OUTSIDE_TOUCH` and `FLAG_SECURE` for password fields.
+  - `voiceDictation` & `contactRevision`: Speech-to-text microphone handle and live contacts/permission revision watcher.
+- **How it connects**: Renders `:keyboard-floris` (`CoverFlorisKeyboardSurface`), queries `CoverKeyboardNlpManager`, and persists per-app settings in `LauncherSettingsStore`.
 
 ### `TextDelta.kt`
 - **In plain terms**: The "diffing calculator" that turns high-level keyboard actions (like typing a letter or accepting a word suggestion) into the smallest possible patch (`BufferDelta`) between the old and new text.
@@ -58,7 +77,10 @@ Think of it like a smart translator standing between a miniature touchscreen key
 
 | File | Primary Types | Main Job |
 | --- | --- | --- |
-| `CoverScreenInputInjectionEngine.kt` | `CoverInputAccessibilityService`, `CoverInputSessionManager`, `CoverKeyboardOverlayManager`, `CoverFieldMetadata`, `FocusLossGate`, `InjectionMethod` | Watches cover-screen focus, hosts the floating Compose keyboard, and delivers edits via InputConnection / Accessibility / Clipboard |
+| `CoverInputModels.kt` | `CoverKeyboardMode`, `InjectionMethod`, `CoverFieldMetadata`, `FocusLossGate`, `CoverInputSessionState` | Shared timing constants, field metadata/security scanner, and focus-loss hysteresis |
+| `CoverInputSessionManager.kt` | `CoverInputSessionManager`, `AccessibilityServiceInjectionTarget` | Serializes buffer mutations, computes deltas, and coordinates active typing/voice sessions |
+| `CoverInputAccessibilityService.kt` | `CoverInputAccessibilityService` | Watches cover focus/windows, injects via InputConnection / `ACTION_SET_TEXT` / non-destructive Paste |
+| `CoverKeyboardOverlayUI.kt` | `CoverKeyboardOverlayManager`, `CoverKeyboardOverlayRoot` | Attaches the `TYPE_ACCESSIBILITY_OVERLAY` window and renders `CoverFlorisKeyboardSurface` |
 | `TextDelta.kt` | `TextDelta`, `BufferDelta`, `TextInjectionTarget` | Represents keypad actions and computes minimal O(N) prefix/suffix text patches |
 | `CoverScreenInputInjectionEnginePatch.kt` | `previousWordLength` | Calculates character counts for whole-word backward deletion |
 

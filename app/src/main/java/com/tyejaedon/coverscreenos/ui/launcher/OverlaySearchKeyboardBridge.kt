@@ -26,6 +26,9 @@ import com.tyejaedon.coverscreenos.keyboard.floris.CoverOverlayInputCallbacks
 import com.tyejaedon.coverscreenos.keyboard.floris.FlorisKeyboardCustomization
 import com.tyejaedon.coverscreenos.keyboard.floris.FlorisThemePalette
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
+import com.tyejaedon.coverscreenos.keyboard.voice.formatDictatedPhrase
+import com.tyejaedon.coverscreenos.keyboard.voice.rememberVoiceDictationController
+import com.tyejaedon.coverscreenos.ui.keyboard.rememberContactSuggestionRevision
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -159,13 +162,34 @@ internal fun SearchFlorisKeyboardHost(
     var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
     // Incremented when the user learns/suppresses a word so the NLP suggestion effect re-runs.
     var nlpRevision by remember { mutableIntStateOf(0) }
+    // Invalidates suggestions when contact-name opt-in or READ_CONTACTS permission changes.
+    val contactRevision = rememberContactSuggestionRevision(enabled = settings.suggestionStripVisible)
+    LaunchedEffect(contactRevision) {
+        if (contactRevision > 0) {
+            runCatching { CoverKeyboardNlpManager.refreshContactWords(context) }
+        }
+    }
 
     // Text slice behind the cursor and the trailing partial word currently being typed.
     val beforeCursor = query.take(cursorPosition.coerceIn(0, query.length))
     val currentWord = beforeCursor.takeLastWhile { it.isLetterOrDigit() }
 
+    // Speech-to-text dictation controller appending spoken search terms at the current cursor.
+    val voiceDictation = rememberVoiceDictationController(
+        enabled = true,
+        onPhraseRecognized = { phrase ->
+            val formatted = formatDictatedPhrase(
+                existingBeforeCursor = bridge.getSurroundingText(1, 0).textBefore,
+                rawPhrase = phrase
+            )
+            if (formatted.isNotEmpty()) {
+                bridge.insertText(formatted)
+            }
+        }
+    )
+
     // Run dictionary/T9/next-word NLP lookups on Dispatchers.Default whenever query, cursor, or user dictionary changes.
-    LaunchedEffect(query, cursorPosition, activeLayoutMode, nlpRevision) {
+    LaunchedEffect(query, cursorPosition, activeLayoutMode, nlpRevision, contactRevision) {
         candidates = withContext(Dispatchers.Default) {
             when {
                 currentWord.isNotBlank() -> CoverKeyboardNlpManager.getCandidates(activeLayoutMode, currentWord)
@@ -231,6 +255,8 @@ internal fun SearchFlorisKeyboardHost(
             imeOptions = EditorInfo.IME_ACTION_SEARCH,
             compactSymbolsLayout = true,
             includeClearKey = false,
+            isVoiceInputActive = voiceDictation.isListening,
+            onVoiceInputToggle = voiceDictation.onToggle,
             themePalette = FlorisThemePalette.AmoledCover
         ),
         textBeforeCursor = beforeCursor,

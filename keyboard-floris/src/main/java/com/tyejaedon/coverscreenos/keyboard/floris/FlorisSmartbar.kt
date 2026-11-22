@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.Dialpad
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material3.DropdownMenu
@@ -74,6 +75,8 @@ import kotlin.math.abs
  * @property includeClearKey Adds a dedicated Clear/Undo key to the bottom row (used for search/PIN entry).
  * @property isT9Predictive True for dictionary-based T9 prediction; false for classic ABC multi-tap.
  * @property onT9PredictiveToggle Optional callback toggling T9 vs. ABC mode.
+ * @property isVoiceInputActive True while speech dictation is actively listening for voice input.
+ * @property onVoiceInputToggle Optional callback toggling on-device speech-to-text dictation; hidden when `null` (e.g. password fields).
  * @property themePalette Color tokens styling keys, surface, smartbar, popups, and glide trail.
  */
 data class FlorisKeyboardCustomization(
@@ -93,13 +96,15 @@ data class FlorisKeyboardCustomization(
     val includeClearKey: Boolean = false,
     val isT9Predictive: Boolean = true,
     val onT9PredictiveToggle: (() -> Unit)? = null,
+    val isVoiceInputActive: Boolean = false,
+    val onVoiceInputToggle: (() -> Unit)? = null,
     val themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover
 )
 
 /**
  * Unified One UI / Gboard-style 34dp top bar combining:
  * - Candidate suggestions when typing (with a compact leading button to peek at quick tools)
- * - Clean icon-only quick toolbar when idle (mode switch, one-handed dock, clipboard, dismiss)
+ * - Clean icon-only quick toolbar when idle (mode switch, one-handed dock, voice dictation, clipboard, dismiss)
  * - Integrated vertical drag-to-resize gesture on the bar itself (no extra grip row)
  */
 @Composable
@@ -124,6 +129,8 @@ fun CoverKeyboardTopBar(
     modifier: Modifier = Modifier,
     isT9Predictive: Boolean = true,
     onT9PredictiveToggle: (() -> Unit)? = null,
+    isVoiceInputActive: Boolean = false,
+    onVoiceInputToggle: (() -> Unit)? = null,
     themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover,
     trailingContent: (@Composable RowScope.() -> Unit)? = null
 ) {
@@ -317,6 +324,28 @@ fun CoverKeyboardTopBar(
             }
 
             trailingContent?.invoke(this)
+
+            if (onVoiceInputToggle != null) {
+                SmartbarIconButton(
+                    onClick = {
+                        onHaptic()
+                        onVoiceInputToggle()
+                    },
+                    contentDescription = if (isVoiceInputActive) "Stop voice input" else "Voice input",
+                    tint = if (isVoiceInputActive) {
+                        themePalette.actionKeyBackground
+                    } else {
+                        themePalette.functionalKeyForeground
+                    },
+                    modifier = Modifier.testTag("floris_voice_input_toggle")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Mic,
+                        contentDescription = null,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
 
             if (onDismissRequest != null) {
                 SmartbarIconButton(
