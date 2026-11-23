@@ -29,10 +29,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+// Touch target height of the bottom gesture strip; kept >= swipe-up threshold for reliable grabs.
+internal val BOTTOM_BAR_HEIGHT = 28.dp
 // Distance dragged upward inside the bottom strip before Home or Recents hold detection activates.
-private val BOTTOM_BAR_SWIPE_UP_THRESHOLD = 12.dp
+private val BOTTOM_BAR_SWIPE_UP_THRESHOLD = 24.dp
+// Hysteresis ratio below which a held upward drag cancels its pending Recents promotion.
+private const val HOLD_CANCEL_HYSTERESIS_RATIO = 0.5f
+// Distance dragged horizontally along the bottom strip to trigger Back or Recents.
+private val BOTTOM_BAR_HORIZONTAL_THRESHOLD = 36.dp
 // Distance dragged horizontally along the bottom strip to trigger Back or Recents before system SPY pilfering (~17dp).
-private val BOTTOM_BAR_HORIZONTAL_THRESHOLD = 12.dp
 // Fallback commit distance when the pointer stream ends or is pilfered (ACTION_CANCEL) by a system gesture monitor.
 private val BOTTOM_BAR_CANCEL_COMMIT_THRESHOLD = 8.dp
 // Hold duration after swiping up before promoting the gesture from Home flick to Recents overview.
@@ -73,14 +78,16 @@ fun CoverBottomGestureBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(20.dp)
+            .height(BOTTOM_BAR_HEIGHT)
             .semantics { contentDescription = "Cover navigation gesture bar" }
-            .pointerInput(swipeUpThresholdPx, horizontalThresholdPx, cancelCommitThresholdPx) {
+            .pointerInput(swipeUpThresholdPx, horizontalThresholdPx) {
+                val touchSlopPx = viewConfiguration.touchSlop
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
                     var totalDx = 0f
                     var totalDy = 0f
                     var gestureHandled = false
+                    var lockedVerticalUp = false
                     var holdRecentsJob: Job? = null
 
                     try {
@@ -93,11 +100,20 @@ fun CoverBottomGestureBar(
                                 val delta = change.positionChange()
                                 totalDx += delta.x
                                 totalDy += delta.y
+                                if (abs(totalDx) > touchSlopPx || abs(totalDy) > touchSlopPx) {
+                                    change.consume()
+                                }
                             }
 
                             if (!gestureHandled) {
-                                // Promote held upward drag to Recents once the pointer dwells past threshold.
-                                if (-totalDy >= swipeUpThresholdPx && abs(totalDy) >= abs(totalDx)) {
+                                // Lock into vertical-up mode once past threshold so minor horizontal drift doesn't cancel hold.
+                                if (!lockedVerticalUp && -totalDy >= swipeUpThresholdPx && abs(totalDy) >= abs(totalDx)) {
+                                    lockedVerticalUp = true
+                                } else if (lockedVerticalUp && -totalDy < swipeUpThresholdPx * HOLD_CANCEL_HYSTERESIS_RATIO) {
+                                    lockedVerticalUp = false
+                                }
+
+                                if (lockedVerticalUp) {
                                     if (holdRecentsJob == null) {
                                         holdRecentsJob = coroutineScope.launch {
                                             delay(HOLD_FOR_RECENTS_DELAY_MS)
@@ -113,8 +129,8 @@ fun CoverBottomGestureBar(
                                     holdRecentsJob = null
                                 }
 
-                                // Immediate horizontal quick-gestures along the bottom strip.
-                                if (abs(totalDx) >= horizontalThresholdPx && abs(totalDx) > abs(totalDy) * 1.25f) {
+                                // Immediate horizontal quick-gestures along the bottom strip (only when not locked vertical-up).
+                                if (!lockedVerticalUp && abs(totalDx) >= horizontalThresholdPx && abs(totalDx) > abs(totalDy) * 1.25f) {
                                     holdRecentsJob?.cancel()
                                     holdRecentsJob = null
                                     gestureHandled = true
@@ -130,20 +146,10 @@ fun CoverBottomGestureBar(
                             if (!anyPressed) {
                                 holdRecentsJob?.cancel()
                                 holdRecentsJob = null
-                                if (!gestureHandled) {
-                                    if (abs(totalDx) >= cancelCommitThresholdPx && abs(totalDx) > abs(totalDy) * 1.25f) {
-                                        gestureHandled = true
-                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        if (totalDx > 0f) {
-                                            latestOnRecents()
-                                        } else {
-                                            latestOnBack()
-                                        }
-                                    } else if (-totalDy >= cancelCommitThresholdPx && abs(totalDy) >= abs(totalDx)) {
-                                        gestureHandled = true
-                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        latestOnHome()
-                                    }
+                                if (!gestureHandled && (lockedVerticalUp || (-totalDy >= swipeUpThresholdPx && abs(totalDy) >= abs(totalDx)))) {
+                                    gestureHandled = true
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    latestOnHome()
                                 }
                                 break
                             }

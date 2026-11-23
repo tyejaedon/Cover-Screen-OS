@@ -1012,23 +1012,35 @@ private fun InteractiveSection(
                 )
             }
 
-            if (!isWidgetTileVisible && !isQuickSettingsVisible && !isRecentsVisible) {
-                PageIndicator(
-                    pagerState = pagerState,
-                    pageCount = totalPageCount,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = if (isDeviceLocked) 32.dp else 12.dp),
-                    onScrubActiveChanged = { active -> isIndicatorScrubbing = active }
-                )
+            if (!isWidgetTileVisible && !isQuickSettingsVisible) {
+                if (!isRecentsVisible) {
+                    PageIndicator(
+                        pagerState = pagerState,
+                        pageCount = totalPageCount,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = if (isDeviceLocked) 32.dp else 12.dp),
+                        onScrubActiveChanged = { active -> isIndicatorScrubbing = active }
+                    )
+                }
                 if (!isDeviceLocked) {
                     CoverBottomGestureBar(
                         onHomeGesture = {
-                            uiScope.launch {
-                                pagerState.animateScrollToPage(LOCK_PAGER_PAGE_INDEX)
+                            if (isRecentsVisible) {
+                                onDismissRecents()
+                            } else {
+                                uiScope.launch {
+                                    pagerState.animateScrollToPage(LOCK_PAGER_PAGE_INDEX)
+                                }
                             }
                         },
-                        onRecentsGesture = onRequestRecents,
+                        onRecentsGesture = {
+                            if (!isRecentsVisible) {
+                                onRequestRecents()
+                            }
+                        },
                         onBackGesture = {
-                            if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX) {
+                            if (isRecentsVisible) {
+                                onDismissRecents()
+                            } else if (pagerState.currentPage != LOCK_PAGER_PAGE_INDEX) {
                                 uiScope.launch {
                                     pagerState.animateScrollToPage(LOCK_PAGER_PAGE_INDEX)
                                 }
