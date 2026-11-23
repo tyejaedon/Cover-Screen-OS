@@ -131,10 +131,6 @@ class ForegroundService : Service() {
         private const val INCOMING_CALL_RECLAIM_BLOCK_GRACE_MS = 5_000L
         // Cooldown between identical reclaim requests so bursts of accessibility events don't spam retargets.
         private const val OVERLAY_RECLAIM_MIN_INTERVAL_MS = 80L
-        // Virtual package token marking transient suppression while native system Recents attempts to open.
-        private const val NATIVE_RECENTS_SENTINEL_PACKAGE = "com.android.systemui.recents"
-        // Delay before verifying whether native GLOBAL_ACTION_RECENTS actually opened on the cover display.
-        private const val NATIVE_RECENTS_VERIFY_DELAY_MS = 450L
         private const val OVERLAY_RECLAIM_LOG_TAG = "CoverOverlayReclaim"
         private const val OVERLAY_TRANSITION_LOG_TAG = "CoverOverlayTransition"
         private const val OVERLAY_MARKER_HELD_HIDDEN = "marker=held_hidden"
@@ -200,11 +196,10 @@ class ForegroundService : Service() {
         }
 
         /**
-         * Opens cover Recents, prioritizing Android's native `GLOBAL_ACTION_RECENTS` when [preferNative]
-         * is `true` and falling back to the in-overlay Cover Recents carousel when rejected or ignored.
+         * Opens the in-overlay Cover Recents carousel.
          */
-        fun requestCoverRecents(preferNative: Boolean = true): Boolean {
-            return activeServiceRef?.get()?.requestCoverRecentsInternal(preferNative) ?: false
+        fun requestCoverRecents(): Boolean {
+            return activeServiceRef?.get()?.requestCoverRecentsInternal() ?: false
         }
 
         /** Notifies the running service that [CoverAccessibilityService] connected with a host. */
@@ -224,6 +219,10 @@ class ForegroundService : Service() {
         fun requestIncomingCallPassthrough(packageName: String) {
             activeServiceRef?.get()?.requestIncomingCallPassthroughInternal(packageName)
         }
+
+        /** Returns `true` while an active call notification is reported by [CoverNotificationListenerService]. */
+        fun isCallNotificationActive(): Boolean =
+            activeServiceRef?.get()?.callNotificationActive == true
 
         /**
          * Updates active call notification state from [CoverNotificationListenerService],
@@ -284,7 +283,7 @@ class ForegroundService : Service() {
     private val widgetHostManager by lazy {
         com.tyejaedon.coverscreenos.ui.widgets.CoverAppWidgetHostManager(this)
     }
-    // Tracks recently opened cover apps (most-recent-first) and fallback Recents carousel visibility.
+    // Tracks recently opened cover apps (most-recent-first) and Cover Recents carousel visibility.
     private lateinit var recentAppsTracker: CoverRecentAppsTracker
     // Verifies shortly after dispatching GLOBAL_ACTION_RECENTS whether native Recents actually appeared.
     private var pendingNativeRecentsVerifyJob: Job? = null
@@ -587,7 +586,7 @@ class ForegroundService : Service() {
             },
             recentAppPackages = recentAppsTracker.recentPackages,
             isRecentsSheetVisible = recentAppsTracker.isRecentsSheetVisible,
-            onRequestRecents = { requestCoverRecentsInternal(preferNative = true) },
+            onRequestRecents = { requestCoverRecentsInternal() },
             onDismissRecentApp = { pkg -> recentAppsTracker.removeApp(pkg) },
             onClearAllRecentApps = { recentAppsTracker.clearAll() },
             onSetRecentsSheetVisible = { visible -> recentAppsTracker.setRecentsSheetVisible(visible) }
@@ -601,11 +600,10 @@ class ForegroundService : Service() {
     }
 
     /**
-     * Triggers Recents on the cover screen, attempting Android/One UI's native system Recents
-     * (`GLOBAL_ACTION_RECENTS`) first when [preferNative] is `true` and falling back to the
-     * in-overlay Cover Recents carousel when native Recents is rejected or ignored on the cover display.
+     * Opens the custom in-overlay Cover Recents carousel and reclaims/retargets the cover overlay
+     * if it is currently suppressed for an active foreground app.
      */
-    private fun requestCoverRecentsInternal(preferNative: Boolean = true): Boolean {
+    private fun requestCoverRecentsInternal(): Boolean {
         if (!overlayRequested || !hasRuntimePrerequisites() || isDeviceUnfolded()) return false
 
         pendingNativeRecentsVerifyJob?.cancel()
@@ -641,9 +639,9 @@ class ForegroundService : Service() {
 
         recentAppsTracker.setRecentsSheetVisible(true)
         if (isOverlaySuppressedForAppLaunch) {
-            completeSuppressionAndRetargetOnce(reason = "fallback_cover_recents")
+            completeSuppressionAndRetargetOnce(reason = "cover_recents")
         } else {
-            scheduleRetarget(reason = "fallback_cover_recents")
+            scheduleRetarget(reason = "cover_recents")
         }
         return true
     }
@@ -771,6 +769,16 @@ class ForegroundService : Service() {
         publishRuntime("Overlay reclaim requested")
 
         logDebug { "request reason=$normalizedReason overlayActive=$isOverlayActive display=${overlayWindowController.getActiveDisplayId()} suppressed=$isOverlaySuppressedForAppLaunch" }
+
+        if (normalizedReason == "gesture_bar_home") {
+            recentAppsTracker.setRecentsSheetVisible(false)
+            if (isOverlaySuppressedForAppLaunch) {
+                completeSuppressionAndRetargetOnce(reason = "reclaim:$normalizedReason")
+            } else {
+                scheduleRetarget(reason = "foreground_reclaim:$normalizedReason")
+            }
+            return
+        }
 
         serviceScope.launch {
             if (isOverlaySuppressedForAppLaunch) {
@@ -1051,8 +1059,6 @@ class ForegroundService : Service() {
 
     private fun clearPendingDisplayWork() {
         pendingDisplayRetargetJob?.cancel()
-        pendingNativeRecentsVerifyJob?.cancel()
-        pendingNativeRecentsVerifyJob = null
     }
 
     /**

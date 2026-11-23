@@ -2,6 +2,9 @@ package com.tyejaedon.coverscreenos.notifications
 
 import android.app.Notification
 import android.media.session.PlaybackState
+import com.tyejaedon.coverscreenos.ui.computeLivePlaybackPositionMs
+import com.tyejaedon.coverscreenos.ui.formatMediaDurationMs
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -99,5 +102,80 @@ class MediaNotificationClassificationTest {
         assertFalse(none.canPlayPause)
         assertFalse(none.canSkipPrevious)
         assertFalse(none.canSkipNext)
+        assertFalse(none.canSeek)
+
+        val seekable = CoverNotificationListenerService.resolvePlaybackCapabilities(
+            state = PlaybackState.STATE_PLAYING,
+            actions = PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO
+        )
+        assertTrue(seekable.canSeek)
+    }
+
+    @Test
+    fun `standard transport labels are filtered while shuffle and repeat remain custom`() {
+        assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("Play"))
+        assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("  pause "))
+        assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("Previous"))
+        assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("Previous track"))
+        assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("Next track"))
+        assertTrue(CoverNotificationListenerService.isStandardMediaTransportLabel("Skip to next"))
+        assertFalse(CoverNotificationListenerService.isStandardMediaTransportLabel("Shuffle"))
+        assertFalse(CoverNotificationListenerService.isStandardMediaTransportLabel("Repeat"))
+        assertFalse(CoverNotificationListenerService.isStandardMediaTransportLabel("Like"))
+    }
+
+    @Test
+    fun `live playback position interpolates while playing and clamps to duration`() {
+        assertEquals(
+            0L,
+            computeLivePlaybackPositionMs(
+                positionMs = -1L,
+                positionUpdateTimeMs = 1_000L,
+                playbackSpeed = 1f,
+                durationMs = 120_000L,
+                isPlaying = true,
+                nowElapsedMs = 5_000L
+            )
+        )
+        assertEquals(
+            14_000L,
+            computeLivePlaybackPositionMs(
+                positionMs = 10_000L,
+                positionUpdateTimeMs = 1_000L,
+                playbackSpeed = 1f,
+                durationMs = 120_000L,
+                isPlaying = true,
+                nowElapsedMs = 5_000L
+            )
+        )
+        assertEquals(
+            10_000L,
+            computeLivePlaybackPositionMs(
+                positionMs = 10_000L,
+                positionUpdateTimeMs = 1_000L,
+                playbackSpeed = 1f,
+                durationMs = 120_000L,
+                isPlaying = false,
+                nowElapsedMs = 5_000L
+            )
+        )
+        assertEquals(
+            120_000L,
+            computeLivePlaybackPositionMs(
+                positionMs = 118_000L,
+                positionUpdateTimeMs = 1_000L,
+                playbackSpeed = 1f,
+                durationMs = 120_000L,
+                isPlaying = true,
+                nowElapsedMs = 10_000L
+            )
+        )
+    }
+
+    @Test
+    fun `duration formatting renders minutes and hours cleanly`() {
+        assertEquals("0:00", formatMediaDurationMs(0L))
+        assertEquals("3:05", formatMediaDurationMs(185_000L))
+        assertEquals("1:02:03", formatMediaDurationMs(3_723_000L))
     }
 }

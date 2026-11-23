@@ -329,8 +329,9 @@ internal class CoverComposeSurface(
         val shouldUpdateLayout = params.flags != updatedFlags
         params.flags = updatedFlags
 
-        // Keep View.VISIBLE and toggle alpha so WindowManager preserves the window layout.
-        view.visibility = View.VISIBLE
+        // Collapse the overlay view with View.GONE when suppressed so WindowManager does not
+        // keep it as an active visible layer (isOnScreen=true) over ty=1 app windows underneath.
+        view.visibility = if (touchable) View.VISIBLE else View.GONE
         view.alpha = if (touchable) 1f else 0f
         isTouchable = touchable
 

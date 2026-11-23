@@ -997,7 +997,6 @@ private fun InteractiveSection(
                         },
                         onDismissApp = onDismissRecentApp,
                         onClearAll = onClearAllRecentApps,
-                        onTriggerNativeRecents = onRequestRecents,
                         onDismissPanel = onDismissRecents,
                         hazeState = hazeState,
                         modifier = Modifier.fillMaxSize()

@@ -262,19 +262,17 @@ class ForegroundServiceSuppressionTest {
     }
 
     @Test
-    fun `requestCoverRecents prioritizes native Recents and opens fallback carousel when rejected`() {
+    fun `requestCoverRecents opens custom Cover Recents carousel directly`() {
         mockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
         try {
             every { com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper.hasCoreOverlayPermissions(any()) } returns true
-            every { CoverAccessibilityService.performGlobalRecentsOnActiveService() } returns false
 
             val tracker = getField<CoverRecentAppsTracker>("recentAppsTracker")
             val requestMethod = ForegroundService::class.java.getDeclaredMethod(
-                "requestCoverRecentsInternal",
-                Boolean::class.javaPrimitiveType
+                "requestCoverRecentsInternal"
             ).apply { isAccessible = true }
 
-            val handled = requestMethod.invoke(service, true) as Boolean
+            val handled = requestMethod.invoke(service) as Boolean
             assertTrue(handled)
             assertTrue(tracker.isRecentsSheetVisible.value)
             assertFalse(state.isOverlaySuppressedForAppLaunch)
@@ -284,23 +282,17 @@ class ForegroundServiceSuppressionTest {
     }
 
     @Test
-    fun `requestCoverRecents stays suppressed when native Recents opens and falls back on no-op`() {
+    fun `requestCoverRecents clears active app-launch suppression and shows custom carousel`() {
         mockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
         try {
             every { com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper.hasCoreOverlayPermissions(any()) } returns true
-            every { CoverAccessibilityService.performGlobalRecentsOnActiveService() } returns true
             val tracker = getField<CoverRecentAppsTracker>("recentAppsTracker")
             val requestMethod = ForegroundService::class.java.getDeclaredMethod(
-                "requestCoverRecentsInternal",
-                Boolean::class.javaPrimitiveType
+                "requestCoverRecentsInternal"
             ).apply { isAccessible = true }
 
-            // Native Recents opened cleanly -> overlay stays suppressed and fallback carousel stays closed.
-            every { CoverAccessibilityService.currentForegroundClassName() } returns "com.sec.android.app.launcher.recents.RecentsActivity"
-            requestMethod.invoke(service, true)
-            Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500L))
+            startSuppression(packageName = "com.example.userapp")
             assertTrue(state.isOverlaySuppressedForAppLaunch)
-            assertFalse(tracker.isRecentsSheetVisible.value)
 
             // Reset suppression, then simulate OEM cover firmware ignoring GLOBAL_ACTION_RECENTS (stuck on SubHomeActivity).
             state.clearSuppressionState()
@@ -309,6 +301,8 @@ class ForegroundServiceSuppressionTest {
             // Does not prematurely hide the launcher overlay before verification completes.
             assertFalse(state.isOverlaySuppressedForAppLaunch)
             Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500L))
+            val handled = requestMethod.invoke(service) as Boolean
+            assertTrue(handled)
             assertFalse(state.isOverlaySuppressedForAppLaunch)
             assertTrue(tracker.isRecentsSheetVisible.value)
 
@@ -342,6 +336,24 @@ class ForegroundServiceSuppressionTest {
 
             assertTrue(state.isOverlaySuppressedForAppLaunch)
             assertEquals("com.whatsapp", state.launchSuppressedPackageName)
+        } finally {
+            unmockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        }
+    }
+
+    @Test
+    fun `gesture_bar_home reclaim immediately clears app launch suppression even while user app window is on top`() {
+        mockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        try {
+            every { com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper.hasCoreOverlayPermissions(any()) } returns true
+            startSuppression(packageName = "com.example.userapp")
+            foregroundPackage = "com.example.userapp"
+            assertTrue(state.isOverlaySuppressedForAppLaunch)
+
+            invoke("requestOverlayReclaimInternal", "gesture_bar_home")
+
+            assertFalse(state.isOverlaySuppressedForAppLaunch)
+            assertEquals(null, state.launchSuppressedPackageName)
         } finally {
             unmockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
         }

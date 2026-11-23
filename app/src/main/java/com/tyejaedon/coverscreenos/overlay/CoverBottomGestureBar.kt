@@ -37,6 +37,9 @@ private val BOTTOM_BAR_SWIPE_UP_THRESHOLD = 24.dp
 private const val HOLD_CANCEL_HYSTERESIS_RATIO = 0.5f
 // Distance dragged horizontally along the bottom strip to trigger Back or Recents.
 private val BOTTOM_BAR_HORIZONTAL_THRESHOLD = 36.dp
+// Distance dragged horizontally along the bottom strip to trigger Back or Recents before system SPY pilfering (~17dp).
+// Fallback commit distance when the pointer stream ends or is pilfered (ACTION_CANCEL) by a system gesture monitor.
+private val BOTTOM_BAR_CANCEL_COMMIT_THRESHOLD = 8.dp
 // Hold duration after swiping up before promoting the gesture from Home flick to Recents overview.
 private const val HOLD_FOR_RECENTS_DELAY_MS = 260L
 
@@ -49,7 +52,7 @@ private const val HOLD_FOR_RECENTS_DELAY_MS = 260L
  *
  * Supported gestures:
  * - **Swipe up + release quickly**: [onHomeGesture] (reclaim cover launcher home).
- * - **Swipe up + hold (>= 260 ms)**: [onRecentsGesture] (native-first Recents / Cover Recents fallback).
+ * - **Swipe up + hold (>= 260 ms)**: [onRecentsGesture] (Cover Recents overview).
  * - **Swipe right**: [onRecentsGesture].
  * - **Swipe left**: [onBackGesture].
  */
@@ -66,6 +69,7 @@ fun CoverBottomGestureBar(
 
     val swipeUpThresholdPx = with(density) { BOTTOM_BAR_SWIPE_UP_THRESHOLD.toPx() }
     val horizontalThresholdPx = with(density) { BOTTOM_BAR_HORIZONTAL_THRESHOLD.toPx() }
+    val cancelCommitThresholdPx = with(density) { BOTTOM_BAR_CANCEL_COMMIT_THRESHOLD.toPx() }
 
     val latestOnHome by rememberUpdatedState(onHomeGesture)
     val latestOnRecents by rememberUpdatedState(onRecentsGesture)

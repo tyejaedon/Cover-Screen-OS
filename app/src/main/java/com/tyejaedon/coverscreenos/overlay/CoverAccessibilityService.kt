@@ -513,7 +513,7 @@ class CoverAccessibilityService : AccessibilityService() {
             !forceReattach &&
             existingSurface.activeDisplayId() == display.displayId
         ) {
-            existingSurface.setTouchable(true)
+            setLauncherTouchable(true)
             return true
         }
 
@@ -600,8 +600,8 @@ class CoverAccessibilityService : AccessibilityService() {
             return false
         }
 
-        surface.setTouchable(true)
         launcherSurface = surface
+        setLauncherTouchable(true)
         return true
     }
 
@@ -694,6 +694,9 @@ class CoverAccessibilityService : AccessibilityService() {
             ?.takeIf { it.isValid }
             ?: return
         val barHeightPx = (BOTTOM_BAR_HEIGHT.value * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+
+        val displayDensity = createDisplayContext(coverDisplay).resources.displayMetrics.density
+        =
         val config = com.tyejaedon.coverscreenos.overlay.surface.CoverSurfaceWindowConfig(
             width = WindowManager.LayoutParams.MATCH_PARENT,
             height = barHeightPx,
@@ -708,7 +711,7 @@ class CoverAccessibilityService : AccessibilityService() {
         val attached = barSurface.attach(display = coverDisplay, windowConfig = config) {
             CoverBottomGestureBar(
                 onHomeGesture = { ForegroundService.requestOverlayReclaim(reason = "gesture_bar_home") },
-                onRecentsGesture = { ForegroundService.requestCoverRecents(preferNative = true) },
+                onRecentsGesture = { ForegroundService.requestCoverRecents() },
                 onBackGesture = {
                     if (!shouldThrottleGlobalAction()) {
                         performGlobalAction(GLOBAL_ACTION_BACK)
@@ -803,7 +806,7 @@ class CoverAccessibilityService : AccessibilityService() {
             logDebug { "Window changed: $foregroundPackage/$foregroundClassName" }
         }
 
-        if (shouldAllowIncomingCallSurface(foregroundPackage)) {
+        if (shouldAllowIncomingCallSurface(foregroundPackage, foregroundClassName)) {
             logReclaimDecision(eventTypeName, foregroundPackage, "incoming_call_passthrough")
             ForegroundService.requestIncomingCallPassthrough(foregroundPackage)
             return
@@ -1059,8 +1062,12 @@ class CoverAccessibilityService : AccessibilityService() {
         )
     }
 
-    /** Returns `true` if [packageName] matches a known dialer / incoming-call surface. */
-    private fun shouldAllowIncomingCallSurface(packageName: String): Boolean {
-        return CallPackageMatchers.isIncomingCallPackage(packageName)
+    /** Returns `true` if [packageName]/[className] matches a known dialer or incoming-call surface. */
+    private fun shouldAllowIncomingCallSurface(packageName: String, className: String? = null): Boolean {
+        return CallPackageMatchers.isIncomingCallWindow(
+            packageName = packageName,
+            className = className,
+            isCallNotificationActive = ForegroundService.isCallNotificationActive()
+        )
     }
 }
