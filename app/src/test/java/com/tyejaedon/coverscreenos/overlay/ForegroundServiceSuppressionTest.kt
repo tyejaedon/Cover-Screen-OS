@@ -306,9 +306,42 @@ class ForegroundServiceSuppressionTest {
             state.clearSuppressionState()
             every { CoverAccessibilityService.currentForegroundClassName() } returns "com.android.systemui.subscreen.SubHomeActivity"
             requestMethod.invoke(service, true)
+            // Does not prematurely hide the launcher overlay before verification completes.
+            assertFalse(state.isOverlaySuppressedForAppLaunch)
             Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500L))
             assertFalse(state.isOverlaySuppressedForAppLaunch)
             assertTrue(tracker.isRecentsSheetVisible.value)
+
+            // Subsequent requests after cover-firmware no-op open fallback immediately without re-dispatching native Recents.
+            tracker.setRecentsSheetVisible(false)
+            io.mockk.clearMocks(CoverAccessibilityService, answers = false, recordedCalls = true)
+            requestMethod.invoke(service, true)
+            assertTrue(tracker.isRecentsSheetVisible.value)
+            io.mockk.verify(exactly = 0) { CoverAccessibilityService.performGlobalRecentsOnActiveService() }
+        } finally {
+            unmockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        }
+    }
+
+    @Test
+    fun `requestCoverRecents preserves launched foreground app package when triggered over an app`() {
+        mockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
+        try {
+            every { com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper.hasCoreOverlayPermissions(any()) } returns true
+            every { CoverAccessibilityService.performGlobalRecentsOnActiveService() } returns true
+            every { CoverAccessibilityService.currentForegroundClassName() } returns "com.sec.android.app.launcher.recents.RecentsActivity"
+
+            startSuppression("com.whatsapp")
+            val requestMethod = ForegroundService::class.java.getDeclaredMethod(
+                "requestCoverRecentsInternal",
+                Boolean::class.javaPrimitiveType
+            ).apply { isAccessible = true }
+
+            requestMethod.invoke(service, true)
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500L))
+
+            assertTrue(state.isOverlaySuppressedForAppLaunch)
+            assertEquals("com.whatsapp", state.launchSuppressedPackageName)
         } finally {
             unmockkObject(com.tyejaedon.coverscreenos.helpers.ForegroundServiceHelper)
         }
