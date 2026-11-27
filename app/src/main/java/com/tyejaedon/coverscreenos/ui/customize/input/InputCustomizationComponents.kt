@@ -6,22 +6,28 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -39,6 +45,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.tyejaedon.coverscreenos.datastore.COMPACT_EXTRA_KEY_HEIGHT_DP
+import com.tyejaedon.coverscreenos.datastore.CoverAppKeyboardStrategy
 import com.tyejaedon.coverscreenos.datastore.HapticStrength
 import com.tyejaedon.coverscreenos.datastore.KeyboardAnchor
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
@@ -49,9 +56,13 @@ import com.tyejaedon.coverscreenos.datastore.InputTelemetryStore
 import com.tyejaedon.coverscreenos.helpers.InputAvailabilityTier
 import com.tyejaedon.coverscreenos.helpers.InputCapabilityDetector
 import com.tyejaedon.coverscreenos.helpers.InputCapabilitySnapshot
+import com.tyejaedon.coverscreenos.models.AppModel
+import com.tyejaedon.coverscreenos.repository.PackageManagerAppScannerRepository
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSCornerRadiusMedium
 import com.tyejaedon.coverscreenos.ui.theme.coverMinimumTouchTarget
 import com.tyejaedon.coverscreenos.ui.theme.coverScreenPadding
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Display metadata for an app-drawer keyboard strategy radio button card. */
 private data class KeyboardStrategyUiOption(
@@ -73,6 +84,11 @@ private data class KeyboardStrategyUiOption(
 internal fun InputCustomizationCard(
     keyboardStrategy: KeyboardStrategy,
     onKeyboardStrategySelected: (KeyboardStrategy) -> Unit,
+    defaultCoverAppKeyboardStrategy: CoverAppKeyboardStrategy,
+    onDefaultCoverAppKeyboardStrategySelected: (CoverAppKeyboardStrategy) -> Unit,
+    coverKeyboardStrategyByPackage: Map<String, CoverAppKeyboardStrategy>,
+    onCoverAppKeyboardStrategyChanged: (String, CoverAppKeyboardStrategy?) -> Unit,
+    onClearCoverAppKeyboardStrategies: () -> Unit,
     onOpenKeyboardPicker: () -> Unit,
     onOpenKeyboardSettings: () -> Unit,
     onResetSavedKeyboardModes: () -> Unit,
@@ -122,6 +138,7 @@ internal fun InputCustomizationCard(
     }
     // Manufacturer-specific warning when an OEM limits third-party keyboards on the cover screen.
     val oemRestrictionHint = capabilitySnapshot?.oemRestrictionHint
+    var showAppKeyboardSelector by remember { mutableStateOf(false) }
 
     // Track how often OEM cover-display IME restriction warnings are surfaced to the user.
     LaunchedEffect(oemRestrictionHint) {
@@ -226,6 +243,14 @@ internal fun InputCustomizationCard(
                 onHapticStrengthSelected = onHapticStrengthSelected
             )
 
+            CoverAppKeyboardStrategySection(
+                defaultStrategy = defaultCoverAppKeyboardStrategy,
+                onDefaultStrategySelected = onDefaultCoverAppKeyboardStrategySelected,
+                overrideCount = coverKeyboardStrategyByPackage.size,
+                onOpenAppSelector = { showAppKeyboardSelector = true },
+                onClearOverrides = onClearCoverAppKeyboardStrategies
+            )
+
             KeyboardCustomizationToggles(
                 keyPressSoundEnabled = keyPressSoundEnabled,
                 onKeyPressSoundEnabledChanged = onKeyPressSoundEnabledChanged,
@@ -299,6 +324,162 @@ internal fun InputCustomizationCard(
             )
         }
     }
+
+    if (showAppKeyboardSelector) {
+        PerAppKeyboardStrategyDialog(
+            defaultStrategy = defaultCoverAppKeyboardStrategy,
+            overrides = coverKeyboardStrategyByPackage,
+            onStrategyChanged = onCoverAppKeyboardStrategyChanged,
+            onDismiss = { showAppKeyboardSelector = false }
+        )
+    }
+}
+
+@Composable
+private fun CoverAppKeyboardStrategySection(
+    defaultStrategy: CoverAppKeyboardStrategy,
+    onDefaultStrategySelected: (CoverAppKeyboardStrategy) -> Unit,
+    overrideCount: Int,
+    onOpenAppSelector: () -> Unit,
+    onClearOverrides: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val options = listOf(
+        CoverAppKeyboardStrategy.COVER_KEYBOARD to "Cover Keyboard",
+        CoverAppKeyboardStrategy.SYSTEM_IME to "System Keyboard"
+    )
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("External apps keyboard (cover screen)", style = MaterialTheme.typography.labelLarge)
+        Text(
+            "Choose whether apps opened on the cover display use the Cover Screen OS overlay keyboard or your system IME by default.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().coverMinimumTouchTarget()) {
+            options.forEachIndexed { index, (strategy, label) ->
+                SegmentedButton(
+                    selected = defaultStrategy == strategy,
+                    onClick = { onDefaultStrategySelected(strategy) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                    label = { Text(label) }
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onOpenAppSelector,
+                modifier = Modifier
+                    .weight(1f)
+                    .coverMinimumTouchTarget()
+                    .testTag("input_per_app_keyboard_selector"),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    if (overrideCount == 0) "Per-app keyboard overrides"
+                    else "Per-app overrides ($overrideCount)"
+                )
+            }
+            if (overrideCount > 0) {
+                OutlinedButton(
+                    onClick = onClearOverrides,
+                    modifier = Modifier.coverMinimumTouchTarget(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Clear")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PerAppKeyboardStrategyDialog(
+    defaultStrategy: CoverAppKeyboardStrategy,
+    overrides: Map<String, CoverAppKeyboardStrategy>,
+    onStrategyChanged: (String, CoverAppKeyboardStrategy?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val appContext = LocalContext.current.applicationContext
+    val repository = remember(appContext) { PackageManagerAppScannerRepository(appContext) }
+    val scan by produceState<List<AppModel>?>(initialValue = null, key1 = repository) {
+        value = withContext(Dispatchers.Default) {
+            runCatching { repository.scanInstalledApplications(includeIcons = false) }.getOrDefault(emptyList())
+        }
+    }
+    var query by remember { mutableStateOf("") }
+    val apps = scan.orEmpty()
+    val filteredApps = remember(apps, query) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) apps
+        else apps.filter {
+            it.name.contains(trimmed, ignoreCase = true) ||
+                it.packageName.contains(trimmed, ignoreCase = true)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Per-app keyboard strategy") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Default: ${if (defaultStrategy == CoverAppKeyboardStrategy.COVER_KEYBOARD) "Cover Keyboard" else "System Keyboard"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search apps") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (scan == null) {
+                    Text("Loading installed apps...", style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 300.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filteredApps, key = { it.packageName }) { app ->
+                            val currentOverride = overrides[app.packageName]
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(app.name, style = MaterialTheme.typography.bodyMedium)
+                                val choices = listOf(
+                                    null to "Default",
+                                    CoverAppKeyboardStrategy.COVER_KEYBOARD to "Cover",
+                                    CoverAppKeyboardStrategy.SYSTEM_IME to "System"
+                                )
+                                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                                    choices.forEachIndexed { index, (strategy, label) ->
+                                        SegmentedButton(
+                                            selected = currentOverride == strategy,
+                                            onClick = { onStrategyChanged(app.packageName, strategy) },
+                                            shape = SegmentedButtonDefaults.itemShape(index = index, count = choices.size),
+                                            label = { Text(label) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done")
+            }
+        }
+    )
 }
 
 /** Segmented selector for key-press [HapticStrength] feedback intensity. */

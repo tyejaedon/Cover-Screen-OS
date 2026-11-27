@@ -1028,8 +1028,6 @@ class CoverInputAccessibilityService : AccessibilityService() {
             // for.
             fieldFocusClaimedAtMs = SystemClock.elapsedRealtime()
 
-            suppressHoneyBoardSoftKeyboard()
-
             val metadata = CoverFieldMetadata.fromNode(editableNode).let { fromNode ->
                 // Supplement node extras with live EditorInfo.imeOptions when available from
                 // FLAG_INPUT_METHOD_EDITOR so the keyboard's action key matches the editor.
@@ -1040,6 +1038,11 @@ class CoverInputAccessibilityService : AccessibilityService() {
                     editorAction in EditorInfo.IME_ACTION_GO..EditorInfo.IME_ACTION_DONE &&
                     editableNode.extras?.containsKey("imeOptions") != true
                 ) fromNode.copy(imeAction = editorAction) else fromNode
+            }
+            if (CoverInputSessionManager.shouldUseSystemKeyboard(metadata.packageName)) {
+                restoreSoftKeyboardMode()
+            } else {
+                suppressHoneyBoardSoftKeyboard()
             }
             CoverInputSessionManager.onFieldFocused(metadata)
         }

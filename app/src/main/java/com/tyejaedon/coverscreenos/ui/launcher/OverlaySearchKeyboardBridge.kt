@@ -28,6 +28,9 @@ import com.tyejaedon.coverscreenos.keyboard.floris.FlorisThemePalette
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
 import com.tyejaedon.coverscreenos.keyboard.voice.formatDictatedPhrase
 import com.tyejaedon.coverscreenos.keyboard.voice.rememberVoiceDictationController
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.HapticTier
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberHapticPerformer
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberKeySoundPerformer
 import com.tyejaedon.coverscreenos.ui.keyboard.rememberContactSuggestionRevision
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -56,6 +59,12 @@ internal fun SearchFlorisKeyboardHost(
     // Latest collected keyboard preferences; falls back to defaults until DataStore emits.
     val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
     val coroutineScope = rememberCoroutineScope()
+    val hapticPerformer = rememberHapticPerformer(HapticTier.Standard, settings.hapticStrength)
+    val soundPerformer = rememberKeySoundPerformer(settings.keyPressSoundEnabled)
+
+    LaunchedEffect(context) {
+        CoverKeyboardNlpManager.initializeFromContext(context.applicationContext)
+    }
 
     // Keep fresh references via rememberUpdatedState so the long-lived CoverEditorBridge below
     // always reads the latest query and callbacks without being recreated on every keystroke.
@@ -166,7 +175,9 @@ internal fun SearchFlorisKeyboardHost(
     val contactRevision = rememberContactSuggestionRevision(enabled = settings.suggestionStripVisible)
     LaunchedEffect(contactRevision) {
         if (contactRevision > 0) {
-            runCatching { CoverKeyboardNlpManager.refreshContactWords(context) }
+            withContext(Dispatchers.IO) {
+                runCatching { CoverKeyboardNlpManager.refreshContactWords(context) }
+            }
         }
     }
 
@@ -272,6 +283,8 @@ internal fun SearchFlorisKeyboardHost(
         onAutocorrectWord = CoverKeyboardNlpManager::autocorrectWord,
         t9Engine = CoverKeyboardNlpManager.t9Engine,
         glideDecoder = CoverKeyboardNlpManager.glideDecoder,
+        onHapticOverride = hapticPerformer,
+        onSoundOverride = soundPerformer,
         modifier = modifier
     )
 }

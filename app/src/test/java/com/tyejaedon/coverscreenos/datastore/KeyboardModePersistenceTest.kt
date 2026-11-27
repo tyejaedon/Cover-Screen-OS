@@ -35,4 +35,56 @@ class KeyboardModePersistenceTest {
             store.clearSavedKeyboardModes()
         }
     }
+
+    @Test
+    fun `per-app and global cover keyboard strategies round trip and resolve cleanly`() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val store = LauncherSettingsStore(context)
+        store.resetInputCustomization()
+        try {
+            assertEquals(
+                CoverAppKeyboardStrategy.COVER_KEYBOARD,
+                store.settings.first().defaultCoverAppKeyboardStrategy
+            )
+            store.setDefaultCoverAppKeyboardStrategy(CoverAppKeyboardStrategy.SYSTEM_IME)
+            store.setCoverKeyboardStrategyForPackage("com.example.chat", CoverAppKeyboardStrategy.COVER_KEYBOARD)
+            store.setCoverKeyboardStrategyForPackage("com.example.notes", CoverAppKeyboardStrategy.SYSTEM_IME)
+
+            val reloaded = LauncherSettingsStore(context).settings.first()
+            assertEquals(CoverAppKeyboardStrategy.SYSTEM_IME, reloaded.defaultCoverAppKeyboardStrategy)
+            assertEquals(
+                CoverAppKeyboardStrategy.COVER_KEYBOARD,
+                reloaded.resolveCoverAppKeyboardStrategy("com.example.chat")
+            )
+            assertEquals(
+                CoverAppKeyboardStrategy.SYSTEM_IME,
+                reloaded.resolveCoverAppKeyboardStrategy("com.example.notes")
+            )
+            assertEquals(
+                CoverAppKeyboardStrategy.SYSTEM_IME,
+                reloaded.resolveCoverAppKeyboardStrategy("com.example.other")
+            )
+
+            // Clearing a single override falls back to global default.
+            store.setCoverKeyboardStrategyForPackage("com.example.chat", null)
+            assertEquals(
+                CoverAppKeyboardStrategy.SYSTEM_IME,
+                LauncherSettingsStore(context).settings.first().resolveCoverAppKeyboardStrategy("com.example.chat")
+            )
+
+            // JSON export/import preserves global and per-app cover keyboard strategies.
+            val json = store.exportSettingsJson()
+            val decoded = LauncherSettingsJson.decode(json)
+            assertEquals(CoverAppKeyboardStrategy.SYSTEM_IME, decoded.defaultCoverAppKeyboardStrategy)
+            assertEquals(
+                mapOf("com.example.notes" to CoverAppKeyboardStrategy.SYSTEM_IME),
+                decoded.coverKeyboardStrategyByPackage
+            )
+
+            store.clearSavedCoverKeyboardStrategies()
+            assertTrue(store.settings.first().coverKeyboardStrategyByPackage.isEmpty())
+        } finally {
+            store.resetInputCustomization()
+        }
+    }
 }

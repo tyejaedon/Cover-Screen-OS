@@ -450,6 +450,28 @@ class CoverInputSessionManagerDeltaTest {
         assertEquals("hello", target.calls.last().insert)
         assertEquals(1, target.doneDispatched)
     }
+
+    @Test
+    fun `per-app strategy and relinquishToSystemKeyboard route to system IME`() {
+        CoverInputSessionManager.setSavedStrategiesForTest(
+            strategies = mapOf("com.example.sysapp" to com.tyejaedon.coverscreenos.datastore.CoverAppKeyboardStrategy.SYSTEM_IME),
+            defaultStrategy = com.tyejaedon.coverscreenos.datastore.CoverAppKeyboardStrategy.COVER_KEYBOARD
+        )
+
+        assertTrue(CoverInputSessionManager.shouldUseSystemKeyboard("com.example.sysapp"))
+        assertFalse(CoverInputSessionManager.shouldUseSystemKeyboard("com.example.coverapp"))
+
+        // Focusing a SYSTEM_IME app must not activate the cover overlay session.
+        CoverInputSessionManager.onFieldFocused(CoverFieldMetadata(packageName = "com.example.sysapp"))
+        assertFalse(CoverInputSessionManager.sessionState.value.isActive)
+
+        // Focusing a COVER_KEYBOARD app activates the overlay; relinquishing switches it to system IME.
+        CoverInputSessionManager.onFieldFocused(CoverFieldMetadata(packageName = "com.example.coverapp"))
+        assertTrue(CoverInputSessionManager.sessionState.value.isActive)
+        CoverInputSessionManager.relinquishToSystemKeyboard()
+        assertFalse(CoverInputSessionManager.sessionState.value.isActive)
+        assertTrue(CoverInputSessionManager.shouldUseSystemKeyboard("com.example.coverapp"))
+    }
 }
 
 /**

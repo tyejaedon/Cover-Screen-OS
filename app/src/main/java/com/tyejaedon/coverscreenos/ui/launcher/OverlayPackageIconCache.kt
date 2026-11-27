@@ -52,6 +52,17 @@ internal object OverlayBitmapIconCache {
     fun put(packageName: String, bitmap: ImageBitmap) {
         synchronized(cache) { cache.put(packageName, bitmap) }
     }
+
+    /** Trims or evicts cached icons in response to system memory pressure. */
+    fun trimMemory(maxBytes: Int) {
+        synchronized(cache) {
+            if (maxBytes <= 0) {
+                cache.evictAll()
+            } else {
+                cache.trimToSize((maxBytes / ICON_CACHE_SIZE_UNIT_BYTES).coerceAtLeast(0))
+            }
+        }
+    }
 }
 
 /**

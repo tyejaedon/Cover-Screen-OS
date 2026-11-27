@@ -5,6 +5,7 @@ import android.accessibilityservice.AccessibilityService
 import android.content.ClipboardManager
 import android.view.Gravity
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,6 +43,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,8 +72,11 @@ import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ClipboardHistoryRow
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.ComposingTextPreview
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.HapticTier
 import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberHapticPerformer
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberKeySoundPerformer
 import com.tyejaedon.coverscreenos.ui.keyboard.rememberContactSuggestionRevision
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 
 /**
@@ -172,7 +180,6 @@ fun CoverKeyboardOverlayRoot(
 ) {
     // Live session snapshot driving the header status, buffer preview, and active keypad mode.
     val sessionState by CoverInputSessionManager.sessionState.collectAsState()
-    val modeHaptic = rememberHapticPerformer(HapticTier.Strong)
     // Dash-delimited multi-tap sequence (e.g. "44-33") reset whenever focus moves to a new input box.
     var t9DigitTrace by remember(
         sessionState.metadata.packageName,
@@ -189,13 +196,18 @@ fun CoverKeyboardOverlayRoot(
     val context = LocalContext.current
     val settingsStore = remember(context) { LauncherSettingsStore(context.applicationContext) }
     val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
+    val modeHaptic = rememberHapticPerformer(HapticTier.Strong, settings.hapticStrength)
+    val keyHaptic = rememberHapticPerformer(HapticTier.Standard, settings.hapticStrength)
+    val keySound = rememberKeySoundPerformer(settings.keyPressSoundEnabled)
     // Watch contact opt-in and READ_CONTACTS permission changes while the overlay is open.
     val contactRevision = rememberContactSuggestionRevision(
         enabled = settings.suggestionStripVisible && !sessionState.metadata.isPassword
     )
     LaunchedEffect(contactRevision) {
         if (contactRevision > 0 && !sessionState.metadata.isPassword) {
-            runCatching { CoverKeyboardNlpManager.refreshContactWords(context) }
+            withContext(Dispatchers.IO) {
+                runCatching { CoverKeyboardNlpManager.refreshContactWords(context) }
+            }
             t9CandidateCommitCount++
         }
     }
@@ -237,7 +249,12 @@ fun CoverKeyboardOverlayRoot(
                 },
                 onUseSystemKeyboard = {
                     modeHaptic()
-                   // CoverInputSessionManager.relinquishToSystemKeyboard()
+                    CoverInputSessionManager.relinquishToSystemKeyboard()
+                    Toast.makeText(
+                        context,
+                        "Switched to system keyboard for this app",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 },
                 onDismiss = onDismiss
             )
@@ -301,6 +318,8 @@ fun CoverKeyboardOverlayRoot(
                             includeClearKey = true,
                             themePalette = FlorisThemePalette.AmoledCover
                         ),
+                        onHapticOverride = keyHaptic,
+                        onSoundOverride = keySound,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -314,15 +333,26 @@ fun CoverKeyboardOverlayRoot(
                         t9DigitTrace.takeIf { '-' in it }
                     }
                     val t9Word = beforeCursor.takeLastWhile { it.isLetter() }
-                    val t9Candidates = remember(beforeCursor, predictiveDigits, suggestionsEnabled, t9CandidateCommitCount) {
-                        if (!suggestionsEnabled) {
+                    var t9Candidates by remember { mutableStateOf<List<String>>(emptyList()) }
+                    LaunchedEffect(
+                        beforeCursor,
+                        predictiveDigits,
+                        suggestionsEnabled,
+                        t9CandidateCommitCount,
+                        contactRevision
+                    ) {
+                        t9Candidates = if (!suggestionsEnabled) {
                             emptyList()
-                        } else when {
-                            !predictiveDigits.isNullOrEmpty() -> CoverKeyboardNlpManager.getT9Suggestions(predictiveDigits)
-                            t9Word.isNotEmpty() -> CoverKeyboardNlpManager.getQwertySuggestions(t9Word)
-                            else -> CoverKeyboardNlpManager.getNextWordSuggestions(
-                                beforeCursor.trimEnd().takeLastWhile { it.isLetter() }
-                            )
+                        } else {
+                            withContext(Dispatchers.Default) {
+                                when {
+                                    !predictiveDigits.isNullOrEmpty() -> CoverKeyboardNlpManager.getT9Suggestions(predictiveDigits)
+                                    t9Word.isNotEmpty() -> CoverKeyboardNlpManager.getQwertySuggestions(t9Word)
+                                    else -> CoverKeyboardNlpManager.getNextWordSuggestions(
+                                        beforeCursor.trimEnd().takeLastWhile { it.isLetter() }
+                                    )
+                                }
+                            }
                         }
                     }
                     key(
@@ -396,6 +426,8 @@ fun CoverKeyboardOverlayRoot(
                                 onVoiceInputToggle = voiceDictation.onToggle,
                                 themePalette = FlorisThemePalette.AmoledCover
                             ),
+                            onHapticOverride = keyHaptic,
+                            onSoundOverride = keySound,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -427,19 +459,21 @@ fun CoverKeyboardOverlayRoot(
                         nlpRevision,
                         contactRevision
                     ) {
-                        if (suggestionsAllowed) {
-                            candidates = when {
-                                currentWord.isNotBlank() -> CoverKeyboardNlpManager.getQwertySuggestions(currentWord)
-                                beforeCursor.isNotBlank() -> {
-                                    val prev = beforeCursor.trimEnd().takeLastWhile { it.isLetter() }
-                                    if (prev.isNotEmpty()) {
-                                        CoverKeyboardNlpManager.getNextWordSuggestions(prev)
-                                    } else emptyList()
+                        candidates = if (suggestionsAllowed) {
+                            withContext(Dispatchers.Default) {
+                                when {
+                                    currentWord.isNotBlank() -> CoverKeyboardNlpManager.getQwertySuggestions(currentWord)
+                                    beforeCursor.isNotBlank() -> {
+                                        val prev = beforeCursor.trimEnd().takeLastWhile { it.isLetter() }
+                                        if (prev.isNotEmpty()) {
+                                            CoverKeyboardNlpManager.getNextWordSuggestions(prev)
+                                        } else emptyList()
+                                    }
+                                    else -> emptyList()
                                 }
-                                else -> emptyList()
                             }
                         } else {
-                            candidates = emptyList()
+                            emptyList()
                         }
                     }
 
@@ -526,6 +560,8 @@ fun CoverKeyboardOverlayRoot(
                         onAutocorrectWord = CoverKeyboardNlpManager::autocorrectWord,
                         t9Engine = CoverKeyboardNlpManager.t9Engine,
                         glideDecoder = CoverKeyboardNlpManager.glideDecoder,
+                        onHapticOverride = keyHaptic,
+                        onSoundOverride = keySound,
                         modifier = Modifier
                     )
                 }
@@ -580,16 +616,19 @@ private fun CoverInputHeader(
         ) {
             ModeChip(
                 label = "123",
+                accessibilityDescription = "Numeric PIN mode",
                 selected = activeMode == CoverKeyboardMode.NUMERIC_PIN,
                 onClick = { onModeSelected(CoverKeyboardMode.NUMERIC_PIN) }
             )
             ModeChip(
                 label = "T9",
+                accessibilityDescription = "T9 keypad mode",
                 selected = activeMode == CoverKeyboardMode.T9_MULTITAP,
                 onClick = { onModeSelected(CoverKeyboardMode.T9_MULTITAP) }
             )
             ModeChip(
                 label = "ABC",
+                accessibilityDescription = "QWERTY keyboard mode",
                 selected = activeMode == CoverKeyboardMode.QWERTY,
                 onClick = { onModeSelected(CoverKeyboardMode.QWERTY) }
             )
@@ -599,6 +638,7 @@ private fun CoverInputHeader(
             // then attaches to the field naturally.
             ModeChip(
                 label = "SYS",
+                accessibilityDescription = "Switch to system keyboard",
                 selected = false,
                 onClick = onUseSystemKeyboard
             )
@@ -608,12 +648,12 @@ private fun CoverInputHeader(
                     .size(26.dp)
                     .clip(CircleShape)
                     .background(Color(0xFF28282C))
-                    .clickable { onDismiss() },
+                    .clickable(role = Role.Button, onClickLabel = "Close keyboard") { onDismiss() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = "Close",
+                    contentDescription = "Close keyboard",
                     tint = Color.White,
                     modifier = Modifier.size(16.dp)
                 )
@@ -626,6 +666,7 @@ private fun CoverInputHeader(
 @Composable
 private fun ModeChip(
     label: String,
+    accessibilityDescription: String,
     selected: Boolean,
     onClick: () -> Unit
 ) {
@@ -633,7 +674,11 @@ private fun ModeChip(
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
             .background(if (selected) Color(0xFF3B82F6) else Color(0xFF222226))
-            .clickable { onClick() }
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = accessibilityDescription
+            }
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 7.dp, vertical = 3.dp),
         contentAlignment = Alignment.Center
     ) {

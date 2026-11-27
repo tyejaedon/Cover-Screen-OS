@@ -76,9 +76,14 @@ import com.tyejaedon.coverscreenos.keyboard.floris.FlorisKeyboardCustomization
 import com.tyejaedon.coverscreenos.keyboard.nlp.CoverKeyboardNlpManager
 import com.tyejaedon.coverscreenos.keyboard.voice.formatDictatedPhrase
 import com.tyejaedon.coverscreenos.keyboard.voice.rememberVoiceDictationController
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.HapticTier
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberHapticPerformer
+import com.tyejaedon.coverscreenos.ui.keyboard.primitives.rememberKeySoundPerformer
 import com.tyejaedon.coverscreenos.ui.keyboard.rememberContactSuggestionRevision
 import com.tyejaedon.coverscreenos.ui.theme.CoverOSTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Cover-screen software keyboard hosted via Android's [InputMethodService].
@@ -127,6 +132,8 @@ class CoverT9InputMethodService : InputMethodService() {
                     val settings by settingsStore.settings.collectAsState(initial = LauncherSettings())
                     // Composition-scoped coroutine launcher used to persist keyboard setting toggles asynchronously.
                     val coroutineScope = rememberCoroutineScope()
+                    val hapticPerformer = rememberHapticPerformer(HapticTier.Standard, settings.hapticStrength)
+                    val soundPerformer = rememberKeySoundPerformer(settings.keyPressSoundEnabled)
 
                     // Bridge wrapping currentInputConnection lazily because Android swaps the connection per focused field.
                     val bridge = remember {
@@ -157,7 +164,9 @@ class CoverT9InputMethodService : InputMethodService() {
                     )
                     LaunchedEffect(contactRevision) {
                         if (contactRevision > 0 && !uiState.isSensitive && !uiState.isNumeric) {
-                            runCatching { CoverKeyboardNlpManager.refreshContactWords(applicationContext) }
+                            withContext(Dispatchers.IO) {
+                                runCatching { CoverKeyboardNlpManager.refreshContactWords(applicationContext) }
+                            }
                         }
                     }
 
@@ -177,16 +186,18 @@ class CoverT9InputMethodService : InputMethodService() {
                         } else {
                             // Trailing alphanumeric token currently being typed by the user.
                             val word = surrounding.textBefore.takeLastWhile { it.isLetterOrDigit() }
-                            candidates = when {
-                                word.isNotBlank() -> CoverKeyboardNlpManager.getCandidates(activeLayoutMode, word)
-                                surrounding.textBefore.isNotBlank() -> {
-                                    // Completed previous word before trailing whitespace, used for bigram next-word prediction.
-                                    val prev = surrounding.textBefore.trimEnd().takeLastWhile { it.isLetter() }
-                                    if (prev.isNotEmpty()) {
-                                        CoverKeyboardNlpManager.getNextWordSuggestions(prev)
-                                    } else emptyList()
+                            candidates = withContext(Dispatchers.Default) {
+                                when {
+                                    word.isNotBlank() -> CoverKeyboardNlpManager.getCandidates(activeLayoutMode, word)
+                                    surrounding.textBefore.isNotBlank() -> {
+                                        // Completed previous word before trailing whitespace, used for bigram next-word prediction.
+                                        val prev = surrounding.textBefore.trimEnd().takeLastWhile { it.isLetter() }
+                                        if (prev.isNotEmpty()) {
+                                            CoverKeyboardNlpManager.getNextWordSuggestions(prev)
+                                        } else emptyList()
+                                    }
+                                    else -> emptyList()
                                 }
-                                else -> emptyList()
                             }
                         }
                     }
@@ -264,7 +275,9 @@ class CoverT9InputMethodService : InputMethodService() {
                         },
                         onAutocorrectWord = CoverKeyboardNlpManager::autocorrectWord,
                         t9Engine = CoverKeyboardNlpManager.t9Engine,
-                        glideDecoder = CoverKeyboardNlpManager.glideDecoder
+                        glideDecoder = CoverKeyboardNlpManager.glideDecoder,
+                        onHapticOverride = hapticPerformer,
+                        onSoundOverride = soundPerformer
                     )
                 }
             }

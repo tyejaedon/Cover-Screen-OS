@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.BroadcastReceiver
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -727,6 +728,23 @@ class ForegroundService : Service() {
         stopForegroundIfStarted()
         publishRuntime("Service stopped")
         super.onDestroy()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) {
+            com.tyejaedon.coverscreenos.ui.launcher.OverlayBitmapIconCache.trimMemory(0)
+            com.tyejaedon.coverscreenos.ui.WallpaperBitmapCache.trimMemory(0)
+        } else if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            com.tyejaedon.coverscreenos.ui.launcher.OverlayBitmapIconCache.trimMemory(2 * 1024 * 1024)
+            com.tyejaedon.coverscreenos.ui.WallpaperBitmapCache.trimMemory(4 * 1024 * 1024)
+        }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        com.tyejaedon.coverscreenos.ui.launcher.OverlayBitmapIconCache.trimMemory(0)
+        com.tyejaedon.coverscreenos.ui.WallpaperBitmapCache.trimMemory(0)
     }
 
     /**

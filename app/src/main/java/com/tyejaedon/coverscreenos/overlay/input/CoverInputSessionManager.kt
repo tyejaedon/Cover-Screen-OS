@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import com.tyejaedon.coverscreenos.datastore.CoverAppKeyboardStrategy
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
 import com.tyejaedon.coverscreenos.keyboard.floris.CoverOverlayInputCallbacks
 import com.tyejaedon.coverscreenos.keyboard.voice.formatDictatedPhrase
@@ -58,6 +59,10 @@ object CoverInputSessionManager {
     private val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     /** Cached map of package name -> user's preferred [CoverKeyboardMode] loaded from DataStore. */
     private var savedModes: Map<String, CoverKeyboardMode> = emptyMap()
+    /** Global default keyboard strategy for external apps on the cover display. */
+    private var defaultAppStrategy: CoverAppKeyboardStrategy = CoverAppKeyboardStrategy.COVER_KEYBOARD
+    /** Per-package overrides choosing between Cover Keyboard and Android System IME. */
+    private var savedStrategiesByPackage: Map<String, CoverAppKeyboardStrategy> = emptyMap()
     /** Prevents incoming DataStore emissions from overriding a mode the user explicitly picked this session. */
     private var modeChosenThisSession = false
 
@@ -117,7 +122,13 @@ object CoverInputSessionManager {
         settingsJob = scope.launch {
             settingsStore?.settings?.collect { settings ->
                 savedModes = settings.keyboardModeByPackage
+                defaultAppStrategy = settings.defaultCoverAppKeyboardStrategy
+                savedStrategiesByPackage = settings.coverKeyboardStrategyByPackage
                 val current = _sessionState.value
+                if (current.isActive && shouldUseSystemKeyboard(current.metadata.packageName)) {
+                    dismissOverlay(reason = "Package strategy switched to system keyboard")
+                    return@collect
+                }
                 // Only update keyboard mode dynamically if the user has not manually switched
                 // modes or started typing in the active field yet.
                 if (current.isActive && !modeChosenThisSession &&
@@ -150,6 +161,9 @@ object CoverInputSessionManager {
         settingsScope = null
         settingsStore = null
         savedModes = emptyMap()
+        defaultAppStrategy = CoverAppKeyboardStrategy.COVER_KEYBOARD
+        savedStrategiesByPackage = emptyMap()
+        relinquishedPackage = null
     }
 
     /**
@@ -170,11 +184,35 @@ object CoverInputSessionManager {
         textBuffer = TextBuffer.Empty
         _sessionState.value = CoverInputSessionState()
         savedModes = emptyMap()
+        defaultAppStrategy = CoverAppKeyboardStrategy.COVER_KEYBOARD
+        savedStrategiesByPackage = emptyMap()
+        relinquishedPackage = null
     }
 
     /** Seeds per-package mode preferences directly for unit testing without DataStore I/O. */
     internal fun setSavedModesForTest(modes: Map<String, CoverKeyboardMode>) {
         savedModes = modes
+    }
+
+    /** Seeds per-package keyboard routing strategies directly for unit testing without DataStore I/O. */
+    internal fun setSavedStrategiesForTest(
+        strategies: Map<String, CoverAppKeyboardStrategy>,
+        defaultStrategy: CoverAppKeyboardStrategy = CoverAppKeyboardStrategy.COVER_KEYBOARD
+    ) {
+        savedStrategiesByPackage = strategies
+        defaultAppStrategy = defaultStrategy
+    }
+
+    /**
+     * Returns `true` when [packageName] should use the Android system keyboard (IME) rather than
+     * the Cover Screen OS overlay keyboard, honoring in-session relinquish, per-app overrides,
+     * and the global default strategy.
+     */
+    fun shouldUseSystemKeyboard(packageName: String): Boolean {
+        if (packageName.isBlank()) return false
+        if (relinquishedPackage == packageName) return true
+        val effective = savedStrategiesByPackage[packageName] ?: defaultAppStrategy
+        return effective == CoverAppKeyboardStrategy.SYSTEM_IME
     }
 
     /**
@@ -236,14 +274,13 @@ object CoverInputSessionManager {
             }
             return
         }
-        // If the user previously relinquished control to their default IME for
-        // this same package, honour that choice and stay out of the way. Focus
-        // in any *other* package resets the opt-out so the cover keyboard can
-        // attach again by default.
+        // If the user previously relinquished control or configured this package (or global default)
+        // to use the system IME, honour that choice and stay out of the way. Focus in any *other*
+        // package clears any temporary in-session relinquish for blank/transient packages.
         if (relinquishedPackage != null && relinquishedPackage != metadata.packageName) {
             relinquishedPackage = null
         }
-        if (relinquishedPackage == metadata.packageName) {
+        if (shouldUseSystemKeyboard(metadata.packageName)) {
             Log.d(TAG, "Skipping cover overlay for ${metadata.packageName}; user prefers system keyboard")
             _sessionState.value = CoverInputSessionState(isActive = false)
             overlayManager?.hideOverlay()
@@ -666,6 +703,20 @@ object CoverInputSessionManager {
     fun relinquishToSystemKeyboard() {
         val currentPackage = _sessionState.value.metadata.packageName
         relinquishedPackage = currentPackage.ifBlank { null }
+        if (currentPackage.isNotBlank()) {
+            savedStrategiesByPackage = savedStrategiesByPackage + (currentPackage to CoverAppKeyboardStrategy.SYSTEM_IME)
+            val store = settingsStore
+            if (store != null) {
+                persistenceScope.launch {
+                    runCatching {
+                        store.setCoverKeyboardStrategyForPackage(
+                            currentPackage,
+                            CoverAppKeyboardStrategy.SYSTEM_IME
+                        )
+                    }.onFailure { Log.w(TAG, "Failed to persist system keyboard preference", it) }
+                }
+            }
+        }
         Log.d(TAG, "User relinquished cover keyboard to system IME for '$currentPackage'")
         dismissOverlay(reason = "User chose system keyboard")
     }

@@ -122,6 +122,24 @@ enum class KeyboardAnchor {
 	Right
 }
 
+/**
+ * Determines whether third-party apps on the cover display use the built-in
+ * Cover Screen OS overlay keyboard or the Android system soft keyboard (IME).
+ */
+enum class CoverAppKeyboardStrategy {
+	/** Built-in Cover Screen OS accessibility overlay keyboard (QWERTY / T9 / Numeric). */
+	COVER_KEYBOARD,
+	/** System soft keyboard (Gboard, Samsung Keyboard, etc.) without overlay suppression. */
+	SYSTEM_IME;
+
+	companion object {
+		fun fromStorageValue(value: String?): CoverAppKeyboardStrategy {
+			if (value.isNullOrBlank()) return COVER_KEYBOARD
+			return entries.firstOrNull { it.name == value } ?: COVER_KEYBOARD
+		}
+	}
+}
+
 /** Minimum/maximum extra key-height (on top of the auto-computed base height) a user can
  * drag-resize the keyboard to, in dp. The auto-computed `[44, 64]` range becomes the
  * floor; `MAX_EXTRA_KEY_HEIGHT_DP` on top of a 64dp base reaches the 88dp ceiling. */
@@ -173,6 +191,9 @@ private object LauncherPreferencesKeys {
 	// Global input method strategy (built-in T9 vs system IME) and per-app JSON mode overrides.
 	val keyboardStrategy = stringPreferencesKey("keyboard_strategy")
 	val keyboardModeByPackage = stringPreferencesKey("keyboard_mode_by_package")
+	// Default & per-app keyboard strategy for third-party apps on the cover display.
+	val defaultCoverAppKeyboardStrategy = stringPreferencesKey("default_cover_app_keyboard_strategy")
+	val coverKeyboardStrategyByPackage = stringPreferencesKey("cover_keyboard_strategy_by_package")
 	// Built-in cover keyboard feedback, autocorrect, and one-handed sizing/anchoring preferences.
 	val hapticStrength = stringPreferencesKey("haptic_strength")
 	val keyPressSoundEnabled = booleanPreferencesKey("key_press_sound_enabled")
@@ -222,6 +243,9 @@ data class LauncherSettings(
 	val keyboardStrategy: KeyboardStrategy = DEFAULT_KEYBOARD_STRATEGY,
 	// Per-package remembered keyboard modes (e.g. T9 vs QWERTY for specific apps).
 	val keyboardModeByPackage: Map<String, CoverKeyboardMode> = emptyMap(),
+	// Default & per-package keyboard strategy for external apps on the cover display.
+	val defaultCoverAppKeyboardStrategy: CoverAppKeyboardStrategy = CoverAppKeyboardStrategy.COVER_KEYBOARD,
+	val coverKeyboardStrategyByPackage: Map<String, CoverAppKeyboardStrategy> = emptyMap(),
 	// Key-press feedback, smart typing helpers, and ergonomic sizing/alignment options.
 	val hapticStrength: HapticStrength = HapticStrength.Standard,
 	val keyPressSoundEnabled: Boolean = false,
@@ -233,7 +257,11 @@ data class LauncherSettings(
 	val keyboardOneHandedAnchor: KeyboardAnchor = KeyboardAnchor.Left,
 	// Ordered Android AppWidget IDs hosted on the cover widget page.
 	val widgetIds: List<Int> = emptyList()
-)
+) {
+	/** Resolves the effective [CoverAppKeyboardStrategy] for [packageName], falling back to [defaultCoverAppKeyboardStrategy]. */
+	fun resolveCoverAppKeyboardStrategy(packageName: String): CoverAppKeyboardStrategy =
+		coverKeyboardStrategyByPackage[packageName] ?: defaultCoverAppKeyboardStrategy
+}
 
 // Logcat filter tag for settings fallback, migration, and wallpaper validation diagnostics.
 private const val SETTINGS_STORE_LOG_TAG = "LauncherSettingsStore"
@@ -276,6 +304,21 @@ private fun decodeKeyboardModes(raw: String?): Map<String, CoverKeyboardMode> {
 		val json = JSONObject(raw)
 		json.keys().asSequence().mapNotNull { packageName ->
 			CoverKeyboardMode.entries.firstOrNull { it.name == json.optString(packageName) }
+				?.let { packageName to it }
+		}.toMap()
+	}.getOrDefault(emptyMap())
+}
+
+/**
+ * Best-effort `org.json` parser for per-package [CoverAppKeyboardStrategy] overrides, silently
+ * dropping unrecognized enum values and returning an empty map if missing or malformed.
+ */
+private fun decodeCoverKeyboardStrategies(raw: String?): Map<String, CoverAppKeyboardStrategy> {
+	if (raw.isNullOrBlank()) return emptyMap()
+	return runCatching {
+		val json = JSONObject(raw)
+		json.keys().asSequence().mapNotNull { packageName ->
+			CoverAppKeyboardStrategy.entries.firstOrNull { it.name == json.optString(packageName) }
 				?.let { packageName to it }
 		}.toMap()
 	}.getOrDefault(emptyMap())
@@ -389,6 +432,12 @@ class LauncherSettingsStore(
 					),
 					keyboardModeByPackage = decodeKeyboardModes(
 						preferences[LauncherPreferencesKeys.keyboardModeByPackage]
+					),
+					defaultCoverAppKeyboardStrategy = CoverAppKeyboardStrategy.fromStorageValue(
+						preferences[LauncherPreferencesKeys.defaultCoverAppKeyboardStrategy]
+					),
+					coverKeyboardStrategyByPackage = decodeCoverKeyboardStrategies(
+						preferences[LauncherPreferencesKeys.coverKeyboardStrategyByPackage]
 					),
 					hapticStrength = preferences[LauncherPreferencesKeys.hapticStrength]
 						?.let { value -> HapticStrength.entries.firstOrNull { it.name == value } }
@@ -540,9 +589,13 @@ class LauncherSettingsStore(
 						normalizePanelCornerRadius(settings.panelCornerRadiusDp)
 					preferences[LauncherPreferencesKeys.dockSlotFourAllApps] = settings.dockSlotFourAllApps
 					preferences[LauncherPreferencesKeys.keyboardStrategy] = settings.keyboardStrategy.name
+					preferences[LauncherPreferencesKeys.defaultCoverAppKeyboardStrategy] =
+						settings.defaultCoverAppKeyboardStrategy.name
 					if (restoreKeyboardModes) {
 						preferences[LauncherPreferencesKeys.keyboardModeByPackage] =
 							JSONObject(settings.keyboardModeByPackage.mapValues { it.value.name }).toString()
+						preferences[LauncherPreferencesKeys.coverKeyboardStrategyByPackage] =
+							JSONObject(settings.coverKeyboardStrategyByPackage.mapValues { it.value.name }).toString()
 					}
 				}
 			}
@@ -765,6 +818,53 @@ class LauncherSettingsStore(
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
 				preferences.remove(LauncherPreferencesKeys.keyboardModeByPackage)
+			}
+		}
+	}
+
+	/** Selects the default keyboard strategy for third-party apps on the cover display. */
+	suspend fun setDefaultCoverAppKeyboardStrategy(strategy: CoverAppKeyboardStrategy) {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences[LauncherPreferencesKeys.defaultCoverAppKeyboardStrategy] = strategy.name
+			}
+		}
+	}
+
+	/**
+	 * Persists or clears a per-package [CoverAppKeyboardStrategy] override in DataStore.
+	 * Passing `null` removes the override so [packageName] falls back to the global default.
+	 */
+	suspend fun setCoverKeyboardStrategyForPackage(
+		packageName: String,
+		strategy: CoverAppKeyboardStrategy?
+	) {
+		if (packageName.isBlank()) return
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				val strategies = decodeCoverKeyboardStrategies(
+					preferences[LauncherPreferencesKeys.coverKeyboardStrategyByPackage]
+				).toMutableMap()
+				if (strategy == null) {
+					strategies.remove(packageName)
+				} else {
+					strategies[packageName] = strategy
+				}
+				if (strategies.isEmpty()) {
+					preferences.remove(LauncherPreferencesKeys.coverKeyboardStrategyByPackage)
+				} else {
+					preferences[LauncherPreferencesKeys.coverKeyboardStrategyByPackage] =
+						JSONObject(strategies.mapValues { it.value.name }).toString()
+				}
+			}
+		}
+	}
+
+	/** Clears all per-package cover keyboard strategy overrides. */
+	suspend fun clearSavedCoverKeyboardStrategies() {
+		withContext(ioDispatcher) {
+			appContext.coverLauncherSettingsDataStore.edit { preferences ->
+				preferences.remove(LauncherPreferencesKeys.coverKeyboardStrategyByPackage)
 			}
 		}
 	}
@@ -1280,12 +1380,14 @@ class LauncherSettingsStore(
 		}
 	}
 
-	/** Resets keyboard input strategy to [DEFAULT_KEYBOARD_STRATEGY] and clears per-package mode memory. */
+	/** Resets keyboard input strategy to [DEFAULT_KEYBOARD_STRATEGY] and clears per-package mode and strategy memory. */
 	suspend fun resetInputCustomization() {
 		withContext(ioDispatcher) {
 			appContext.coverLauncherSettingsDataStore.edit { preferences ->
 				preferences[LauncherPreferencesKeys.keyboardStrategy] = DEFAULT_KEYBOARD_STRATEGY.name
 				preferences.remove(LauncherPreferencesKeys.keyboardModeByPackage)
+				preferences.remove(LauncherPreferencesKeys.defaultCoverAppKeyboardStrategy)
+				preferences.remove(LauncherPreferencesKeys.coverKeyboardStrategyByPackage)
 			}
 		}
 	}

@@ -29,6 +29,16 @@ internal fun rememberKeySoundPerformer(): () -> Unit {
     val soundEnabled by remember(settingsStore) {
         settingsStore.settings.map { it.keyPressSoundEnabled }.distinctUntilChanged()
     }.collectAsState(initial = LauncherSettings().keyPressSoundEnabled)
+    return rememberKeySoundPerformer(soundEnabled = soundEnabled)
+}
+
+/**
+ * Hoisted overload accepting a pre-collected [soundEnabled] flag so callers at the keyboard root
+ * do not spawn additional [LauncherSettingsStore] instances or DataStore Flow collectors.
+ */
+@Composable
+internal fun rememberKeySoundPerformer(soundEnabled: Boolean): () -> Unit {
+    val context = LocalContext.current
     // Cache AudioManager from applicationContext to prevent retaining Activity/Overlay references.
     val audioManager = remember(context) {
         context.applicationContext.getSystemService(AudioManager::class.java)

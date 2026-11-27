@@ -1,16 +1,23 @@
 package com.tyejaedon.coverscreenos.ui.keyboard.primitives
 
-import android.view.HapticFeedbackConstants
-import android.view.View
+import android.content.Context
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.Settings
+import android.view.HapticFeedbackConstants
+import android.view.View
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.runtime.collectAsState
 import com.tyejaedon.coverscreenos.datastore.HapticStrength
 import com.tyejaedon.coverscreenos.datastore.LauncherSettings
 import com.tyejaedon.coverscreenos.datastore.LauncherSettingsStore
@@ -71,49 +78,79 @@ internal fun HapticTier.scaledBy(strength: HapticStrength): HapticTier = when (s
 }
 
 /**
+ * Observes [Settings.System.HAPTIC_FEEDBACK_ENABLED] via a [ContentObserver] so key presses
+ * read a cached boolean in memory instead of issuing synchronous Binder IPC on every tap.
+ */
+@Composable
+internal fun rememberSystemHapticFeedbackEnabled(context: Context = LocalContext.current): Boolean {
+    val appContext = remember(context) { context.applicationContext }
+    fun readSystemSetting(): Boolean = runCatching {
+        Settings.System.getInt(
+            appContext.contentResolver,
+            Settings.System.HAPTIC_FEEDBACK_ENABLED,
+            1
+        ) != 0
+    }.getOrDefault(true)
+
+    var enabled by remember(appContext) { mutableStateOf(readSystemSetting()) }
+
+    DisposableEffect(appContext) {
+        val uri = Settings.System.getUriFor(Settings.System.HAPTIC_FEEDBACK_ENABLED)
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                enabled = readSystemSetting()
+            }
+        }
+        runCatching {
+            if (uri != null) {
+                appContext.contentResolver.registerContentObserver(uri, false, observer)
+            }
+        }
+        onDispose {
+            runCatching { appContext.contentResolver.unregisterContentObserver(observer) }
+        }
+    }
+    return enabled
+}
+
+/**
  * Returns a callable that triggers the given haptic tier, scaled by the user's persisted
- * [HapticStrength] setting in [LauncherSettingsStore] and gated by the system-wide
+ * [HapticStrength] setting in [LauncherSettingsStore] and gated by the cached system-wide
  * [Settings.System.HAPTIC_FEEDBACK_ENABLED] toggle.
- *
- * Uses `Vibrator` (`getSystemService(Vibrator::class.java)` — compatible down to minSdk 28 without
- * requiring API 31's `VibratorManager`) with [VibrationEffect.createPredefined] when hardware
- * vibration is present, falling back to `View.performHapticFeedback` on the host [View].
- * Safe to call in composables outside the compose preview (returns a no-op there).
  */
 @Composable
 internal fun rememberHapticPerformer(tier: HapticTier): () -> Unit {
-    // Host View used for fallback View.performHapticFeedback when no hardware Vibrator is active.
-    val view: View = LocalView.current
     val context = LocalContext.current
-    // DataStore preferences repository holding the user's haptic strength setting.
     val settingsStore = remember(context) { LauncherSettingsStore(context.applicationContext) }
-    // Collect only hapticStrength with distinctUntilChanged so unrelated settings edits do not re-allocate.
     val hapticStrength by remember(settingsStore) {
         settingsStore.settings.map { it.hapticStrength }.distinctUntilChanged()
     }.collectAsState(initial = LauncherSettings().hapticStrength)
-    // Final haptic intensity after applying the user's Off / Light / Standard / Strong preference.
+    return rememberHapticPerformer(tier = tier, hapticStrength = hapticStrength)
+}
+
+/**
+ * Hoisted overload accepting a pre-collected [hapticStrength] so callers at the keyboard root
+ * do not spawn additional [LauncherSettingsStore] instances or DataStore Flow collectors.
+ */
+@Composable
+internal fun rememberHapticPerformer(
+    tier: HapticTier,
+    hapticStrength: HapticStrength
+): () -> Unit {
+    val view: View = LocalView.current
+    val context = LocalContext.current
+    val systemHapticsEnabled = rememberSystemHapticFeedbackEnabled(context)
     val effectiveTier = remember(tier, hapticStrength) { tier.scaledBy(hapticStrength) }
-    return remember(view, effectiveTier) {
-        // Fallback HapticFeedbackConstants flag (or null when scaled down to None).
+    return remember(view, effectiveTier, systemHapticsEnabled) {
+        if (!systemHapticsEnabled) return@remember { /* no-op */ }
         val code = effectiveTier.toHapticConstant() ?: return@remember { /* no-op */ }
-        // Predefined VibrationEffect ID for hardware vibrator playback.
         val effect = effectiveTier.toVibrationEffect() ?: return@remember { /* no-op */ }
-        // Query Vibrator directly rather than VibratorManager (API 31+) to support minSdk 28.
         val vibrator = view.context.getSystemService(Vibrator::class.java)
         return@remember {
-            // Respect the Android OS "Touch vibration" system setting before triggering hardware haptics.
-            if (Settings.System.getInt(
-                    view.context.contentResolver,
-                    Settings.System.HAPTIC_FEEDBACK_ENABLED,
-                    1
-                ) != 0
-            ) {
-                if (vibrator?.hasVibrator() == true) {
-                    vibrator.vibrate(VibrationEffect.createPredefined(effect))
-                } else {
-                    // performHapticFeedback returns false silently when unsupported.
-                    view.performHapticFeedback(code)
-                }
+            if (vibrator?.hasVibrator() == true) {
+                vibrator.vibrate(VibrationEffect.createPredefined(effect))
+            } else {
+                view.performHapticFeedback(code)
             }
         }
     }
