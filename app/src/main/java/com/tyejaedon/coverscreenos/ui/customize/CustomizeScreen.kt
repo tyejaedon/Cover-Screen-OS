@@ -412,6 +412,17 @@ internal fun CustomizeScreen(
                             onStrategy = { preference ->
                                 runAction { store.setKeyboardStrategy(preference) }
                             },
+                            onDefaultCoverAppStrategy = { strategy ->
+                                runAction { store.setDefaultCoverAppKeyboardStrategy(strategy) }
+                            },
+                            onCoverAppStrategyForPackage = { pkg, strategy ->
+                                runAction { store.setCoverKeyboardStrategyForPackage(pkg, strategy) }
+                            },
+                            onClearCoverAppStrategies = {
+                                runAction("Per-app keyboard overrides cleared") {
+                                    store.clearSavedCoverKeyboardStrategies()
+                                }
+                            },
                             onPicker = {
                                 // Show the system input-method switcher dialog via InputMethodManager.
                                 val manager = appContext.getSystemService<InputMethodManager>()

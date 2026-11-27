@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -132,12 +133,21 @@ fun CoverKeyboardTopBar(
     isVoiceInputActive: Boolean = false,
     onVoiceInputToggle: (() -> Unit)? = null,
     themePalette: FlorisThemePalette = FlorisThemePalette.AmoledCover,
+    onExtraHeightPreviewChanged: ((Float) -> Unit)? = null,
     trailingContent: (@Composable RowScope.() -> Unit)? = null
 ) {
     val density = LocalDensity.current
     // Keep callback references fresh inside pointerInput(Unit) so vertical resize drags don't cancel.
     val onExtraHeightChangedState = rememberUpdatedState(onExtraHeightChanged)
+    val onExtraHeightPreviewChangedState = rememberUpdatedState(onExtraHeightPreviewChanged)
     val onHapticState = rememberUpdatedState(onHaptic)
+    var dragExtraHeightDp by remember { mutableFloatStateOf(extraHeightDp) }
+    var isDraggingHeight by remember { mutableStateOf(false) }
+    LaunchedEffect(extraHeightDp, isDraggingHeight) {
+        if (!isDraggingHeight) {
+            dragExtraHeightDp = extraHeightDp
+        }
+    }
 
     // Lets the user temporarily reveal toolbar icons even while word suggestions are visible.
     var forceToolsVisible by remember { mutableStateOf(false) }
@@ -158,19 +168,31 @@ fun CoverKeyboardTopBar(
             .testTag("keyboard_resize_controls")
             .pointerInput(Unit) {
                 // Tracks the previous 6dp height detent so haptic clicks fire only at step boundaries.
-                var lastSnapped = extraHeightDp
+                var lastSnapped = dragExtraHeightDp
                 detectVerticalDragGestures(
-                    onDragStart = { lastSnapped = extraHeightDp },
+                    onDragStart = {
+                        isDraggingHeight = true
+                        lastSnapped = dragExtraHeightDp
+                    },
                     onVerticalDrag = { change, dragAmount ->
                         change.consume()
                         // Dragging up (negative Y) grows extraHeightDp within the 0..24dp range.
                         val deltaDp = with(density) { -dragAmount.toDp().value }
-                        val next = (extraHeightDp + deltaDp).coerceIn(0f, 24f)
-                        onExtraHeightChangedState.value(next)
+                        val next = (dragExtraHeightDp + deltaDp).coerceIn(0f, 24f)
+                        dragExtraHeightDp = next
+                        onExtraHeightPreviewChangedState.value?.invoke(next)
                         if (abs(next - lastSnapped) >= 6f) {
                             lastSnapped = next
                             onHapticState.value()
                         }
+                    },
+                    onDragEnd = {
+                        isDraggingHeight = false
+                        onExtraHeightChangedState.value(dragExtraHeightDp)
+                    },
+                    onDragCancel = {
+                        isDraggingHeight = false
+                        onExtraHeightChangedState.value(dragExtraHeightDp)
                     }
                 )
             },

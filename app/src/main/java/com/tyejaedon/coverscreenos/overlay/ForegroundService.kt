@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.BroadcastReceiver
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -609,34 +610,6 @@ class ForegroundService : Service() {
         pendingNativeRecentsVerifyJob?.cancel()
         pendingNativeRecentsVerifyJob = null
 
-        if (preferNative && !nativeRecentsUnsupportedOnCover) {
-            recentAppsTracker.setRecentsSheetVisible(false)
-            val wasSuppressedBeforeRecents = isOverlaySuppressedForAppLaunch
-            val dispatched = CoverAccessibilityService.performGlobalRecentsOnActiveService()
-            if (dispatched) {
-                pendingNativeRecentsVerifyJob = serviceScope.launch {
-                    delay(NATIVE_RECENTS_VERIFY_DELAY_MS.milliseconds)
-                    val latestClass = CoverAccessibilityService.currentForegroundClassName()
-                    if (CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(latestClass)) {
-                        // Native Recents opened; suppress now only if triggered from the active launcher.
-                        if (!wasSuppressedBeforeRecents && !isOverlaySuppressedForAppLaunch) {
-                            suppressOverlayForReason(
-                                packageName = NATIVE_RECENTS_SENTINEL_PACKAGE,
-                                reason = OverlaySuppressionReason.APP_LAUNCH
-                            )
-                        }
-                        return@launch
-                    }
-                    nativeRecentsUnsupportedOnCover = true
-                    recentAppsTracker.setRecentsSheetVisible(true)
-                    if (isOverlaySuppressedForAppLaunch) {
-                        completeSuppressionAndRetargetOnce(reason = "native_recents_no_op_fallback")
-                    }
-                }
-                return true
-            }
-        }
-
         recentAppsTracker.setRecentsSheetVisible(true)
         if (isOverlaySuppressedForAppLaunch) {
             completeSuppressionAndRetargetOnce(reason = "cover_recents")
@@ -727,6 +700,23 @@ class ForegroundService : Service() {
         stopForegroundIfStarted()
         publishRuntime("Service stopped")
         super.onDestroy()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) {
+            com.tyejaedon.coverscreenos.ui.launcher.OverlayBitmapIconCache.trimMemory(0)
+            com.tyejaedon.coverscreenos.ui.WallpaperBitmapCache.trimMemory(0)
+        } else if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            com.tyejaedon.coverscreenos.ui.launcher.OverlayBitmapIconCache.trimMemory(2 * 1024 * 1024)
+            com.tyejaedon.coverscreenos.ui.WallpaperBitmapCache.trimMemory(4 * 1024 * 1024)
+        }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        com.tyejaedon.coverscreenos.ui.launcher.OverlayBitmapIconCache.trimMemory(0)
+        com.tyejaedon.coverscreenos.ui.WallpaperBitmapCache.trimMemory(0)
     }
 
     /**

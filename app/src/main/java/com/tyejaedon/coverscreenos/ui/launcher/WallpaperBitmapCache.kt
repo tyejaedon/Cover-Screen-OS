@@ -32,4 +32,15 @@ object WallpaperBitmapCache {
 
     /** Stores a decoded [WallpaperFrame] under [key], evicting least-recently-used entries if full. */
     internal fun put(key: String, frame: WallpaperFrame) { synchronized(cache) { cache.put(key, frame) } }
+
+    /** Trims or evicts cached wallpaper frames in response to system memory pressure. */
+    fun trimMemory(maxBytes: Int) {
+        synchronized(cache) {
+            if (maxBytes <= 0) {
+                cache.evictAll()
+            } else {
+                cache.trimToSize((maxBytes / 1024).coerceAtLeast(0))
+            }
+        }
+    }
 }

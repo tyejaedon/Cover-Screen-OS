@@ -36,6 +36,11 @@ internal object LauncherSettingsJson {
         put("dockSlotFourAllApps", settings.dockSlotFourAllApps)
         put("keyboardStrategy", settings.keyboardStrategy.name)
         put("keyboardModeByPackage", JSONObject(settings.keyboardModeByPackage.mapValues { it.value.name }))
+        put("defaultCoverAppKeyboardStrategy", settings.defaultCoverAppKeyboardStrategy.name)
+        put(
+            "coverKeyboardStrategyByPackage",
+            JSONObject(settings.coverKeyboardStrategyByPackage.mapValues { it.value.name })
+        )
         put("widgetIds", JSONArray(settings.widgetIds))
     }.toString(2)
 
@@ -106,6 +111,20 @@ internal object LauncherSettingsJson {
             require(packageName.isNotBlank()) { "Empty keyboard package" }
             enumValue<CoverKeyboardMode>(modes.getString(packageName))
         }
+        val defaultCoverAppStrategy = if (json.has("defaultCoverAppKeyboardStrategy")) {
+            enumValue<CoverAppKeyboardStrategy>(json.getString("defaultCoverAppKeyboardStrategy"))
+        } else {
+            CoverAppKeyboardStrategy.COVER_KEYBOARD
+        }
+        val savedCoverStrategies = if (json.has("coverKeyboardStrategyByPackage")) {
+            val strategies = json.getJSONObject("coverKeyboardStrategyByPackage")
+            strategies.keys().asSequence().associateWith { packageName ->
+                require(packageName.isNotBlank()) { "Empty cover keyboard strategy package" }
+                enumValue<CoverAppKeyboardStrategy>(strategies.getString(packageName))
+            }
+        } else {
+            emptyMap()
+        }
         // Ordered AppWidget IDs restored onto the cover widget page (empty on older backups).
         val decodedWidgetIds = if (json.has("widgetIds")) {
             val arr = json.getJSONArray("widgetIds")
@@ -128,6 +147,8 @@ internal object LauncherSettingsJson {
             dockSlotFourAllApps = if (json.has("dockSlotFourAllApps")) json.getBoolean("dockSlotFourAllApps") else false,
             keyboardStrategy = enumValue(json.getString("keyboardStrategy")),
             keyboardModeByPackage = savedModes,
+            defaultCoverAppKeyboardStrategy = defaultCoverAppStrategy,
+            coverKeyboardStrategyByPackage = savedCoverStrategies,
             widgetIds = decodedWidgetIds
         )
     }

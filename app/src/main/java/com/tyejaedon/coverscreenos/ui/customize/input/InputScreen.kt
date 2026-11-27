@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.tyejaedon.coverscreenos.BuildConfig
+import com.tyejaedon.coverscreenos.datastore.CoverAppKeyboardStrategy
 import com.tyejaedon.coverscreenos.datastore.KeyboardStrategy
 import com.tyejaedon.coverscreenos.datastore.HapticStrength
 import com.tyejaedon.coverscreenos.datastore.KeyboardAnchor
@@ -26,6 +27,9 @@ import com.tyejaedon.coverscreenos.keyboard.floris.FlorisSmartbar
 internal fun InputScreen(
     settings: LauncherSettings,
     onStrategy: (KeyboardStrategy) -> Unit,
+    onDefaultCoverAppStrategy: (CoverAppKeyboardStrategy) -> Unit,
+    onCoverAppStrategyForPackage: (String, CoverAppKeyboardStrategy?) -> Unit,
+    onClearCoverAppStrategies: () -> Unit,
     onPicker: () -> Unit,
     onSettings: () -> Unit,
     onResetModes: () -> Unit,
@@ -42,6 +46,11 @@ internal fun InputScreen(
     InputCustomizationCard(
         keyboardStrategy = settings.keyboardStrategy,
         onKeyboardStrategySelected = onStrategy,
+        defaultCoverAppKeyboardStrategy = settings.defaultCoverAppKeyboardStrategy,
+        onDefaultCoverAppKeyboardStrategySelected = onDefaultCoverAppStrategy,
+        coverKeyboardStrategyByPackage = settings.coverKeyboardStrategyByPackage,
+        onCoverAppKeyboardStrategyChanged = onCoverAppStrategyForPackage,
+        onClearCoverAppKeyboardStrategies = onClearCoverAppStrategies,
         onOpenKeyboardPicker = onPicker,
         onOpenKeyboardSettings = onSettings,
         onResetSavedKeyboardModes = onResetModes,

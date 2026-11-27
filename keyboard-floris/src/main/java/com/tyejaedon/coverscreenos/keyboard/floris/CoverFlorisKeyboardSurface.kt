@@ -1,5 +1,8 @@
 package com.tyejaedon.coverscreenos.keyboard.floris
 
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -39,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -169,6 +173,9 @@ fun CoverFlorisKeyboardSurface(
     var localDockAnchor by remember { mutableStateOf(customization.dockAnchor) }
     var localOneHanded by remember { mutableStateOf(customization.oneHandedEnabled) }
     var localExtraHeightDp by remember { mutableFloatStateOf(customization.extraHeightDp) }
+    LaunchedEffect(customization.extraHeightDp) {
+        localExtraHeightDp = customization.extraHeightDp
+    }
     var localT9Predictive by remember { mutableStateOf(customization.isT9Predictive) }
     // Mirror of typed text used for auto-caps/autocorrect when the host does not pass textBeforeCursor.
     var internalBuffer by remember { mutableStateOf("") }
@@ -177,12 +184,8 @@ fun CoverFlorisKeyboardSurface(
     // Live finger points sampled during a QWERTY swipe gesture to draw the glowing glide trail.
     var activeGlideTrail by remember { mutableStateOf<List<Offset>>(emptyList()) }
 
-    // Resolve controlled (host-persisted) vs. local (uncontrolled) settings for resize, one-handed, and T9.
-    val effectiveExtraHeightDp = if (customization.onExtraHeightChanged != null) {
-        customization.extraHeightDp
-    } else {
-        localExtraHeightDp
-    }
+    // Use localExtraHeightDp directly during vertical drag for 60fps resizing without per-pixel disk writes.
+    val effectiveExtraHeightDp = localExtraHeightDp
     val effectiveOneHanded = if (customization.onOneHandedToggle != null) {
         customization.oneHandedEnabled
     } else {
@@ -262,15 +265,46 @@ fun CoverFlorisKeyboardSurface(
         spec.calculateRowHeight(screenHeightDp, currentRows.size)
     }
 
+    // Cache system touch-haptics setting via ContentObserver so key presses never issue Binder IPC.
+    val appContext = remember(context) { context.applicationContext }
+    var systemHapticsEnabled by remember(appContext) {
+        mutableStateOf(
+            runCatching {
+                Settings.System.getInt(
+                    appContext.contentResolver,
+                    Settings.System.HAPTIC_FEEDBACK_ENABLED,
+                    1
+                ) != 0
+            }.getOrDefault(true)
+        )
+    }
+    DisposableEffect(appContext) {
+        val uri = Settings.System.getUriFor(Settings.System.HAPTIC_FEEDBACK_ENABLED)
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                systemHapticsEnabled = runCatching {
+                    Settings.System.getInt(
+                        appContext.contentResolver,
+                        Settings.System.HAPTIC_FEEDBACK_ENABLED,
+                        1
+                    ) != 0
+                }.getOrDefault(true)
+            }
+        }
+        runCatching {
+            if (uri != null) {
+                appContext.contentResolver.registerContentObserver(uri, false, observer)
+            }
+        }
+        onDispose {
+            runCatching { appContext.contentResolver.unregisterContentObserver(observer) }
+        }
+    }
+
     fun performFeedback() {
         if (onHapticOverride != null) {
             onHapticOverride()
-        } else if (Settings.System.getInt(
-                context.contentResolver,
-                Settings.System.HAPTIC_FEEDBACK_ENABLED,
-                1
-            ) != 0
-        ) {
+        } else if (systemHapticsEnabled) {
             if (vibrator?.hasVibrator() == true) {
                 vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
             } else {
@@ -387,12 +421,12 @@ fun CoverFlorisKeyboardSurface(
                         onModeChanged?.invoke(activeMode)
                     },
                     extraHeightDp = effectiveExtraHeightDp,
-                    onExtraHeightChanged = { nextExtra ->
-                        if (customization.onExtraHeightChanged != null) {
-                            customization.onExtraHeightChanged.invoke(nextExtra)
-                        } else {
-                            localExtraHeightDp = nextExtra
-                        }
+                    onExtraHeightPreviewChanged = { nextExtra ->
+                        localExtraHeightDp = nextExtra
+                    },
+                    onExtraHeightChanged = { finalExtra ->
+                        localExtraHeightDp = finalExtra
+                        customization.onExtraHeightChanged?.invoke(finalExtra)
                     },
                     oneHandedEnabled = effectiveOneHanded,
                     onOneHandedToggle = {
@@ -784,7 +818,17 @@ private fun RowScope.CoverKeyView(
         isSpace -> "Space"
         isClear -> "Clear"
         isEnter -> enterDescription
-        isShift -> "Shift"
+        isShift -> when (shiftState) {
+            CoverShiftState.CAPS_LOCK -> "Caps lock active"
+            CoverShiftState.SINGLE_SHIFT -> "Shift active"
+            CoverShiftState.LOWERCASE -> "Shift"
+        }
+        item.action == CoverKeyAction.SwitchToSymbols -> "Symbols"
+        item.action == CoverKeyAction.SwitchToSymbolsSecondary -> "More symbols"
+        item.action == CoverKeyAction.SwitchToLetters -> "Letters"
+        item.action == CoverKeyAction.ToggleT9 -> "T9 keypad"
+        item.action == CoverKeyAction.SwitchMode -> "Switch keyboard mode"
+        item.action == CoverKeyAction.Dismiss -> "Hide keyboard"
         else -> item.primaryLabel
     }
 
