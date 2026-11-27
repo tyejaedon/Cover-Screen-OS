@@ -610,34 +610,6 @@ class ForegroundService : Service() {
         pendingNativeRecentsVerifyJob?.cancel()
         pendingNativeRecentsVerifyJob = null
 
-        if (preferNative && !nativeRecentsUnsupportedOnCover) {
-            recentAppsTracker.setRecentsSheetVisible(false)
-            val wasSuppressedBeforeRecents = isOverlaySuppressedForAppLaunch
-            val dispatched = CoverAccessibilityService.performGlobalRecentsOnActiveService()
-            if (dispatched) {
-                pendingNativeRecentsVerifyJob = serviceScope.launch {
-                    delay(NATIVE_RECENTS_VERIFY_DELAY_MS.milliseconds)
-                    val latestClass = CoverAccessibilityService.currentForegroundClassName()
-                    if (CoverHomeSurfaceMatcher.isRecentsSurfaceClassName(latestClass)) {
-                        // Native Recents opened; suppress now only if triggered from the active launcher.
-                        if (!wasSuppressedBeforeRecents && !isOverlaySuppressedForAppLaunch) {
-                            suppressOverlayForReason(
-                                packageName = NATIVE_RECENTS_SENTINEL_PACKAGE,
-                                reason = OverlaySuppressionReason.APP_LAUNCH
-                            )
-                        }
-                        return@launch
-                    }
-                    nativeRecentsUnsupportedOnCover = true
-                    recentAppsTracker.setRecentsSheetVisible(true)
-                    if (isOverlaySuppressedForAppLaunch) {
-                        completeSuppressionAndRetargetOnce(reason = "native_recents_no_op_fallback")
-                    }
-                }
-                return true
-            }
-        }
-
         recentAppsTracker.setRecentsSheetVisible(true)
         if (isOverlaySuppressedForAppLaunch) {
             completeSuppressionAndRetargetOnce(reason = "cover_recents")

@@ -696,7 +696,6 @@ class CoverAccessibilityService : AccessibilityService() {
         val barHeightPx = (BOTTOM_BAR_HEIGHT.value * resources.displayMetrics.density).toInt().coerceAtLeast(1)
 
         val displayDensity = createDisplayContext(coverDisplay).resources.displayMetrics.density
-        =
         val config = com.tyejaedon.coverscreenos.overlay.surface.CoverSurfaceWindowConfig(
             width = WindowManager.LayoutParams.MATCH_PARENT,
             height = barHeightPx,
@@ -876,7 +875,7 @@ class CoverAccessibilityService : AccessibilityService() {
 
         if (gestureId == GESTURE_SWIPE_RIGHT) {
             if (shouldThrottleGlobalAction()) return false
-            return ForegroundService.requestCoverRecents(preferNative = true)
+            return ForegroundService.requestCoverRecents()
         }
 
         val globalAction = when (gestureId) {
